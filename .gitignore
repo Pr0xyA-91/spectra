@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Diagnostic exported reports and logs
+*.log
+live_report.txt
+compare_*.txt
+jura_diag_*.txt
+demo_test_report.txt
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store

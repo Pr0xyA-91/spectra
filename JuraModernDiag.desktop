@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Jura Modern Diagnostics
+Comment=Diagnostic & statistics reader for modern Jura coffee machines (Gen 7+ & Smart Connect)
+Exec=/home/a91/Projects/Jura Modern Diag/run.sh
+Icon=/home/a91/Projects/Jura Modern Diag/icon.png
+Terminal=false
+Categories=Utility;HardwareSettings;
+Keywords=Jura;Coffee;Diagnostics;Telemetry;Statistics;
+StartupNotify=true
