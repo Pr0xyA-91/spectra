@@ -74,11 +74,12 @@ class JuraDriver(BaseApplianceDriver):
 
         return None
 
-    def read_live_sensors(self, conn: Any) -> Dict[str, Any]:
+    def read_live_sensors(self, conn: Any, fast_poll: bool = False) -> Dict[str, Any]:
         """Query live hardware sensors using the verified Jura engine."""
         res = sc.query_live_sensors(
             port_name=conn.port_name if hasattr(conn, "port_name") else "unknown",
-            conn=conn
+            conn=conn,
+            fast_poll=fast_poll
         )
         ready_sw = next((s for s in res.get("switches", []) if s.get("id") == "machine_ready"), None)
         if ready_sw:

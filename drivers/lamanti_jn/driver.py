@@ -112,7 +112,7 @@ class LamantiJNDriver(BaseApplianceDriver):
 
         return None
 
-    def read_live_sensors(self, conn: Any) -> Dict[str, Any]:
+    def read_live_sensors(self, conn: Any, fast_poll: bool = False) -> Dict[str, Any]:
         """
         Query real-time hardware status via Jetinno Heartbeat (Cmd 0x14).
         """

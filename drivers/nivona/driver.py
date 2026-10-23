@@ -145,7 +145,7 @@ class NivonaDriver(BaseApplianceDriver):
 
         return None
 
-    def read_live_sensors(self, conn: Any) -> Dict[str, Any]:
+    def read_live_sensors(self, conn: Any, fast_poll: bool = False) -> Dict[str, Any]:
         """
         Query real-time hardware microswitches and thermal status via HZ: / RT: queries.
         """
@@ -213,23 +213,24 @@ class NivonaDriver(BaseApplianceDriver):
                 "icon": "🗑️"
             })
 
-            # Read Thermal Sensors (RT:0000 or RT:0002)
+            # Read Thermal Sensors (RT:0000 or RT:0002) - skipped in fast_poll mode to maximize loop throughput
             temp_c = 92.5
-            rt_temp = self._query_ascii(conn, "RT:0002", timeout=0.8)
-            if rt_temp and rt_temp.startswith("rt:"):
-                try:
-                    raw_val = int(rt_temp[3:].strip()[:4], 16)
-                    if 0 < raw_val < 1000:
-                        temp_c = round(raw_val / 4.0, 1)
-                except Exception:
-                    pass
+            if not fast_poll:
+                rt_temp = self._query_ascii(conn, "RT:0002", timeout=0.8)
+                if rt_temp and rt_temp.startswith("rt:"):
+                    try:
+                        raw_val = int(rt_temp[3:].strip()[:4], 16)
+                        if 0 < raw_val < 1000:
+                            temp_c = round(raw_val / 4.0, 1)
+                    except Exception:
+                        pass
 
             sensors.append({
                 "id": "heater_coffee",
                 "name": "Coffee Thermoblock",
-                "status": f"{temp_c} °C",
+                "status": f"{temp_c} °C" if not fast_poll else "Active",
                 "ok": (15.0 <= temp_c <= 125.0),
-                "badge": f"{temp_c} °C",
+                "badge": f"{temp_c} °C" if not fast_poll else "Active",
                 "details": "NTC Thermistor on primary aluminum heater",
                 "icon": "☕"
             })

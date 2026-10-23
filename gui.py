@@ -7,6 +7,7 @@ maintenance history, active alerts, and live sensors from Jura coffee machines.
 
 import sys
 import os
+import time
 import threading
 from datetime import datetime
 
@@ -35,7 +36,10 @@ class JuraDiagApp(Gtk.Window):
         self.session: Optional[Any] = None
         self.wrat_session: Optional[WRATSession] = None
         self.is_reading = False
-        self.auto_poll_tag = None
+        self.is_polling = False
+        self.serial_lock = threading.Lock()
+        self.auto_poll_active = False
+        self.auto_poll_thread: Optional[threading.Thread] = None
 
         # Main Layout Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -550,18 +554,19 @@ class JuraDiagApp(Gtk.Window):
         thread.start()
 
     def _run_session_worker(self, port: str, mfr: str):
-        session = WRATSession(port, manufacturer=mfr)
+        with self.serial_lock:
+            session = WRATSession(port, manufacturer=mfr)
 
-        def update_prog(pct, status):
-            GLib.idle_add(self.progress_bar.set_fraction, pct)
-            GLib.idle_add(self.progress_bar.set_text, f"[{int(pct*100)}%] {status}")
-            GLib.idle_add(self._append_log, f"[*] [{int(pct*100)}%] {status}")
+            def update_prog(pct, status):
+                GLib.idle_add(self.progress_bar.set_fraction, pct)
+                GLib.idle_add(self.progress_bar.set_text, f"[{int(pct*100)}%] {status}")
+                GLib.idle_add(self._append_log, f"[*] [{int(pct*100)}%] {status}")
 
-        try:
-            success = session.run_interrogation(progress_cb=update_prog)
-        except Exception as e:
-            GLib.idle_add(self._append_log, f"[-] Error: {e}")
-            success = False
+            try:
+                success = session.run_interrogation(progress_cb=update_prog)
+            except Exception as e:
+                GLib.idle_add(self._append_log, f"[-] Error: {e}")
+                success = False
 
         GLib.idle_add(self._on_session_finished, session, success)
 
@@ -646,24 +651,82 @@ class JuraDiagApp(Gtk.Window):
 
     def _on_auto_poll_toggled(self, widget):
         if self.chk_auto_poll.get_active():
-            if self.auto_poll_tag is None:
-                self.auto_poll_tag = GLib.timeout_add(2000, self._auto_poll_tick)
-                self._on_refresh_sensors_clicked(None)
+            self.auto_poll_active = True
+            self.btn_refresh_sensors.set_sensitive(False)
+            self.lbl_sensors_status.set_text("Continuous auto-polling active (2s)...")
+            if self.auto_poll_thread is None or not self.auto_poll_thread.is_alive():
+                self.auto_poll_thread = threading.Thread(target=self._auto_poll_worker, daemon=True)
+                self.auto_poll_thread.start()
         else:
-            if self.auto_poll_tag is not None:
-                GLib.source_remove(self.auto_poll_tag)
-                self.auto_poll_tag = None
+            self.auto_poll_active = False
+            self.btn_refresh_sensors.set_sensitive(True)
+            self.lbl_sensors_status.set_text("Auto-poll stopped. Ready for manual refresh.")
 
-    def _auto_poll_tick(self) -> bool:
-        if not self.chk_auto_poll.get_active():
-            self.auto_poll_tag = None
-            return False
-        if not self.is_reading:
-            self._on_refresh_sensors_clicked(None)
-        return True
+    def _auto_poll_worker(self):
+        conn: Optional[Any] = None
+        current_port = None
+        current_mfr = None
+        session: Optional[WRATSession] = None
+        try:
+            while self.auto_poll_active:
+                if self.is_reading:
+                    time.sleep(0.5)
+                    continue
+
+                active_port = self.port_combo.get_active_text()
+                active_mfr = self.mfr_combo.get_active_id() or "auto"
+                if not active_port:
+                    time.sleep(1.0)
+                    continue
+
+                # Maintain persistent connection across fast polls
+                with self.serial_lock:
+                    if (conn is None or current_port != active_port or 
+                        current_mfr != active_mfr or not getattr(conn, "is_open", True)):
+                        if conn:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                        try:
+                            if active_port.lower().startswith("mock"):
+                                conn = serial_io.MockJuraMachine()
+                            else:
+                                conn = serial_io.DirectSerialConnection(active_port, baudrate=9600)
+                            current_port = active_port
+                            current_mfr = active_mfr
+                            session = WRATSession(active_port, manufacturer=active_mfr, conn=conn)
+                        except Exception as e:
+                            GLib.idle_add(self.lbl_sensors_status.set_text, f"Connection error: {e}")
+                            time.sleep(2.0)
+                            continue
+
+                    try:
+                        if session is None:
+                            session = WRATSession(active_port, manufacturer=active_mfr, conn=conn)
+                        res = session.query_live_sensors(fast_poll=True)
+                    except Exception as e:
+                        res = {"error": str(e)}
+
+                if self.auto_poll_active:
+                    GLib.idle_add(self._on_live_sensors_updated, res)
+
+                # Sleep 1.5s in 100ms slices to allow immediate cancellation
+                for _ in range(15):
+                    if not self.auto_poll_active:
+                        break
+                    time.sleep(0.1)
+        finally:
+            with self.serial_lock:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
 
     def _on_refresh_sensors_clicked(self, widget):
-        if self.is_reading:
+        if self.is_reading or self.is_polling or self.auto_poll_active:
             return
 
         active_port = self.port_combo.get_active_text()
@@ -672,35 +735,42 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_sensors_status.set_text("No serial port selected!")
             return
 
+        self.is_polling = True
         self.btn_refresh_sensors.set_sensitive(False)
         self.spinner_sensors.start()
         self.lbl_sensors_status.set_text(f"Querying live hardware sensors on {active_port}...")
 
-        thread = threading.Thread(target=self._run_sensor_poll_worker, args=(active_port, active_mfr), daemon=True)
+        def worker():
+            try:
+                with self.serial_lock:
+                    session = WRATSession(active_port, manufacturer=active_mfr)
+                    result = session.query_live_sensors(fast_poll=False)
+                    session.close()
+            except Exception as e:
+                result = {"error": str(e)}
+            finally:
+                self.is_polling = False
+            GLib.idle_add(self._on_live_sensors_updated, result)
+
+        thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _run_sensor_poll_worker(self, port: str, mfr: str):
-        try:
-            session = WRATSession(port, manufacturer=mfr)
-            result = session.query_live_sensors()
-        except Exception as e:
-            result = {"error": str(e)}
-        GLib.idle_add(self._on_live_sensors_updated, result)
-
     def _on_live_sensors_updated(self, result: dict):
-        self.btn_refresh_sensors.set_sensitive(True)
+        if not self.auto_poll_active:
+            self.btn_refresh_sensors.set_sensitive(True)
         self.spinner_sensors.stop()
 
         if not result:
             return
 
         if "error" in result:
-            self.lbl_sensors_status.set_text(f"Sensor polling error: {result['error']}")
+            self.lbl_sensors_status.set_text(f"Poll notice: {result['error']}")
             return
 
         ts = result.get("timestamp", datetime.now().strftime("%H:%M:%S"))
         proto = result.get("protocol", "UART")
-        self.lbl_sensors_status.set_text(f"Last polled: {ts} (via {proto})")
+        mode_tag = "auto" if self.auto_poll_active else "manual"
+        self.lbl_sensors_status.set_text(f"Last polled ({mode_tag}): {ts} (via {proto})")
 
         # Update KPI Cards
         switches = {sw["id"]: sw for sw in result.get("switches", [])}

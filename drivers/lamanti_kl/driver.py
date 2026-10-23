@@ -130,7 +130,7 @@ class LamantiKLDriver(BaseApplianceDriver):
 
         return None
 
-    def read_live_sensors(self, conn: Any) -> Dict[str, Any]:
+    def read_live_sensors(self, conn: Any, fast_poll: bool = False) -> Dict[str, Any]:
         """
         Poll 21 Input Registers starting at 0x0000:
         Frame: 01 04 00 00 00 15 [CRC]

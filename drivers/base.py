@@ -112,7 +112,7 @@ class BaseApplianceDriver(ABC):
         pass
 
     @abstractmethod
-    def read_live_sensors(self, conn: Any) -> Dict[str, Any]:
+    def read_live_sensors(self, conn: Any, fast_poll: bool = False) -> Dict[str, Any]:
         """
         Poll real-time hardware status: microswitches, thermal sensors,
         flowmeter monitors, and machine readiness.

@@ -81,11 +81,11 @@ class WRATSession:
 
         return self.driver
 
-    def query_live_sensors(self) -> Dict[str, Any]:
+    def query_live_sensors(self, fast_poll: bool = False) -> Dict[str, Any]:
         """Poll real-time hardware status and microswitches from active driver."""
         if self.driver is None:
             self.initialize_driver()
-        return self.driver.read_live_sensors(self.conn)
+        return self.driver.read_live_sensors(self.conn, fast_poll=fast_poll)
 
     def run_interrogation(
         self,
