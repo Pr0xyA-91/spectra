@@ -105,6 +105,39 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertIn("Steam Thermoblock NTC Broken Errors", counter_names)
         self.assertNotIn("Main Power Relay Faults", counter_names)
 
+    def test_tray_detection_and_machine_readiness(self):
+        """Test accurate detection of removed drip tray and readiness lockout."""
+        # 1. Tray Removed telemetry payload
+        tray_out_conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = tray_out_conn.query_ascii
+
+        def mock_query_out(cmd, timeout=1.0):
+            if cmd.strip() == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,0398,0802,3,100100,0000,10"
+            return orig_query(cmd, timeout=timeout)
+        tray_out_conn.query_ascii = mock_query_out
+
+        res = sc.query_live_sensors("mock", conn=tray_out_conn)
+        switches = {s["id"]: s for s in res["switches"]}
+        self.assertFalse(switches["drip_tray"]["ok"])
+        self.assertEqual(switches["drip_tray"]["status"], "Tray Missing / Removed")
+        self.assertFalse(switches["machine_ready"]["ok"])
+        self.assertEqual(switches["machine_ready"]["status"], "Not Ready (Drip Tray Missing)")
+
+        # 2. Tray Inserted telemetry payload
+        def mock_query_in(cmd, timeout=1.0):
+            if cmd.strip() == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03CE,0802,4,000100,0000,00"
+            return orig_query(cmd, timeout=timeout)
+        tray_out_conn.query_ascii = mock_query_in
+
+        res2 = sc.query_live_sensors("mock", conn=tray_out_conn)
+        switches2 = {s["id"]: s for s in res2["switches"]}
+        self.assertTrue(switches2["drip_tray"]["ok"])
+        self.assertEqual(switches2["drip_tray"]["status"], "Tray Inserted")
+        self.assertTrue(switches2["machine_ready"]["ok"])
+        self.assertEqual(switches2["machine_ready"]["status"], "Ready to Brew / Nominal")
+
 
 if __name__ == "__main__":
     unittest.main()
