@@ -141,7 +141,6 @@ def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False)
             return "Cold / Standby"
 
 
-_last_fill_prompt_timestamps: Dict[str, float] = {}
 _last_flowmeter_samples: Dict[str, Tuple[int, float, float]] = {}
 
 
@@ -618,11 +617,13 @@ def query_live_sensors(
                 results["telemetry"]["total_fm_timeouts"] = total_fm_timeouts
                 results["telemetry"]["fm_intake_timeouts"] = fm_intake_timeouts
                 results["telemetry"]["fm_rinse_timeouts"] = fm_rinse_timeouts
-            # Append component faults to alerts list
-            results["alerts"].extend([
-                {"name": s["name"], "details": s["details"], "blocking": True}
-                for s in sensor_list if not s["ok"]
-            ])
+            # Append only live physical lockouts to active alerts (historical RE:0028 faults stay in sensors/diagnostics)
+            if not tray_ok:
+                results["alerts"].append({"name": "Drip Tray Missing", "details": "Insert drip tray / grounds drawer", "blocking": True})
+            if not water_ok:
+                results["alerts"].append({"name": "Water Tank Low / Empty", "details": "Refill water tank", "blocking": True})
+            if grounds_full:
+                results["alerts"].append({"name": "Grounds Container Full", "details": "Empty coffee grounds container", "blocking": True})
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
@@ -797,9 +798,12 @@ class JuraStatsSession:
             if progress_cb:
                 progress_cb(pct, status)
 
+        owns_conn = False
         try:
             update_prog(0.05, f"Connecting to {self.port_name}...")
-            self.conn = JuraSerialConnection(self.port_name, baudrate=self.baudrate, timeout=1.0)
+            if self.conn is None or not getattr(self.conn, "is_open", True):
+                self.conn = JuraSerialConnection(self.port_name, baudrate=self.baudrate, timeout=1.0)
+                owns_conn = True
             self.log(f"Opened connection on {self.port_name} at {self.baudrate} baud (8N1)")
 
             # ================================================================
@@ -1142,7 +1146,7 @@ class JuraStatsSession:
             self.log(f"EXCEPTION during interrogation: {e}")
             return False
         finally:
-            if self.conn:
+            if owns_conn and self.conn:
                 self.conn.close()
 
     def get_structured_summary(self) -> Dict[str, Any]:
@@ -1152,7 +1156,20 @@ class JuraStatsSession:
         # Build beverage list
         beverage_list = []
         profile_codes = set()
-        for p in self.profile.get("products", []):
+        profile_prods = self.profile.get("products", [])
+        # In ASCII EEPROM mode, if a Smart Connect profile was matched (which lacks code 1 or maps 4 to Cappuccino),
+        # fall back to classic 6-slot EEPROM beverage descriptors so counts are not mislabeled.
+        if self.is_legacy_cleartext and (not profile_prods or any(p.get("code") == 4 and not p.get("is_double") for p in profile_prods)):
+            profile_prods = [
+                {"code": 1, "name": "1 Espresso", "is_double": False, "active": True},
+                {"code": 2, "name": "1 Coffee", "is_double": False, "active": True},
+                {"code": 3, "name": "1 Special Coffee / Ristretto", "is_double": False, "active": True},
+                {"code": 4, "name": "2 Espressi", "is_double": True, "active": True},
+                {"code": 5, "name": "2 Coffees", "is_double": True, "active": True},
+                {"code": 6, "name": "2 Special Coffees", "is_double": True, "active": True},
+            ]
+
+        for p in profile_prods:
             code = p.get("code")
             profile_codes.add(code)
             count = self.counters.get(code, 0)
@@ -1176,9 +1193,13 @@ class JuraStatsSession:
                 })
 
         # Build maintenance list
-        mc_labels = self.profile.get("maintenance_counters", [
-            "Cleaning", "Descaling", "Rinsing", "Filter Change"
-        ])
+        # In ASCII EEPROM mode, self.maint_counts is always [cleanings, descalings, rinses, filter_cycles]
+        if self.is_legacy_cleartext:
+            mc_labels = ["Cleaning", "Descaling", "Rinsing", "Filter Change"]
+        else:
+            mc_labels = self.profile.get("maintenance_counters", [
+                "Cleaning", "FilterChange", "Decalc", "CappuRinse", "CoffeeRinse", "CappuClean"
+            ])
 
         maint_data = []
         for i, label in enumerate(mc_labels):
@@ -1187,8 +1208,10 @@ class JuraStatsSession:
             maint_data.append({
                 "index": i,
                 "label": label,
+                "name": label,
                 "count": cnt,
-                "percentage": pct
+                "percentage": pct,
+                "percent": pct
             })
 
         return {

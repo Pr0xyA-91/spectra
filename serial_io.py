@@ -50,6 +50,7 @@ def list_serial_ports() -> List[str]:
     ports.append("DEMO / SIMULATION (Jura S8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
+    ports.append("DEMO / SIMULATION (Jura S8 Smart Connect)")
     return ports
 
 
@@ -213,6 +214,8 @@ class JuraSerialConnection:
         cmd_clean = cmd.strip()
 
         if self.is_demo:
+            if "SMART CONNECT" in self.port_name.upper() or "S8-SC" in self.port_name.upper():
+                return None
             time.sleep(0.02)
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"

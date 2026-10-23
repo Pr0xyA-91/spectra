@@ -23,16 +23,31 @@ git checkout public-main
 # Sync all files from SOURCE_BRANCH
 git checkout "$SOURCE_BRANCH" -- .
 
-# Strictly ensure GEMINI.md is removed
+# Strictly ensure private notes and guidelines are removed
 if [ -f "GEMINI.md" ]; then
     git rm -f GEMINI.md
 fi
+if [ -f "SESSION_NOTES.md" ]; then
+    git rm -f SESSION_NOTES.md
+fi
 
 # Scrub hardcoded user home directories for public portability
-if [ -f "JuraModernDiag.desktop" ]; then
-    sed -i 's|Exec=/home/[^/]*/Projects/[^/]*/run.sh|Exec=bash -c '"'"'"$(dirname "%k")"/run.sh'"'"'|g' JuraModernDiag.desktop
-    sed -i 's|Icon=/home/[^/]*/Projects/[^/]*/icon.png|Icon=utilities-system-monitor|g' JuraModernDiag.desktop
-    git add JuraModernDiag.desktop
+for desktop_file in *.desktop; do
+    if [ -f "$desktop_file" ]; then
+        sed -i 's|Exec=/home/[^/]*/Projects/[^/]*/run.sh|Exec=bash -c '"'"'"$(dirname "%k")"/run.sh'"'"'|g' "$desktop_file"
+        sed -i 's|Icon=/home/[^/]*/Projects/[^/]*/icon.png|Icon=utilities-system-monitor|g' "$desktop_file"
+        git add "$desktop_file"
+    fi
+done
+
+# Verify no private files or hardcoded home paths remain in tracked files
+if git ls-files | grep -q -E "^(GEMINI|SESSION_NOTES)\.md$"; then
+    echo "[-] Error: Private markdown files are still tracked on public-main!" >&2
+    exit 1
+fi
+if git grep -q "/home/a91" -- ':!publish_release.sh'; then
+    echo "[-] Error: Hardcoded /home/a91 path detected in tracked files on public-main!" >&2
+    exit 1
 fi
 
 # Commit if there are changes
