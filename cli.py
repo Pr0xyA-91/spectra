@@ -17,7 +17,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.4.1"
+__version__ = "0.1"
 
 
 def print_banner():
@@ -28,7 +28,7 @@ def print_banner():
  \        /    |    |   \ /    |    \ |    |   
   \__/\  /     |____|_  / \____|__  / |____|   
        \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.4.1)
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.1 Windows Edition)
    Universal Diagnostics Engine [Multi-Manufacturer Support]
    Supported: Jura | Nivona | Lamanti-KL | Lamanti-JN
     """

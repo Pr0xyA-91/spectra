@@ -1,13 +1,13 @@
 # W.R.A.T. — WhiteRat Asynchronous Telemetry
 
-[![Version: 0.4.1-win](https://img.shields.io/badge/version-0.4.1--win-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
+[![Version: 0.1](https://img.shields.io/badge/version-0.1-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GUI](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux | Windows](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.4.1 Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
+> **Project Status: Alpha (v0.1 Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
 > **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) supports **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
