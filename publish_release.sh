@@ -28,6 +28,13 @@ if [ -f "GEMINI.md" ]; then
     git rm -f GEMINI.md
 fi
 
+# Scrub hardcoded user home directories for public portability
+if [ -f "JuraModernDiag.desktop" ]; then
+    sed -i 's|Exec=/home/[^/]*/Projects/[^/]*/run.sh|Exec=bash -c '"'"'"$(dirname "%k")"/run.sh'"'"'|g' JuraModernDiag.desktop
+    sed -i 's|Icon=/home/[^/]*/Projects/[^/]*/icon.png|Icon=utilities-system-monitor|g' JuraModernDiag.desktop
+    git add JuraModernDiag.desktop
+fi
+
 # Commit if there are changes
 if [ -n "$(git status --porcelain)" ]; then
     VERSION=$(grep '__version__' stats_collector.py | head -n1 | cut -d'"' -f2)
