@@ -17,21 +17,25 @@ from gi.repository import Gtk, Gdk, GLib, Pango
 import serial_io
 import profiles_db
 import stats_collector as sc
+from wrat_engine import WRATSession
+from drivers import DRIVER_DISPLAY_NAMES
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.3)")
-        self.set_default_size(1020, 700)
+        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.4.0)")
+        self.set_default_size(1060, 720)
         self.set_position(Gtk.WindowPosition.CENTER)
 
         # Apply dark modern CSS styling
         self._apply_styling()
 
-        self.session: Optional[sc.JuraStatsSession] = None
+        self.session: Optional[Any] = None
+        self.wrat_session: Optional[WRATSession] = None
         self.is_reading = False
+        self.auto_poll_tag = None
 
         # Main Layout Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -167,22 +171,35 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.3</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.4.0</span></b>")
         app_title.set_alignment(0, 0.5)
-        sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Jura Diagnostics Module")
+        sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Multi-Manufacturer Engine")
         sub_title.get_style_context().add_class("card-label")
         sub_title.set_alignment(0, 0.5)
         title_box.pack_start(app_title, False, False, 0)
         title_box.pack_start(sub_title, False, False, 0)
         header_box.pack_start(title_box, False, False, 10)
 
+        # Manufacturer / Brand Selector
+        lbl_mfr = Gtk.Label(label="Brand:")
+        header_box.pack_start(lbl_mfr, False, False, 0)
+
+        self.mfr_combo = Gtk.ComboBoxText()
+        self.mfr_combo.append("auto", "⚡ Auto-Detect")
+        self.mfr_combo.append("jura", "☕ Jura")
+        self.mfr_combo.append("nivona", "☕ Nivona")
+        self.mfr_combo.append("lamanti-kl", "🏢 Lamanti-KL (Kalerm)")
+        self.mfr_combo.append("lamanti-jn", "🥤 Lamanti-JN (Jetinno)")
+        self.mfr_combo.set_active_id("auto")
+        header_box.pack_start(self.mfr_combo, False, False, 0)
+
         # Port Selector Label
-        lbl_port = Gtk.Label(label="Serial Port:")
+        lbl_port = Gtk.Label(label="Port:")
         header_box.pack_start(lbl_port, False, False, 0)
 
         # Port ComboBox
         self.port_combo = Gtk.ComboBoxText()
-        self.port_combo.set_size_request(260, -1)
+        self.port_combo.set_size_request(240, -1)
         header_box.pack_start(self.port_combo, False, False, 0)
 
         # Refresh Ports Button
@@ -315,7 +332,12 @@ class JuraDiagApp(Gtk.Window):
         self.spinner_sensors = Gtk.Spinner()
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
-        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' to poll microswitches and diagnostic registers.")
+        # Continuous Live Polling Toggle
+        self.chk_auto_poll = Gtk.CheckButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
+        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 4)
+
+        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
@@ -513,6 +535,7 @@ class JuraDiagApp(Gtk.Window):
             return
 
         active_port = self.port_combo.get_active_text()
+        active_mfr = self.mfr_combo.get_active_id() or "auto"
         if not active_port:
             self.progress_bar.set_text("No port selected!")
             return
@@ -520,139 +543,131 @@ class JuraDiagApp(Gtk.Window):
         self.is_reading = True
         self.btn_read.set_sensitive(False)
         self.progress_bar.set_fraction(0.0)
-        self.progress_bar.set_text(f"Connecting to {active_port}...")
+        self.progress_bar.set_text(f"Connecting to {active_port} ({active_mfr.upper()})...")
 
         # Run reading session in background thread
-        thread = threading.Thread(target=self._run_session_worker, args=(active_port,), daemon=True)
+        thread = threading.Thread(target=self._run_session_worker, args=(active_port, active_mfr), daemon=True)
         thread.start()
 
-    def _run_session_worker(self, port: str):
-        session = sc.JuraStatsSession(port, baudrate=9600, log_cb=lambda msg: GLib.idle_add(self._append_log, msg))
+    def _run_session_worker(self, port: str, mfr: str):
+        session = WRATSession(port, manufacturer=mfr)
 
         def update_prog(pct, status):
             GLib.idle_add(self.progress_bar.set_fraction, pct)
             GLib.idle_add(self.progress_bar.set_text, f"[{int(pct*100)}%] {status}")
+            GLib.idle_add(self._append_log, f"[*] [{int(pct*100)}%] {status}")
 
-        success = session.run_interrogation(progress_cb=update_prog)
+        try:
+            success = session.run_interrogation(progress_cb=update_prog)
+        except Exception as e:
+            GLib.idle_add(self._append_log, f"[-] Error: {e}")
+            success = False
+
         GLib.idle_add(self._on_session_finished, session, success)
 
-    def _on_session_finished(self, session: sc.JuraStatsSession, success: bool):
+    def _on_session_finished(self, session: WRATSession, success: bool):
         self.is_reading = False
         self.btn_read.set_sensitive(True)
-        self.session = session
+        self.wrat_session = session
 
         if not success:
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("Interrogation failed! Check port connection / permissions.")
             return
 
-        self.progress_bar.set_fraction(1.0)
-        self.progress_bar.set_text(f"Successfully read statistics from {session.model_family}!")
-
-        # Populate GUI views
         summary = session.get_structured_summary()
+        vendor = summary.get("vendor", "Appliance")
+        model = summary.get("machine_model", "Machine")
+
+        self.progress_bar.set_fraction(1.0)
+        self.progress_bar.set_text(f"Successfully read statistics from [{vendor}] {model}!")
 
         # Update KPI Cards
-        self.lbl_kpi_model.set_text(summary["machine_model"])
-        self.lbl_kpi_total.set_text(f"{summary['total_cups']:,}")
+        self.lbl_kpi_model.set_text(f"{model}")
+        self.lbl_kpi_total.set_text(f"{summary.get('total_cups', 0):,}")
 
-        clean_cnt = session.maint_counts[0] if session.maint_counts else 0
-        decalc_cnt = session.maint_counts[1] if len(session.maint_counts) > 1 else 0
+        clean_cnt = 0
+        decalc_cnt = 0
+        for m in summary.get("maintenance", []):
+            m_name = m.get("name", "").lower()
+            if "clean" in m_name:
+                clean_cnt += m.get("count", 0)
+            elif "decalc" in m_name or "descal" in m_name:
+                decalc_cnt += m.get("count", 0)
+
         self.lbl_kpi_clean.set_text(f"{clean_cnt:,}")
         self.lbl_kpi_decalc.set_text(f"{decalc_cnt:,}")
 
         # Populate Beverages Tab
         self.bev_store.clear()
-        tot = summary["total_cups"] or 1
-        for b in sorted(summary["beverages"], key=lambda x: x["count"], reverse=True):
-            share = f"{(b['count'] / tot) * 100:.1f}%" if b["count"] > 0 else "0.0%"
-            cat = "Double Serving (2x)" if b["is_double"] else "Single Serving"
-            self.bev_store.append([b["code"], b["name"], b["count"], share, cat])
+        tot = summary.get("total_cups", 0) or 1
+        for b in sorted(summary.get("beverages", []), key=lambda x: x.get("count", 0), reverse=True):
+            cnt = b.get("count", 0)
+            share = f"{(cnt / tot) * 100:.1f}%" if cnt > 0 else "0.0%"
+            cat = "Double Serving (2x)" if b.get("is_double") else b.get("category", "Beverage")
+            self.bev_store.append([b.get("code", 0), b.get("name", "Product"), cnt, share, cat])
 
         # Populate Maintenance Tab
         self.maint_store.clear()
-        for m in summary["maintenance"]:
-            pct_val = m["percentage"] if m["percentage"] is not None else 0
-            pct_str = f"{pct_val}%" if m["percentage"] is not None else "N/A"
-            self.maint_store.append([m["label"], m["count"], pct_str, pct_val])
+        for m in summary.get("maintenance", []):
+            pct_val = m.get("percent") if m.get("percent") is not None else 0
+            pct_str = f"{pct_val}%" if m.get("percent") is not None else "N/A"
+            self.maint_store.append([m.get("name", "Maintenance"), m.get("count", 0), pct_str, pct_val])
 
         # Populate Alerts Tab
         self.alerts_store.clear()
-        if not summary["alerts"]:
+        if not summary.get("alerts"):
             self.alerts_store.append(["NORMAL / READY", "System OK - Ready to Brew", 0])
         else:
-            for a in summary["alerts"]:
-                sev = "BLOCKING ERROR" if a.get("blocking") else "NOTICE / STATUS"
-                self.alerts_store.append([sev, a["name"].upper(), a.get("bit", 0)])
+            for a in summary.get("alerts", []):
+                sev = a.get("level", "WARNING")
+                msg = a.get("description") or a.get("message") or a.get("title", "Alert")
+                self.alerts_store.append([sev, msg, 0])
 
         # Populate Info Tab
         self.info_store.clear()
-        if summary.get("telemetry") and "appliance_type" in summary["telemetry"]:
-            self.info_store.append(["Appliance Type", str(summary["telemetry"]["appliance_type"])])
-        self.info_store.append(["Machine Family", summary["machine_model"]])
+        self.info_store.append(["Appliance Vendor", vendor])
+        self.info_store.append(["Machine Model", model])
+        self.info_store.append(["Serial Number", str(summary.get("serial_number", "N/A"))])
+        self.info_store.append(["Firmware String", str(summary.get("firmware_string", "N/A"))])
+        self.info_store.append(["Protocol Driver", str(summary.get("protocol_mode", "N/A"))])
+        self.info_store.append(["Total Dispensed", f"{summary.get('total_cups', 0):,} cups"])
+        self.info_store.append(["Total Brew Cycles", f"{summary.get('total_preparations', 0):,}"])
+        self.info_store.append(["Diagnostics Timestamp", summary.get("timestamp", "")])
+
         if summary.get("telemetry"):
-            tel = summary["telemetry"]
-            if "serial_number" in tel and tel["serial_number"] != "N/A":
-                self.info_store.append(["Serial Number (14-Digit)", str(tel["serial_number"])])
-            if "ean_code" in tel and tel["ean_code"] != "N/A":
-                self.info_store.append(["EAN-Code", str(tel["ean_code"])])
-            if "article_number" in tel:
-                self.info_store.append(["Article Number", str(tel["article_number"])])
-            if "production_date" in tel and tel["production_date"] != "N/A":
-                self.info_store.append(["Date of Production", str(tel["production_date"])])
-            if "appliance_number" in tel and tel["appliance_number"]:
-                self.info_store.append(["Appliance Number", str(tel["appliance_number"])])
-            if "serial_number_word" in tel and tel["serial_number_word"]:
-                self.info_store.append(["Logic Board Serial (ID)", str(tel["serial_number_word"])])
-            if "appliance_code" in tel and tel["appliance_code"] != "N/A":
-                self.info_store.append(["Appliance Code", str(tel["appliance_code"])])
-            if "software_version_display" in tel:
-                self.info_store.append(["Software Version Display", str(tel["software_version_display"])])
-            if "spdl_country_code" in tel and tel["spdl_country_code"] != "N/A":
-                self.info_store.append(["SPDL Country Code", str(tel["spdl_country_code"])])
-            if "spdl_download_date" in tel and tel["spdl_download_date"] != "N/A":
-                self.info_store.append(["SPDL Date Download", str(tel["spdl_download_date"])])
-            if "spdl_language_date" in tel and tel["spdl_language_date"] != "N/A":
-                self.info_store.append(["SPDL Date Language File", str(tel["spdl_language_date"])])
-            if "water_hardness_dh" in tel:
-                self.info_store.append(["Water Hardness", f"{tel['water_hardness_dh']} °dH"])
-            if "cups_since_intervention" in tel:
-                self.info_store.append(["Cups Since Last Intervention", f"{tel['cups_since_intervention']:,}"])
-            if "preparations_since_intervention" in tel:
-                self.info_store.append(["Preparations Since Last Intervention", f"{tel['preparations_since_intervention']:,}"])
-        self.info_store.append(["Firmware Identifier", summary["firmware_string"]])
-        self.info_store.append(["Profile EF Code", summary["ef_code"]])
-        if summary.get("telemetry"):
-            tel = summary["telemetry"]
-            if "appliance_number" in tel:
-                self.info_store.append(["Appliance Number", str(tel["appliance_number"])])
-            if "appliance_code" in tel and tel["appliance_code"] != "N/A":
-                self.info_store.append(["Appliance Code", str(tel["appliance_code"])])
-            if "grinder_formatted" in tel:
-                self.info_store.append(["Grinder Operating Time", f"{tel['grinder_formatted']} ({tel.get('grinder_seconds', 0)} s)"])
-            if "water_dispensed_liters" in tel:
-                self.info_store.append(["Total Water Dispensed", f"{tel['water_dispensed_liters']} Liters"])
-            if "descaling_agent_liters" in tel:
-                self.info_store.append(["Descaling Agent Consumed", f"{tel['descaling_agent_liters']} Liters"])
-            if "since_last_service_preparations" in tel:
-                self.info_store.append(["Cycles Since Last Service", f"{tel['since_last_service_preparations']} preparations"])
-        self.info_store.append(["Power Specification", summary.get("power_spec", "N/A")])
-        self.info_store.append(["Total Cups Dispensed", f"{summary['total_cups']:,}"])
-        self.info_store.append(["Total Brew Cycles", f"{summary['total_preparations']:,}"])
-        self.info_store.append(["Serial Port", summary["port"]])
-        self.info_store.append(["Baud Rate", "9600 Baud (8-N-1)"])
-        self.info_store.append(["Protocol Mode", summary.get("protocol_mode", "ASCII Optical")])
-        self.info_store.append(["Diagnostics Timestamp", summary["timestamp"]])
+            for k, v in summary["telemetry"].items():
+                if not isinstance(v, (dict, list)):
+                    self.info_store.append([k.replace("_", " ").title(), str(v)])
 
         # Populate Live Sensors Tab if available from session
-        if hasattr(session, "live_sensors") and session.live_sensors:
-            self._on_live_sensors_updated(session.live_sensors)
+        if summary.get("live_sensors"):
+            self._on_live_sensors_updated(summary["live_sensors"])
+
+    def _on_auto_poll_toggled(self, widget):
+        if self.chk_auto_poll.get_active():
+            if self.auto_poll_tag is None:
+                self.auto_poll_tag = GLib.timeout_add(2000, self._auto_poll_tick)
+                self._on_refresh_sensors_clicked(None)
+        else:
+            if self.auto_poll_tag is not None:
+                GLib.source_remove(self.auto_poll_tag)
+                self.auto_poll_tag = None
+
+    def _auto_poll_tick(self) -> bool:
+        if not self.chk_auto_poll.get_active():
+            self.auto_poll_tag = None
+            return False
+        if not self.is_reading:
+            self._on_refresh_sensors_clicked(None)
+        return True
 
     def _on_refresh_sensors_clicked(self, widget):
         if self.is_reading:
             return
 
         active_port = self.port_combo.get_active_text()
+        active_mfr = self.mfr_combo.get_active_id() or "auto"
         if not active_port:
             self.lbl_sensors_status.set_text("No serial port selected!")
             return
@@ -661,11 +676,15 @@ class JuraDiagApp(Gtk.Window):
         self.spinner_sensors.start()
         self.lbl_sensors_status.set_text(f"Querying live hardware sensors on {active_port}...")
 
-        thread = threading.Thread(target=self._run_sensor_poll_worker, args=(active_port,), daemon=True)
+        thread = threading.Thread(target=self._run_sensor_poll_worker, args=(active_port, active_mfr), daemon=True)
         thread.start()
 
-    def _run_sensor_poll_worker(self, port: str):
-        result = sc.query_live_sensors(port, baudrate=9600)
+    def _run_sensor_poll_worker(self, port: str, mfr: str):
+        try:
+            session = WRATSession(port, manufacturer=mfr)
+            result = session.query_live_sensors()
+        except Exception as e:
+            result = {"error": str(e)}
         GLib.idle_add(self._on_live_sensors_updated, result)
 
     def _on_live_sensors_updated(self, result: dict):
@@ -705,6 +724,7 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_sub_tray.set_text("Tray OK")
 
         # Machine State
+        rdness = result.get("readiness")
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
             st = sw.get("status", "")
@@ -736,21 +756,48 @@ class JuraDiagApp(Gtk.Window):
                 elif "Busy" in st:
                     self.lbl_live_state.set_markup("<span color='#89dceb'>BUSY</span>")
                     self.lbl_sub_state.set_text("Operation in Progress")
-                elif "Hardware Fault" in st:
+                elif "Hardware Fault" in st or "FAULT" in st:
                     self.lbl_live_state.set_markup("<span color='#f38ba8'>HARDWARE FAULT</span>")
                     self.lbl_sub_state.set_text(st.replace("Hardware Fault (", "").replace(")", ""))
                 else:
                     self.lbl_live_state.set_markup("<span color='#f38ba8'>NOT READY</span>")
                     self.lbl_sub_state.set_text(sw.get("badge", "Check Appliance"))
+        elif rdness:
+            if rdness.lower() == "ready":
+                self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY</span>")
+                self.lbl_sub_state.set_text("Appliance Ready")
+            elif "press maintenance" in rdness.lower():
+                self.lbl_live_state.set_markup("<span color='#fab387'>PRESS MAINTENANCE</span>")
+                self.lbl_sub_state.set_text("Fill System Required")
+            elif "fault" in rdness.lower() or "error" in rdness.lower():
+                self.lbl_live_state.set_markup("<span color='#f38ba8'>FAULT</span>")
+                self.lbl_sub_state.set_text(rdness)
+            else:
+                self.lbl_live_state.set_markup("<span color='#fab387'>STATUS</span>")
+                self.lbl_sub_state.set_text(rdness)
         else:
             self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY</span>")
             self.lbl_sub_state.set_text("Nominal")
 
         # Thermoblock Heaters & Thermal Sensors
         telem = result.get("telemetry", {})
+        sensor_dict = {s.get("id"): s for s in result.get("sensors", [])}
+
         if "heater_coffee_str" in telem:
             self.lbl_live_coffee_tb.set_text(telem["heater_coffee_str"])
             self.lbl_sub_coffee_tb.set_text(telem.get("heater_coffee_status", "Ready to Brew"))
+        elif "heater_coffee" in sensor_dict:
+            s = sensor_dict["heater_coffee"]
+            self.lbl_live_coffee_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_coffee_tb.set_text("Coffee Thermoblock")
+        elif "boiler_coffee" in sensor_dict:
+            s = sensor_dict["boiler_coffee"]
+            self.lbl_live_coffee_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_coffee_tb.set_text("Coffee Boiler")
+        elif "boiler_espresso" in sensor_dict:
+            s = sensor_dict["boiler_espresso"]
+            self.lbl_live_coffee_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_coffee_tb.set_text("Espresso Boiler")
         elif "heater_ntc_raw" in telem:
             self.lbl_live_coffee_tb.set_text(f"ADC {telem['heater_ntc_raw']}")
             self.lbl_sub_coffee_tb.set_text("Nominal")
@@ -759,7 +806,19 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_sub_coffee_tb.set_text("Standby")
 
         is_dual = telem.get("is_dual_heater", False)
-        if is_dual:
+        if "heater_steam" in sensor_dict:
+            s = sensor_dict["heater_steam"]
+            self.lbl_live_steam_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_steam_tb.set_text("Steam Heater")
+        elif "boiler_steam" in sensor_dict:
+            s = sensor_dict["boiler_steam"]
+            self.lbl_live_steam_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_steam_tb.set_text("Steam Generator")
+        elif "boiler_instant" in sensor_dict:
+            s = sensor_dict["boiler_instant"]
+            self.lbl_live_steam_tb.set_text(s.get("badge", s.get("status", "OK")))
+            self.lbl_sub_steam_tb.set_text("Instant Boiler")
+        elif is_dual:
             s_str = telem.get("heater_steam_str", "Installed")
             s_stat = telem.get("heater_steam_status", "Ready for Steam")
             self.lbl_live_steam_tb.set_text(s_str)
@@ -792,7 +851,8 @@ class JuraDiagApp(Gtk.Window):
             self.live_counters_store.append([c_name, c_cnt, eval_str])
 
     def _on_export_clicked(self):
-        if not self.session:
+        active_sess = self.wrat_session or self.session
+        if not active_sess:
             dialog = Gtk.MessageDialog(
                 transient_for=self,
                 flags=0,
@@ -806,7 +866,7 @@ class JuraDiagApp(Gtk.Window):
             return
 
         dialog = Gtk.FileChooserDialog(
-            title="Save Jura Diagnostic Report",
+            title="Save W.R.A.T. Diagnostic Report",
             parent=self,
             action=Gtk.FileChooserAction.SAVE
         )
@@ -830,18 +890,30 @@ class JuraDiagApp(Gtk.Window):
         filter_csv.add_pattern("*.csv")
         dialog.add_filter(filter_csv)
 
-        default_name = f"jura_diag_{self.session.model_family}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        summary = active_sess.get_structured_summary()
+        m_name = summary.get("machine_model", "appliance").replace(" ", "_").replace("/", "_")
+        default_name = f"wrat_diag_{m_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         dialog.set_current_name(default_name)
 
         resp = dialog.run()
         if resp == Gtk.ResponseType.OK:
             filename = dialog.get_filename()
+            import json
             if filename.endswith(".json"):
-                data = self.session.export_json()
+                data = json.dumps(summary, indent=2, ensure_ascii=False)
             elif filename.endswith(".csv"):
-                data = self.session.export_csv()
+                lines = ["Category,Metric,Value"]
+                lines.append(f"Identity,Vendor,{summary.get('vendor')}")
+                lines.append(f"Identity,Model,{summary.get('machine_model')}")
+                lines.append(f"Identity,Serial,{summary.get('serial_number')}")
+                lines.append(f"Summary,Total Cups,{summary.get('total_cups')}")
+                for b in summary.get("beverages", []):
+                    lines.append(f"Beverage,{b.get('name')},{b.get('count')}")
+                for m in summary.get("maintenance", []):
+                    lines.append(f"Maintenance,{m.get('name')},{m.get('count')}")
+                data = "\n".join(lines)
             else:
-                data = self.session.export_text_report()
+                data = json.dumps(summary, indent=2, ensure_ascii=False)
 
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(data)

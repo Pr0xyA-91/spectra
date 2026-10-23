@@ -50,6 +50,9 @@ def list_serial_ports() -> List[str]:
     ports.append("DEMO / SIMULATION (Jura S8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
+    ports.append("DEMO / SIMULATION (Nivona NICR768)")
+    ports.append("DEMO / SIMULATION (Lamanti-KL X680C)")
+    ports.append("DEMO / SIMULATION (Lamanti-JN JL300)")
     return ports
 
 
@@ -316,3 +319,9 @@ class JuraSerialConnection:
                 pass
             self.py_serial = None
         self.is_open = False
+
+
+# Universal Alias for multi-vendor abstraction
+DirectSerialConnection = JuraSerialConnection
+
+
