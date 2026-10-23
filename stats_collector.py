@@ -23,7 +23,7 @@ import time
 import json
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable
 
 import jura_protocol as jp
@@ -153,6 +153,28 @@ class JuraStatsSession:
                     else:
                         self.log(f"Notice: Block 0x{blk:04X} returned empty/timeout")
 
+                # Explicitly query machine identity & production EEPROM words
+                # 0x0030: Machine Sequence Number (Maschinennummer)
+                # 0x0031: Internal Serial Word (Seriennummer)
+                # 0x0032: Production Date in days elapsed since 1980-01-01 (Produktionsdatum)
+                # 0x00DA: Country / Regional Destination Code (Country_Code)
+                update_prog(0.80, "Reading machine serial and production records...")
+                id_addrs = [
+                    (0x30, "0030", "Machine Number"),
+                    (0x31, "0031", "Serial Word"),
+                    (0x32, "0032", "Production Date"),
+                    (0xDA, "00DA", "Country Code"),
+                ]
+                for addr_int, addr_hex, desc in id_addrs:
+                    if addr_int not in eeprom or eeprom[addr_int] == 0:
+                        ans = self.conn.query_ascii(f"RE:{addr_hex}", timeout=1.0)
+                        if ans and ans.lower().startswith("re:"):
+                            try:
+                                eeprom[addr_int] = int(ans[3:].strip(), 16)
+                                self.log(f"EEPROM [0x{addr_hex}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
+                            except ValueError:
+                                pass
+
                 update_prog(0.85, "Parsing machine telemetry & statistics...")
                 # Map standard Jura EEPROM statistics addresses
                 esp1 = eeprom.get(1, 0)
@@ -185,9 +207,46 @@ class JuraStatsSession:
                 since_serv = eeprom.get(21, 0)
                 water_since_decalc = eeprom.get(31, 0)
 
-                # Hardware codes
-                app_num = eeprom.get(48, 0)
-                app_code = f"{eeprom.get(48, 0):04X}{eeprom.get(50, 0):04X}"
+                # Hardware and Serial Identification
+                machine_num = eeprom.get(0x30, 0)
+                serial_word = eeprom.get(0x31, 0)
+                prod_days = eeprom.get(0x32, 0)
+                country_word = eeprom.get(0xDA, 0)
+
+                app_code = f"{machine_num:04X}{prod_days:04X}" if (machine_num or prod_days) else "N/A"
+
+                # Jura Production Date decoding:
+                # Word 0x0032 stores days elapsed since Jura epoch 1980-01-01
+                prod_date_str = "N/A"
+                date_prefix = ""
+                if prod_days and prod_days > 0:
+                    try:
+                        EPOCH_1980 = datetime(1980, 1, 1).date()
+                        dt = EPOCH_1980 + timedelta(days=prod_days)
+                        prod_date_str = dt.strftime("%d.%m.%Y")
+                        date_prefix = dt.strftime("%Y%m%d")
+                    except Exception as e:
+                        self.log(f"Warning: Could not parse production date from days {prod_days}: {e}")
+
+                # Jura Serial Number format:
+                # On the physical barcode/chassis label, Jura combines:
+                # [YYYYMMDD] (Production Date) + [NNNNN] (5-digit Machine Sequence Number)
+                if date_prefix and machine_num:
+                    serial_number = f"{date_prefix}{machine_num:05d}"
+                elif machine_num:
+                    serial_number = f"SN-{machine_num:05d}"
+                else:
+                    serial_number = "N/A"
+
+                # Country Code decoding:
+                # 0x00DA stores two ASCII characters for destination market (e.g. 0x435A -> 'CZ')
+                country_code = "N/A"
+                if country_word and country_word > 0:
+                    hi = (country_word >> 8) & 0xFF
+                    lo = country_word & 0xFF
+                    chars = "".join(chr(c) for c in (hi, lo) if 32 <= c <= 126).strip()
+                    if chars:
+                        country_code = chars
 
                 self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
                 self.maint_pcts = [None, None, None, None]
@@ -197,6 +256,11 @@ class JuraStatsSession:
                 gs = grinder_sec % 60
 
                 self.telemetry = {
+                    "serial_number": serial_number,
+                    "production_date": prod_date_str,
+                    "machine_number": machine_num,
+                    "serial_word": serial_word,
+                    "country_code": country_code,
                     "total_cups": self.total_cups,
                     "total_preparations": self.total_preparations,
                     "grinder_seconds": grinder_sec,
@@ -205,7 +269,7 @@ class JuraStatsSession:
                     "descaling_agent_liters": round(decalc_dl / 10.0, 1),
                     "since_last_service_preparations": since_serv,
                     "water_since_decalc_liters": round(water_since_decalc / 10.0, 1),
-                    "appliance_number": app_num,
+                    "appliance_number": machine_num,
                     "appliance_code": app_code,
                     "power_spec": self.power_spec,
                 }
@@ -296,6 +360,16 @@ class JuraStatsSession:
                 if raw_tf:
                     self.active_alerts = profiles_db.get_active_alerts(self.profile, raw_tf)
 
+            if not self.telemetry:
+                self.telemetry = {
+                    "total_cups": self.total_cups,
+                    "total_preparations": self.total_preparations,
+                    "serial_number": "2018041544012" if (self.conn and self.conn.is_demo) else "N/A",
+                    "production_date": "15.04.2018" if (self.conn and self.conn.is_demo) else "N/A",
+                    "machine_number": 44012 if (self.conn and self.conn.is_demo) else "N/A",
+                    "country_code": "EU" if (self.conn and self.conn.is_demo) else "N/A",
+                }
+
             update_prog(1.0, "Interrogation successfully completed!")
             self.log("Smart Connect interrogation completed successfully!")
             return True
@@ -361,6 +435,10 @@ class JuraStatsSession:
             "ef_code": self.ef_code,
             "protocol_mode": self.protocol_mode,
             "power_spec": self.power_spec,
+            "serial_number": self.telemetry.get("serial_number", "N/A"),
+            "production_date": self.telemetry.get("production_date", "N/A"),
+            "machine_number": self.telemetry.get("machine_number", "N/A"),
+            "country_code": self.telemetry.get("country_code", "N/A"),
             "total_preparations": self.total_preparations,
             "total_cups": grand_total,
             "beverages": beverage_list,
@@ -399,9 +477,15 @@ class JuraStatsSession:
         out.append(f"Protocol:          {data['protocol_mode']}")
         out.append(f"Power Spec:        {data['power_spec']}")
         if self.telemetry:
-            if "appliance_number" in self.telemetry:
-                out.append(f"Appliance Number:  {self.telemetry['appliance_number']}")
-            if "appliance_code" in self.telemetry:
+            if "serial_number" in self.telemetry and self.telemetry["serial_number"] != "N/A":
+                out.append(f"Serial Number:     {self.telemetry['serial_number']}")
+            if "production_date" in self.telemetry and self.telemetry["production_date"] != "N/A":
+                out.append(f"Date of Production:{self.telemetry['production_date']:>14}")
+            if "machine_number" in self.telemetry and self.telemetry["machine_number"]:
+                out.append(f"Machine Number:    {self.telemetry['machine_number']}")
+            if "country_code" in self.telemetry and self.telemetry["country_code"] != "N/A":
+                out.append(f"Destination Region:{self.telemetry['country_code']:>6}")
+            if "appliance_code" in self.telemetry and self.telemetry["appliance_code"] != "N/A":
                 out.append(f"Appliance Code:    {self.telemetry['appliance_code']}")
         out.append("")
 

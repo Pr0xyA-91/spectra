@@ -452,13 +452,23 @@ class JuraDiagApp(Gtk.Window):
         # Populate Info Tab
         self.info_store.clear()
         self.info_store.append(["Machine Family", summary["machine_model"]])
+        if summary.get("telemetry"):
+            tel = summary["telemetry"]
+            if "serial_number" in tel and tel["serial_number"] != "N/A":
+                self.info_store.append(["Serial Number (Barcode)", str(tel["serial_number"])])
+            if "production_date" in tel and tel["production_date"] != "N/A":
+                self.info_store.append(["Date of Production", str(tel["production_date"])])
+            if "machine_number" in tel and tel["machine_number"]:
+                self.info_store.append(["Machine Sequence No", str(tel["machine_number"])])
+            if "country_code" in tel and tel["country_code"] != "N/A":
+                self.info_store.append(["Destination Market", str(tel["country_code"])])
         self.info_store.append(["Firmware Identifier", summary["firmware_string"]])
         self.info_store.append(["Profile EF Code", summary["ef_code"]])
         if summary.get("telemetry"):
             tel = summary["telemetry"]
             if "appliance_number" in tel:
                 self.info_store.append(["Appliance Number", str(tel["appliance_number"])])
-            if "appliance_code" in tel:
+            if "appliance_code" in tel and tel["appliance_code"] != "N/A":
                 self.info_store.append(["Appliance Code", str(tel["appliance_code"])])
             if "grinder_formatted" in tel:
                 self.info_store.append(["Grinder Operating Time", f"{tel['grinder_formatted']} ({tel.get('grinder_seconds', 0)} s)"])

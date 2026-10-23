@@ -31,6 +31,7 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
   - **Modern Gen 7+**: E4, E6, E8, ENA 4/8, D4/D6, S8, J6/J8/J10, Z6/Z8/Z10, C3/C8, Commercial X4/X6/X8/X10, W4/W8, WE6/WE8, and GIGA series (5, 6, 10, W10, X3, X7, X8, X9).
   - **Classic / Professional**: IMPRESSA XJ5, XJ6, XJ9, XF50, XS90, F50, J9, C5, and WJ500.
 - **Telemetry & Operational Metrics**:
+  - **Serial Number & Production Identification**: Decodes the official 13/14-digit chassis barcode serial number (`YYYYMMDD` + 5-digit sequence), date of manufacture (decoded from days since Jura 1980 epoch), internal unit serial words, and regional destination codes (e.g. `CZ`, `EU`, `US`).
   - **Beverage Counters**: Grand Total cups dispensed, single vs. double preparations, and per-specialty drink counts.
   - **Hygiene & Maintenance**: Cleaning cycles, descaling cycles, filter replacements, and rinse counts.
   - **Lifetime Telemetry**: Active grinder operating time (hours/minutes/seconds), total water throughput in Liters, descaling fluid consumed in Liters, cycles since last service intervention, and hardware appliance identification codes.
