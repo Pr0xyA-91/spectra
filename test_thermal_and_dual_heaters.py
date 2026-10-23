@@ -5,6 +5,7 @@ and dual-heater thermoblock accommodation in W.R.A.T. (Jura Module).
 """
 
 import sys
+import time
 import unittest
 
 import stats_collector as sc
@@ -138,13 +139,14 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertTrue(switches2["machine_ready"]["ok"])
         self.assertEqual(switches2["machine_ready"]["status"], "Ready to Brew / Nominal")
 
-    def test_clogged_system_and_filling_loop_detection(self):
-        """Test detection of flowmeter timeouts and 'Press Maintenance' status with filling loop."""
-        clogged_conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
-        orig_query = clogged_conn.query_ascii
+    def test_historical_fault_handling_and_machine_readiness(self):
+        """Test that historical EEPROM errors (RE:0028, RE:01B4) do not block live physical readiness."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
 
-        # Case A: Repeated no-flow in history (RE:01B4 = 0x0103) -> displays filling loop
-        def mock_query_clogged_repeat(cmd, timeout=1.0):
+        # Machine has historical flowmeter timeouts (RE:01B4 = 0x0103) and latched fault (RE:0028 = 0x0339)
+        # But physically it is hot (0x03C6 = 96.6°C), tray inserted, water present, not busy.
+        def mock_query(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "HZ:":
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
@@ -152,36 +154,78 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
                 return "re:0339"
             elif cmd_c == "RE:01B4":
                 return "re:0103"
+            elif cmd_c == "RE:00C3":
+                return "re:1E32"
             return orig_query(cmd, timeout=timeout)
-        clogged_conn.query_ascii = mock_query_clogged_repeat
+        conn.query_ascii = mock_query
 
-        res = sc.query_live_sensors("mock", conn=clogged_conn)
-        switches = {s["id"]: s for s in res["switches"]}
-        self.assertFalse(switches["machine_ready"]["ok"])
-        self.assertEqual(switches["machine_ready"]["badge"], "CLOGGED")
-        self.assertEqual(switches["machine_ready"]["status"], "Press Maintenance (Filling Loop - Repeated No Flow)")
+        # Manual Refresh (fast_poll=False)
+        res_manual = sc.query_live_sensors("mock", conn=conn, fast_poll=False)
+        switches = {s["id"]: s for s in res_manual["switches"]}
+        self.assertTrue(switches["machine_ready"]["ok"])
+        self.assertEqual(switches["machine_ready"]["badge"], "READY")
+        self.assertEqual(switches["machine_ready"]["status"], "Ready to Brew / Nominal")
+        self.assertTrue(switches["hydraulic_system"]["ok"])
+        self.assertEqual(switches["hydraulic_system"]["badge"], "NORMAL")
+        self.assertEqual(res_manual["telemetry"]["water_hardness_dh"], 30)
+        self.assertEqual(res_manual["telemetry"]["total_fm_timeouts"], 4)
 
-        self.assertIn("hydraulic_system", switches)
-        self.assertFalse(switches["hydraulic_system"]["ok"])
-        self.assertEqual(switches["hydraulic_system"]["badge"], "CLOGGED")
+        # Fast Poll (fast_poll=True) - water hardness must be omitted to protect GUI card
+        res_fast = sc.query_live_sensors("mock", conn=conn, fast_poll=True)
+        self.assertNotIn("water_hardness_dh", res_fast["telemetry"])
+        switches_fast = {s["id"]: s for s in res_fast["switches"]}
+        self.assertTrue(switches_fast["machine_ready"]["ok"])
+        self.assertEqual(switches_fast["machine_ready"]["badge"], "READY")
 
-        # Case B: No repeated no-flow history (RE:01B4 = 0x0000) -> simply displays "Press Maintenance"
-        def mock_query_single_prompt(cmd, timeout=1.0):
+        # Cold / Heating up machine (Coffee TB = 43.0°C) -> Heating Up status
+        def mock_query_cold(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
-            elif cmd_c == "RE:0028":
-                return "re:0000"
-            elif cmd_c == "RE:01B4":
+                return "hz:010001100000,027E,00E2,0000,01AE,0802,3,000000,0000,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query_cold
+
+        res_cold = sc.query_live_sensors("mock", conn=conn, fast_poll=True)
+        switches_cold = {s["id"]: s for s in res_cold["switches"]}
+        self.assertFalse(switches_cold["machine_ready"]["ok"])
+        self.assertEqual(switches_cold["machine_ready"]["badge"], "HEATING")
+        self.assertIn("Heating Up", switches_cold["machine_ready"]["status"])
+
+    def test_live_water_flow_rate_calculation(self):
+        """Test calculation of live water flow in ml/s from flowmeter pulse telemetry."""
+        flow_conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = flow_conn.query_ascii
+        current_hz = ["hz:010001100000,027E,00E2,0000,03CE,0802,3,000000,0000,00"]
+
+        def mock_query(cmd, timeout=1.0):
+            if cmd.strip() == "HZ:":
+                return current_hz[0]
+            elif cmd.strip() == "RE:0028":
                 return "re:0000"
             return orig_query(cmd, timeout=timeout)
-        clogged_conn.query_ascii = mock_query_single_prompt
+        flow_conn.query_ascii = mock_query
 
-        res_single = sc.query_live_sensors("mock", conn=clogged_conn)
-        switches_single = {s["id"]: s for s in res_single["switches"]}
-        self.assertFalse(switches_single["machine_ready"]["ok"])
-        self.assertEqual(switches_single["machine_ready"]["badge"], "MAINTENANCE")
-        self.assertEqual(switches_single["machine_ready"]["status"], "Press Maintenance")
+        # 1. Idle state (0 pulses) -> 0.0 ml/s
+        res1 = sc.query_live_sensors("mock_flow", conn=flow_conn)
+        self.assertEqual(res1["telemetry"]["flow_pulses"], 0)
+        self.assertEqual(res1["telemetry"]["flow_rate_ml_s"], 0.0)
+        self.assertEqual(res1["telemetry"]["flow_volume_ml"], 0.0)
+
+        # 2. Dispensing state (0x005E = 94 pulses: 94 / 2.366 ~= 39.7 ml)
+        # Seed previous sample so dt is exactly controlled to 2.0s
+        sc._last_flowmeter_samples["mock_flow"] = (0, time.time() - 2.0, 0.0)
+        current_hz[0] = "hz:010001100000,027E,00E2,005E,03CE,0802,3,000000,0000,00"
+        res2 = sc.query_live_sensors("mock_flow", conn=flow_conn)
+        self.assertEqual(res2["telemetry"]["flow_pulses"], 94)
+        self.assertAlmostEqual(res2["telemetry"]["flow_volume_ml"], 39.7, places=1)
+        # 39.7 ml / 2.0s = ~19.9 ml/s
+        self.assertGreater(res2["telemetry"]["flow_rate_ml_s"], 18.0)
+        self.assertLess(res2["telemetry"]["flow_rate_ml_s"], 22.0)
+
+        # Verify flow sensor entry in sensors list
+        flow_sensor = next((s for s in res2["sensors"] if s["id"] == "water_flow"), None)
+        self.assertIsNotNone(flow_sensor)
+        self.assertIn("ml/s", flow_sensor["status"])
 
 
 if __name__ == "__main__":

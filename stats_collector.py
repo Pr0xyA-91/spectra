@@ -35,7 +35,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -142,6 +142,7 @@ def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False)
 
 
 _last_fill_prompt_timestamps: Dict[str, float] = {}
+_last_flowmeter_samples: Dict[str, Tuple[int, float, float]] = {}
 
 
 def query_live_sensors(
@@ -175,20 +176,25 @@ def query_live_sensors(
 
     try:
         # Check if ASCII mode responds to TY:
-        ty_resp = conn.query_ascii("TY:")
-        is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
-        if not is_ascii and conn.is_demo:
+        # In fast_poll mode, avoid redundant TY: and RE:0028 serial queries if cached on connection
+        cached_ef = getattr(conn, "_cached_ef", None)
+        if cached_ef is not None:
+            detected_ef = cached_ef
             is_ascii = True
-
-        if is_ascii:
-            results["protocol"] = "Plain ASCII (Optical/Serial)"
-
-            # Detect Machine EF-Code for Model-Specific Topology (Dual vs Single Heater)
+        else:
+            ty_resp = conn.query_ascii("TY:")
+            is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
+            if not is_ascii and conn.is_demo:
+                is_ascii = True
             detected_ef = ""
             if ty_resp and ty_resp.startswith("ty:"):
                 toks = ty_resp[3:].strip().split()
                 if toks:
                     detected_ef = toks[0].upper()
+            setattr(conn, "_cached_ef", detected_ef)
+
+        if is_ascii:
+            results["protocol"] = "Plain ASCII (Optical/Serial)"
 
             # 1. HZ: Live Microswitches, Thermoblock Sensors & Operating Status
             hz_resp = conn.query_ascii("HZ:")
@@ -201,9 +207,10 @@ def query_live_sensors(
             ready_badge = "READY"
             heater_ntc_raw = 0
             steam_ntc_raw = 0
-            steam_sec_raw = 0
+            flow_pulses_raw = 0
             ambient_ntc_raw = 0
             rotary_pos = "0"
+            grounds_full = False
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
@@ -216,9 +223,9 @@ def query_live_sensors(
                         ambient_ntc_raw = 0
                 if len(parts) > 3:
                     try:
-                        steam_sec_raw = int(parts[3], 16)
+                        flow_pulses_raw = int(parts[3], 16)
                     except ValueError:
-                        steam_sec_raw = 0
+                        flow_pulses_raw = 0
                 if len(parts) > 4:
                     try:
                         heater_ntc_raw = int(parts[4], 16)
@@ -259,27 +266,38 @@ def query_live_sensors(
                 if len(parts) > 7 and len(parts[7]) > 1 and parts[7][1] == "1":
                     grounds_full = True
 
-                # - System Fill / Maintenance Prompt:
-                # Jura coffee machines blink the "Press Maintenance" indicator at ~1 Hz (000100 alternating with 000000).
-                # During fast_poll (live auto-polling), debounce across the blinking off-phase (6.0s hold) so the UI does not oscillate.
-                raw_fill_prompt = (len(parts) > 7 and len(parts[7]) > 3 and parts[7][3] == "1")
-                now_ts = time.time()
-                port_key = str(port_name or "default")
-                if raw_fill_prompt:
-                    _last_fill_prompt_timestamps[port_key] = now_ts
-                last_seen_ts = _last_fill_prompt_timestamps.get(port_key, 0.0)
-                if fast_poll:
-                    fill_system_prompt = raw_fill_prompt or ((now_ts - last_seen_ts) < 6.0)
-                else:
-                    fill_system_prompt = raw_fill_prompt
-                    _last_fill_prompt_timestamps.pop(port_key, None)
+            # Calculate Live Water Flow Rate (ml/s) from Flowmeter Pulse Deltas
+            # Calibration constant: 2.366 pulses per ml for DigiMesa turbine (~422 pulses / dl)
+            now_ts = time.time()
+            port_key = str(port_name or "default")
+            prev_flow_sample = _last_flowmeter_samples.get(port_key)
+
+            flow_ml_s = 0.0
+            if prev_flow_sample is not None:
+                prev_pulses, prev_ts, _ = prev_flow_sample
+                dt = now_ts - prev_ts
+                dp = flow_pulses_raw - prev_pulses
+                if dt > 0.1 and dp > 0:
+                    ml_delivered = dp / 2.366
+                    flow_ml_s = round(ml_delivered / dt, 1)
+                elif dp == 0:
+                    flow_ml_s = 0.0
+                elif dp < 0:
+                    # Counter was reset by machine for new dispensing cycle
+                    if flow_pulses_raw > 0 and dt > 0.1:
+                        flow_ml_s = round((flow_pulses_raw / 2.366) / dt, 1)
+                    else:
+                        flow_ml_s = 0.0
+            else:
+                flow_ml_s = 0.0
+
+            _last_flowmeter_samples[port_key] = (flow_pulses_raw, now_ts, flow_ml_s)
+            cycle_volume_ml = round(flow_pulses_raw / 2.366, 1)
 
             # Decode temperatures in Celsius (0.1 °C resolution)
             temp_ambient = decode_jura_temperature(ambient_ntc_raw)
             temp_coffee = decode_jura_temperature(heater_ntc_raw)
             temp_steam = decode_jura_temperature(steam_ntc_raw)
-            if temp_steam is None and steam_sec_raw > 0:
-                temp_steam = decode_jura_temperature(steam_sec_raw)
 
             # Dual-Heater Model Determination
             # 1. Profile/Catalog match
@@ -301,25 +319,23 @@ def query_live_sensors(
             total_fm_timeouts = 0
             fm_intake_timeouts = 0
             fm_rinse_timeouts = 0
-            repeated_no_flow = False
-
-            # Query hardware fault register RE:0028 (fast, ~350ms)
-            r28 = conn.query_ascii("RE:0028")
-            if r28 and r28.startswith("re:"):
-                try:
-                    val_r28 = int(r28[3:], 16)
-                except ValueError:
-                    val_r28 = 0
-            results["fault_register_hex"] = f"0x{val_r28:04X}"
 
             if not fast_poll:
+                # Query hardware fault register RE:0028 (fast, ~350ms)
+                r28 = conn.query_ascii("RE:0028")
+                if r28 and r28.startswith("re:"):
+                    try:
+                        val_r28 = int(r28[3:], 16)
+                    except ValueError:
+                        val_r28 = 0
+                setattr(conn, "_cached_val_r28", val_r28)
+                results["fault_register_hex"] = f"0x{val_r28:04X}"
+
                 ic_resp = conn.query_ascii("IC:")
                 if ic_resp and ic_resp.startswith("ic:"):
                     results["raw_ic"] = ic_resp
 
-            # Query flowmeter history counters if relevant to diagnose filling loop
-            flowmeter_timeout = bool(val_r28 & 0x0300)
-            if flowmeter_timeout or fill_system_prompt or not fast_poll:
+                # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
                 if r1b4 and r1b4.startswith("re:"):
                     try:
@@ -329,11 +345,12 @@ def query_live_sensors(
                     except ValueError:
                         pass
                 total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
-                repeated_no_flow = (total_fm_timeouts >= 2)
+            else:
+                val_r28 = getattr(conn, "_cached_val_r28", 0)
+                results["fault_register_hex"] = f"0x{val_r28:04X}"
 
-            # 3. Comprehensive Machine Operational State & Fault Evaluation
-            # Priority detection: Blockages, Filling Loop, Microswitches, Safety Trips
-            flowmeter_timeout = bool(val_r28 & 0x0300)
+            # 3. Comprehensive Machine Operational State & Physical Evaluation
+            # Priority detection: Microswitches, Safety Trips, Temperatures, Idle
             ntc_fault = bool(val_r28 & 0x0006) if not is_dual_heater else bool(val_r28 & 0x00C6)
             heater_fault = bool(val_r28 & 0x0400)
             bu_fault = bool(val_r28 & 0x0018)
@@ -356,46 +373,6 @@ def query_live_sensors(
                 ready_status = "Not Ready (Empty Grounds Container)"
                 ready_badge = "FULL"
                 ready_icon = "🗑️"
-            elif fill_system_prompt or (flowmeter_timeout and repeated_no_flow):
-                ready_ok = False
-                if repeated_no_flow:
-                    ready_status = "Press Maintenance (Filling Loop - Repeated No Flow)"
-                    ready_badge = "CLOGGED"
-                    ready_icon = "⚠️"
-                    results["alerts"].append({
-                        "level": "CRITICAL",
-                        "code": "CLOGGED_FILLING_LOOP",
-                        "message": f"Machine reports 'Press Maintenance' with repeated no-flow timeouts ({fm_intake_timeouts} intake, {fm_rinse_timeouts} rinse events). Hydraulic circuit is clogged."
-                    })
-                else:
-                    ready_status = "Press Maintenance"
-                    ready_badge = "MAINTENANCE"
-                    ready_icon = "🔧"
-            elif flowmeter_timeout:
-                ready_ok = False
-                ready_status = "Flowmeter Timeout Detected"
-                ready_badge = "TIMEOUT"
-                ready_icon = "⚠️"
-            elif ntc_fault:
-                ready_ok = False
-                ready_status = "Hardware Fault (Thermoblock NTC Sensor)"
-                ready_badge = "FAULT"
-                ready_icon = "🛑"
-            elif heater_fault:
-                ready_ok = False
-                ready_status = "Hardware Fault (Heating Element Anomaly / Error 5)"
-                ready_badge = "FAULT"
-                ready_icon = "🛑"
-            elif bu_fault:
-                ready_ok = False
-                ready_status = "Hardware Fault (Brew Unit Blocked / Error 8)"
-                ready_badge = "FAULT"
-                ready_icon = "🛑"
-            elif valve_fault:
-                ready_ok = False
-                ready_status = "Hardware Fault (Ceramic/Multiway Valve Error / Error 6)"
-                ready_badge = "FAULT"
-                ready_icon = "🛑"
             elif is_busy:
                 ready_ok = False
                 ready_status = "Busy (Operation in Progress)"
@@ -443,21 +420,11 @@ def query_live_sensors(
                     except ValueError:
                         pass
 
-            if repeated_no_flow:
-                hyd_status = f"Repeated No Flow ({total_fm_timeouts} Timeouts Recorded)"
-                hyd_badge = "CLOGGED"
-                hyd_ok = False
-                hyd_icon = "⚠️"
-            elif flowmeter_timeout:
-                hyd_status = "Flowmeter Timeout Detected"
-                hyd_badge = "TIMEOUT"
-                hyd_ok = False
-                hyd_icon = "⚠️"
-            elif fill_system_prompt:
-                hyd_status = "Fill System Prompt Active"
-                hyd_badge = "FILLING"
-                hyd_ok = False
-                hyd_icon = "🔧"
+            if flow_ml_s > 0.0:
+                hyd_status = f"Water Flowing ({flow_ml_s:.1f} ml/s)"
+                hyd_badge = f"{flow_ml_s:.1f} ml/s"
+                hyd_ok = True
+                hyd_icon = "🌊"
             else:
                 hyd_status = "Nominal (Hydraulic Flow OK)"
                 hyd_badge = "NORMAL"
@@ -546,7 +513,19 @@ def query_live_sensors(
                     (0x0001, "channel", "Encoder Channel / Cable", "Pulse / cable check recommended", "Encoder pulses verified")
                 ]
 
-            sensor_list = []
+            sensor_list = [
+                {
+                    "id": "water_flow",
+                    "name": "Live Water Flow Rate",
+                    "status": f"{flow_ml_s:.1f} ml/s",
+                    "ok": True,
+                    "badge": f"{flow_ml_s:.1f} ml/s",
+                    "details": f"Flowmeter rate: {flow_ml_s:.1f} ml/s | Cycle volume: {cycle_volume_ml:.1f} ml ({flow_pulses_raw} pulses)",
+                    "icon": "🌊",
+                    "value": flow_ml_s,
+                    "unit": "ml/s"
+                }
+            ]
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -626,12 +605,19 @@ def query_live_sensors(
                 "ambient_temp_raw": ambient_ntc_raw,
                 "ambient_temp_str": f"{temp_ambient:.1f} °C" if temp_ambient is not None else "N/A",
                 "heater_ntc_raw": heater_ntc_raw,
-                "water_hardness_dh": water_hardness,
-                "filter_volume_liters": filter_liters,
-                "filter_claris_active": filter_claris,
-                "filter_ext_active": filter_ext,
-                "rotary_switch": rotary_pos
+                "rotary_switch": rotary_pos,
+                "flow_pulses": flow_pulses_raw,
+                "flow_rate_ml_s": flow_ml_s,
+                "flow_volume_ml": cycle_volume_ml
             }
+            if not fast_poll:
+                results["telemetry"]["water_hardness_dh"] = water_hardness
+                results["telemetry"]["filter_volume_liters"] = filter_liters
+                results["telemetry"]["filter_claris_active"] = filter_claris
+                results["telemetry"]["filter_ext_active"] = filter_ext
+                results["telemetry"]["total_fm_timeouts"] = total_fm_timeouts
+                results["telemetry"]["fm_intake_timeouts"] = fm_intake_timeouts
+                results["telemetry"]["fm_rinse_timeouts"] = fm_rinse_timeouts
             # Append component faults to alerts list
             results["alerts"].extend([
                 {"name": s["name"], "details": s["details"], "blocking": True}
@@ -717,6 +703,9 @@ def query_live_sensors(
                 "heater_coffee_status": "Ready",
                 "heater_steam_str": "Nominal" if is_dual_sc else "Not Installed (Single Heater Model)",
                 "heater_steam_status": "Ready" if is_dual_sc else "Not Installed",
+                "flow_pulses": 0,
+                "flow_rate_ml_s": 0.0,
+                "flow_volume_ml": 0.0,
             }
 
     except Exception as e:

@@ -19,12 +19,12 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.3)")
+        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)")
         self.set_default_size(1020, 700)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -172,7 +172,7 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.3</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.4</span></b>")
         app_title.set_alignment(0, 0.5)
         sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Jura Diagnostics Module")
         sub_title.get_style_context().add_class("card-label")
@@ -360,6 +360,7 @@ class JuraDiagApp(Gtk.Window):
         card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
         card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
         card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
+        card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
         card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
         badges_box.pack_start(card_tank, True, True, 0)
@@ -367,6 +368,7 @@ class JuraDiagApp(Gtk.Window):
         badges_box.pack_start(card_state, True, True, 0)
         badges_box.pack_start(card_coffee, True, True, 0)
         badges_box.pack_start(card_steam, True, True, 0)
+        badges_box.pack_start(card_flow, True, True, 0)
         badges_box.pack_start(card_filter, True, True, 0)
 
         main_box.pack_start(badges_box, False, False, 4)
@@ -853,11 +855,25 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_live_steam_tb.set_text("Not Installed")
             self.lbl_sub_steam_tb.set_text("Single Heater Model")
 
-        # Filter / Hardness
-        dh = telem.get("water_hardness_dh", 16)
-        claris = telem.get("filter_claris_active", False)
-        self.lbl_live_filter.set_text(f"{dh} °dH")
-        self.lbl_sub_filter.set_text("CLARIS Active" if claris else "Bypass Mode")
+        # Filter / Hardness (Manual refresh only)
+        if "water_hardness_dh" in telem:
+            dh = telem["water_hardness_dh"]
+            claris = telem.get("filter_claris_active", False)
+            ext = telem.get("filter_ext_active", False)
+            self.lbl_live_filter.set_text(f"{dh} °dH")
+            mode_desc = "CLARIS Active" if claris else ("External Active" if ext else "Bypass Mode")
+            self.lbl_sub_filter.set_text(mode_desc)
+
+        # Water Flow Rate (ml/s) & Cycle Delivered Volume
+        flow_rate = telem.get("flow_rate_ml_s", 0.0)
+        flow_pulses = telem.get("flow_pulses", 0)
+        flow_vol = telem.get("flow_volume_ml", 0.0)
+        if flow_rate > 0.0:
+            self.lbl_live_flow.set_markup(f"<span color='#89dceb'><b>{flow_rate:.1f} ml/s</b></span>")
+            self.lbl_sub_flow.set_text(f"Flowing ({flow_vol:.1f} ml / {flow_pulses} P)")
+        else:
+            self.lbl_live_flow.set_text("0.0 ml/s")
+            self.lbl_sub_flow.set_text("No Flow / Idle" if flow_pulses == 0 else f"Cycle: {flow_vol:.1f} ml ({flow_pulses} P)")
 
         # Populate Hardware Diagnostics Store
         self.live_sensors_store.clear()

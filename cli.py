@@ -13,7 +13,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 
 def print_banner():
@@ -24,7 +24,7 @@ def print_banner():
  \        /    |    |   \ /    |    \ |    |   
   \__/\  /     |____|_  / \____|__  / |____|   
        \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.3)
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)
          Universal Diagnostics Engine [Jura Module]
     """
     print(banner)
@@ -32,7 +32,7 @@ def print_banner():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.3)"
+        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.4)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
