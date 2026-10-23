@@ -37,7 +37,7 @@ fi
 
 # Push to public remote
 echo "[*] Pushing to public remote (wrat-sniffer)..."
-git push public public-main:main --tags
+git push public public-main:main
 
 # Switch back to original branch
 git checkout "$SOURCE_BRANCH"
