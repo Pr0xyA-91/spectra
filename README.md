@@ -1,4 +1,4 @@
-# Jura Modern Diagnostics & Statistics Suite
+# W.R.A.T. — WhiteRat Asynchronous Telemetry
 
 [![Version: 0.3.2](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -7,7 +7,8 @@
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.3.2)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
+> **Project Status: Alpha (v0.3.2)** — Active reverse-engineering and protocol integration.
+> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) is an extensible multi-manufacturer appliance telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines. Support for additional manufacturers is planned for future releases.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -53,7 +54,7 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
 ```bash
 ./run.sh
 ```
-*(Or launch **Jura Modern Diagnostics** from your desktop application launcher / menu).*
+*(Or launch **W.R.A.T.** from your desktop application launcher / menu).*
 
 ### 2. Run from the Command Line (CLI)
 Read diagnostics from a connected machine:

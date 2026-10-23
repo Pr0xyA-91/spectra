@@ -1,11 +1,11 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Jura Modern Diagnostics
-Comment=Diagnostic & statistics reader for modern Jura coffee machines (Gen 7+ & Smart Connect)
+Name=W.R.A.T. (WhiteRat Asynchronous Telemetry)
+Comment=WhiteRat Asynchronous Telemetry & Appliance Diagnostics (Jura Module)
 Exec=/home/a91/Projects/Jura Modern Diag/run.sh
 Icon=/home/a91/Projects/Jura Modern Diag/icon.png
 Terminal=false
 Categories=Utility;HardwareSettings;
-Keywords=Jura;Coffee;Diagnostics;Telemetry;Statistics;
+Keywords=WRAT;WhiteRat;Jura;Coffee;Diagnostics;Telemetry;Statistics;
 StartupNotify=true

@@ -1086,7 +1086,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"Modern Appliance Diagnostics Suite v{__version__} (Universal Optical & Smart Connect)")
+        out.append(f"W.R.A.T. Telemetry Suite v{__version__} (WhiteRat Asynchronous Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")

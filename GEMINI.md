@@ -1,4 +1,4 @@
-# Jura Modern Diagnostics (Project Guidelines)
+# W.R.A.T. — WhiteRat Asynchronous Telemetry (Project Guidelines)
 
 - **Entry Point**: Run via `./run.sh` or `JuraModernDiag.desktop`.
 - **Self-Contained**: All scripts, database files, and tools reside directly inside `/home/a91/Projects/Jura Modern Diag/`.
