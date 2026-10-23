@@ -141,12 +141,16 @@ def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False)
             return "Cold / Standby"
 
 
+_last_fill_prompt_timestamps: Dict[str, float] = {}
+
+
 def query_live_sensors(
     port_name: str,
     baudrate: int = 9600,
     conn: Optional[JuraSerialConnection] = None,
     profile: Optional[Dict[str, Any]] = None,
-    is_legacy: bool = True
+    is_legacy: bool = True,
+    fast_poll: bool = False
 ) -> Dict[str, Any]:
     """
     Query live physical microswitches, hardware sensor statuses,
@@ -256,9 +260,19 @@ def query_live_sensors(
                     grounds_full = True
 
                 # - System Fill / Maintenance Prompt:
-                fill_system_prompt = False
-                if len(parts) > 7 and len(parts[7]) > 3 and parts[7][3] == "1":
-                    fill_system_prompt = True
+                # Jura coffee machines blink the "Press Maintenance" indicator at ~1 Hz (000100 alternating with 000000).
+                # During fast_poll (live auto-polling), debounce across the blinking off-phase (6.0s hold) so the UI does not oscillate.
+                raw_fill_prompt = (len(parts) > 7 and len(parts[7]) > 3 and parts[7][3] == "1")
+                now_ts = time.time()
+                port_key = str(port_name or "default")
+                if raw_fill_prompt:
+                    _last_fill_prompt_timestamps[port_key] = now_ts
+                last_seen_ts = _last_fill_prompt_timestamps.get(port_key, 0.0)
+                if fast_poll:
+                    fill_system_prompt = raw_fill_prompt or ((now_ts - last_seen_ts) < 6.0)
+                else:
+                    fill_system_prompt = raw_fill_prompt
+                    _last_fill_prompt_timestamps.pop(port_key, None)
 
             # Decode temperatures in Celsius (0.1 °C resolution)
             temp_ambient = decode_jura_temperature(ambient_ntc_raw)
@@ -283,8 +297,14 @@ def query_live_sensors(
             heater_count = 2 if is_dual_heater else 1
 
             # 2. Query Diagnostic Fault & Input Registers (RE:0028 & IC:)
-            r28 = conn.query_ascii("RE:0028")
             val_r28 = 0
+            total_fm_timeouts = 0
+            fm_intake_timeouts = 0
+            fm_rinse_timeouts = 0
+            repeated_no_flow = False
+
+            # Query hardware fault register RE:0028 (fast, ~350ms)
+            r28 = conn.query_ascii("RE:0028")
             if r28 and r28.startswith("re:"):
                 try:
                     val_r28 = int(r28[3:], 16)
@@ -292,23 +312,24 @@ def query_live_sensors(
                     val_r28 = 0
             results["fault_register_hex"] = f"0x{val_r28:04X}"
 
-            ic_resp = conn.query_ascii("IC:")
-            if ic_resp and ic_resp.startswith("ic:"):
-                results["raw_ic"] = ic_resp
+            if not fast_poll:
+                ic_resp = conn.query_ascii("IC:")
+                if ic_resp and ic_resp.startswith("ic:"):
+                    results["raw_ic"] = ic_resp
 
-            # Query flowmeter history counters to distinguish single timeout vs repeated no flow
-            r1b4 = conn.query_ascii("RE:01B4")
-            fm_intake_timeouts = 0
-            fm_rinse_timeouts = 0
-            if r1b4 and r1b4.startswith("re:"):
-                try:
-                    w_1b4 = int(r1b4[3:], 16)
-                    fm_intake_timeouts = w_1b4 & 0xFF
-                    fm_rinse_timeouts = (w_1b4 >> 8) & 0xFF
-                except ValueError:
-                    pass
-            total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
-            repeated_no_flow = (total_fm_timeouts >= 2)
+            # Query flowmeter history counters if relevant to diagnose filling loop
+            flowmeter_timeout = bool(val_r28 & 0x0300)
+            if flowmeter_timeout or fill_system_prompt or not fast_poll:
+                r1b4 = conn.query_ascii("RE:01B4")
+                if r1b4 and r1b4.startswith("re:"):
+                    try:
+                        w_1b4 = int(r1b4[3:], 16)
+                        fm_intake_timeouts = w_1b4 & 0xFF
+                        fm_rinse_timeouts = (w_1b4 >> 8) & 0xFF
+                    except ValueError:
+                        pass
+                total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
+                repeated_no_flow = (total_fm_timeouts >= 2)
 
             # 3. Comprehensive Machine Operational State & Fault Evaluation
             # Priority detection: Blockages, Filling Loop, Microswitches, Safety Trips
@@ -335,7 +356,7 @@ def query_live_sensors(
                 ready_status = "Not Ready (Empty Grounds Container)"
                 ready_badge = "FULL"
                 ready_icon = "🗑️"
-            elif fill_system_prompt:
+            elif fill_system_prompt or (flowmeter_timeout and repeated_no_flow):
                 ready_ok = False
                 if repeated_no_flow:
                     ready_status = "Press Maintenance (Filling Loop - Repeated No Flow)"
@@ -352,14 +373,9 @@ def query_live_sensors(
                     ready_icon = "🔧"
             elif flowmeter_timeout:
                 ready_ok = False
-                if repeated_no_flow:
-                    ready_status = "Hydraulic Flow Error (Repeated No Flow)"
-                    ready_badge = "CLOGGED"
-                    ready_icon = "⚠️"
-                else:
-                    ready_status = "Flowmeter Timeout Detected"
-                    ready_badge = "TIMEOUT"
-                    ready_icon = "⚠️"
+                ready_status = "Flowmeter Timeout Detected"
+                ready_badge = "TIMEOUT"
+                ready_icon = "⚠️"
             elif ntc_fault:
                 ready_ok = False
                 ready_status = "Hardware Fault (Thermoblock NTC Sensor)"
@@ -399,31 +415,33 @@ def query_live_sensors(
             # 4. Filter & System Config
             filter_claris = False
             filter_ext = False
-            r29 = conn.query_ascii("RE:0029")
-            if r29 and r29.startswith("re:"):
-                try:
-                    w29 = int(r29[3:], 16)
-                    filter_ext = bool(w29 & 0x0001)
-                    filter_claris = bool(w29 & 0x0010)
-                except ValueError:
-                    pass
-
             water_hardness = 16
-            rc3 = conn.query_ascii("RE:00C3")
-            if rc3 and rc3.startswith("re:"):
-                try:
-                    wc3 = int(rc3[3:], 16)
-                    water_hardness = (wc3 >> 8) & 0xFF
-                except ValueError:
-                    pass
-
             filter_liters = 0.0
-            r45 = conn.query_ascii("RE:0045")
-            if r45 and r45.startswith("re:"):
-                try:
-                    filter_liters = round(int(r45[3:], 16) / 10.0, 1)
-                except ValueError:
-                    pass
+
+            if not fast_poll:
+                r29 = conn.query_ascii("RE:0029")
+                if r29 and r29.startswith("re:"):
+                    try:
+                        w29 = int(r29[3:], 16)
+                        filter_ext = bool(w29 & 0x0001)
+                        filter_claris = bool(w29 & 0x0010)
+                    except ValueError:
+                        pass
+
+                rc3 = conn.query_ascii("RE:00C3")
+                if rc3 and rc3.startswith("re:"):
+                    try:
+                        wc3 = int(rc3[3:], 16)
+                        water_hardness = (wc3 >> 8) & 0xFF
+                    except ValueError:
+                        pass
+
+                r45 = conn.query_ascii("RE:0045")
+                if r45 and r45.startswith("re:"):
+                    try:
+                        filter_liters = round(int(r45[3:], 16) / 10.0, 1)
+                    except ValueError:
+                        pass
 
             if repeated_no_flow:
                 hyd_status = f"Repeated No Flow ({total_fm_timeouts} Timeouts Recorded)"
@@ -542,50 +560,51 @@ def query_live_sensors(
             results["sensors"] = sensor_list
 
             # 4. Error Frequency Counters (dynamically mapped for Single vs Dual Heater)
-            if is_dual_heater:
-                counter_queries = [
-                    ("RE:01B0", "Encoder Channel Errors", "Coffee Thermoblock NTC Short Circuits"),
-                    ("RE:01B1", "Coffee Thermoblock NTC Broken Errors", "Brew Unit Position Faults"),
-                    ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
-                    ("RE:01B3", "Steam Thermoblock NTC Short Circuits", "Steam Thermoblock NTC Broken Errors"),
-                    ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
-                    ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
-                    ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
-                ]
-            else:
-                counter_queries = [
-                    ("RE:01B0", "Encoder Channel Errors", "Thermoblock NTC Short Circuits"),
-                    ("RE:01B1", "Thermoblock NTC Broken/Open Errors", "Brew Unit Position Faults"),
-                    ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
-                    ("RE:01B3", "Main Power Relay Faults", "Thermal Overheat Safety Cutoffs"),
-                    ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
-                    ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
-                    ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
-                ]
-
             counters: Dict[str, int] = {}
-            for q_cmd, low_lbl, high_lbl in counter_queries:
-                resp_c = conn.query_ascii(q_cmd)
-                if resp_c and resp_c.startswith("re:"):
-                    try:
-                        w_val = int(resp_c[3:], 16)
-                        counters[low_lbl] = w_val & 0xFF
-                        counters[high_lbl] = (w_val >> 8) & 0xFF
-                    except ValueError:
+            if not fast_poll:
+                if is_dual_heater:
+                    counter_queries = [
+                        ("RE:01B0", "Encoder Channel Errors", "Coffee Thermoblock NTC Short Circuits"),
+                        ("RE:01B1", "Coffee Thermoblock NTC Broken Errors", "Brew Unit Position Faults"),
+                        ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
+                        ("RE:01B3", "Steam Thermoblock NTC Short Circuits", "Steam Thermoblock NTC Broken Errors"),
+                        ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
+                        ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
+                        ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
+                    ]
+                else:
+                    counter_queries = [
+                        ("RE:01B0", "Encoder Channel Errors", "Thermoblock NTC Short Circuits"),
+                        ("RE:01B1", "Thermoblock NTC Broken/Open Errors", "Brew Unit Position Faults"),
+                        ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
+                        ("RE:01B3", "Main Power Relay Faults", "Thermal Overheat Safety Cutoffs"),
+                        ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
+                        ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
+                        ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
+                    ]
+
+                for q_cmd, low_lbl, high_lbl in counter_queries:
+                    resp_c = conn.query_ascii(q_cmd)
+                    if resp_c and resp_c.startswith("re:"):
+                        try:
+                            w_val = int(resp_c[3:], 16)
+                            counters[low_lbl] = w_val & 0xFF
+                            counters[high_lbl] = (w_val >> 8) & 0xFF
+                        except ValueError:
+                            counters[low_lbl] = 0
+                            counters[high_lbl] = 0
+                    else:
                         counters[low_lbl] = 0
                         counters[high_lbl] = 0
-                else:
-                    counters[low_lbl] = 0
-                    counters[high_lbl] = 0
 
-            resp_ku = conn.query_ascii("RE:0103")
-            if resp_ku and resp_ku.startswith("re:"):
-                try:
-                    counters["Ceramic Valve Sensor Errors"] = int(resp_ku[3:], 16)
-                except ValueError:
+                resp_ku = conn.query_ascii("RE:0103")
+                if resp_ku and resp_ku.startswith("re:"):
+                    try:
+                        counters["Ceramic Valve Sensor Errors"] = int(resp_ku[3:], 16)
+                    except ValueError:
+                        counters["Ceramic Valve Sensor Errors"] = 0
+                else:
                     counters["Ceramic Valve Sensor Errors"] = 0
-            else:
-                counters["Ceramic Valve Sensor Errors"] = 0
 
             results["error_counters"] = counters
 
