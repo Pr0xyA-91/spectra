@@ -12,7 +12,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.1-alpha"
+__version__ = "0.2"
 
 
 def print_banner():
@@ -23,14 +23,14 @@ def print_banner():
 /\__|    |  |  /|  | \/ / __ \    Y    (  <_> ) /_/ \  ___/|  | \/   |  \ |    `   \  |/ __ \_/ /_/  >
 \________|____/ |__|   (____  /____|__  /\____/\____ |\___  >__|  |___|  /_______  /__/____  /\___  / 
                             \/        \/            \/    \/           \/        \/        \//_____/  
-        Universal Diagnostic & Statistics Reader for Jura Coffee Machines (v0.1-alpha)
+        Universal Diagnostic & Statistics Reader for Jura Coffee Machines (v0.2)
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Jura Modern Diagnostics & Statistics Telemetry Tool (v0.1-alpha)"
+        description="Jura Modern Diagnostics & Statistics Telemetry Tool (v0.2)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"Jura Modern Diag {__version__}")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")

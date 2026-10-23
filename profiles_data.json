@@ -31677,7 +31677,7 @@
   "EF518M": {
     "model_family": "IMPRESSA XJ5 Professional GII",
     "ef_code": "EF518M",
-    "article_number": "15101",
+    "article_number": "13705",
     "series": "IMPRESSA Professional X-Line",
     "products": [
       {
@@ -31754,7 +31754,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "appliance_type": "13705 IMPRESSA XJ5 Professional GII Smart Connect TB Brillantsilber EU",
+    "software_version_display": "EF518D V02.04"
   },
   "EF518D": {
     "model_family": "WJ500 Professional Smart Connect",
@@ -36515,7 +36517,7 @@
   "EF518": {
     "model_family": "IMPRESSA XJ5 Professional GII",
     "ef_code": "EF518",
-    "article_number": "15101",
+    "article_number": "13705",
     "series": "IMPRESSA Professional X-Line",
     "products": [
       {
@@ -36592,6 +36594,8 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "appliance_type": "13705 IMPRESSA XJ5 Professional GII Smart Connect TB Brillantsilber EU",
+    "software_version_display": "EF518D V02.04"
   }
 }
