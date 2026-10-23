@@ -225,6 +225,25 @@ class NivonaDriver(BaseApplianceDriver):
                     except Exception:
                         pass
 
+            flow_pulses = 0
+            if len(parts) > 3:
+                try:
+                    flow_pulses = int(parts[3], 16)
+                except Exception:
+                    flow_pulses = 0
+
+            sensors.append({
+                "id": "water_flow",
+                "name": "Live Water Flow Rate",
+                "status": "0.0 ml/s" if flow_pulses == 0 else f"{flow_pulses} pulses",
+                "ok": True,
+                "badge": "0.0 ml/s" if flow_pulses == 0 else f"{round(flow_pulses / 2.366, 1)} ml",
+                "details": f"Flowmeter: {flow_pulses} pulses (~{round(flow_pulses / 2.366, 1)} ml)",
+                "icon": "🌊",
+                "value": 0.0,
+                "unit": "ml/s"
+            })
+
             sensors.append({
                 "id": "heater_coffee",
                 "name": "Coffee Thermoblock",

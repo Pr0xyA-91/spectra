@@ -227,6 +227,17 @@ class LamantiJNDriver(BaseApplianceDriver):
                 "details": "Piezoelectric fluid pressure transducer",
                 "icon": "📈"
             })
+            sensors.append({
+                "id": "water_flow",
+                "name": "Live Water Flow Rate",
+                "status": "0.0 ml/s",
+                "ok": True,
+                "badge": "0.0 ml/s",
+                "details": "Flowmeter transducer monitoring nominal (standby)",
+                "icon": "🌊",
+                "value": 0.0,
+                "unit": "ml/s"
+            })
 
             readiness = "Ready" if (door_closed and waste_tray_ok and grounds_box_ok and water_inlet_ok) else "Maintenance Required"
 

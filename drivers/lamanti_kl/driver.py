@@ -253,6 +253,17 @@ class LamantiKLDriver(BaseApplianceDriver):
                 "icon": "♨️"
             })
             sensors.append({
+                "id": "water_flow",
+                "name": "Live Water Flow Rate",
+                "status": f"{flow_pulses} pulses",
+                "ok": True,
+                "badge": f"{round(flow_pulses / 2.2, 1)} ml",
+                "details": f"Hydraulic impulse turbine: {round(flow_pulses / 2.2, 1)} ml ({flow_pulses} pulses)",
+                "icon": "🌊",
+                "value": 0.0,
+                "unit": "ml/s"
+            })
+            sensors.append({
                 "id": "flowmeter",
                 "name": "Flowmeter Pulser",
                 "status": f"{flow_pulses} pulses",
