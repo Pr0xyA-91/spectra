@@ -31,8 +31,9 @@ fi
 # Commit if there are changes
 if [ -n "$(git status --porcelain)" ]; then
     VERSION=$(grep '__version__' stats_collector.py | head -n1 | cut -d'"' -f2)
-    git commit -m "release: Sync v${VERSION} release to public distribution"
-    echo "[+] Created public release commit for v${VERSION}"
+    MSG="${2:-release: Sync v${VERSION} release to public distribution}"
+    git commit -m "$MSG"
+    echo "[+] Created public release commit: $MSG"
 fi
 
 # Push to public remote

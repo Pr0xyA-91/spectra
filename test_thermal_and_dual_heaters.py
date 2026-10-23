@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unit and integration tests for temperature decoding, operational thermal evaluation,
-and dual-heater thermoblock accommodation in Jura Modern Diag.
+and dual-heater thermoblock accommodation in W.R.A.T. (Jura Module).
 """
 
 import sys

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Jura Modern Diagnostics - Command Line Interface
+W.R.A.T. - WhiteRat Asynchronous Telemetry
+Universal Appliance Telemetry & Diagnostics Engine (Jura Module)
 """
 
 import sys
@@ -17,22 +18,23 @@ __version__ = "0.3.2"
 
 def print_banner():
     banner = r"""
-     ____.                     _____            .___                   ________  .__                
-    |    |__ _________ _____  /     \   ____  __| _/___________  ____  \______ \ |__|____     ____  
-    |    |  |  \_  __ \\__  \/  \ /  \ /  _ \/ __ |/ __ \_  __ \/    \  |    |  \|  \__  \   / ___\ 
-/\__|    |  |  /|  | \/ / __ \    Y    (  <_> ) /_/ \  ___/|  | \/   |  \ |    `   \  |/ __ \_/ /_/  >
-\________|____/ |__|   (____  /____|__  /\____/\____ |\___  >__|  |___|  /_______  /__/____  /\___  / 
-                            \/        \/            \/    \/           \/        \/        \//_____/  
-        Universal Diagnostic & Statistics Reader for Jura Coffee Machines (v0.3.2)
+ __      __   __________     _____  ___________
+/  \    /  \  \______   \   /  _  \ \__    ___/
+\   \/\/   /   |       _/  /  /_\  \  |    |   
+ \        /    |    |   \ /    |    \ |    |   
+  \__/\  /     |____|_  / \____|__  / |____|   
+       \/             \/          \/           
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.2)
+         Universal Diagnostics Engine [Jura Module]
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Jura Modern Diagnostics & Statistics Telemetry Tool (v0.3.2)"
+        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.2)"
     )
-    parser.add_argument("-V", "--version", action="version", version=f"Jura Modern Diag {__version__}")
+    parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")

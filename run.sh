@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Jura Modern Diagnostics - Launcher Script
+# W.R.A.T. - WhiteRat Asynchronous Telemetry - Launcher Script
+# Universal Appliance Telemetry Engine (Jura Diagnostics Module)
 # Supports modern Jura coffee machines (Generation 7+ & Smart Connect protocol)
 # ==============================================================================
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Jura Modern Diagnostics - Desktop GUI
+W.R.A.T. - WhiteRat Asynchronous Telemetry - Desktop GUI
 A modern GTK3 application for reading statistics, beverage counters,
-maintenance history, and active alerts from modern Jura coffee machines.
+maintenance history, active alerts, and live sensors from Jura coffee machines.
 """
 
 import sys
@@ -23,7 +23,7 @@ __version__ = "0.3.2"
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Jura Modern Diagnostics Suite (v0.3.2)")
+        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.2)")
         self.set_default_size(1020, 700)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -167,9 +167,9 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.3.2</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.2</span></b>")
         app_title.set_alignment(0, 0.5)
-        sub_title = Gtk.Label(label="Universal Optical & Smart Connect Protocol Reader")
+        sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Jura Diagnostics Module")
         sub_title.get_style_context().add_class("card-label")
         sub_title.set_alignment(0, 0.5)
         title_box.pack_start(app_title, False, False, 0)
