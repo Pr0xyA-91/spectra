@@ -56,17 +56,22 @@ python3 gui.py
   ```
   - Automatically checks out `public-main`, syncs from `main`, strictly purges `GEMINI.md`, sanitizes `.desktop` launchers to portable invocation (`bash -c '"$(dirname "%k")"/run.sh'`), and pushes to `public:main`.
 
-### B. W.R.A.T. Multi-Manufacturer Suite (`/home/a91/Projects/WRAT`)
-* **Branch**: `feat/multi-manufacturer-support` | **Version**: `v0.4.1`
+### B. W.R.A.T. Multi-Manufacturer Suite (`/home/a91/Projects/WRAT` & `/home/a91/Projects/WRAT_win`)
+* **Branches**: `feat/multi-manufacturer-support` (Linux), `feat/multi-manufacturer-support_win` (Windows Edition)
 * **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/diag_sw-alpha_J.git`
 * **Supported Brands**:
   - `jura`: Native TOP-tronic ASCII + Smart Connect `@`-protocol.
   - `nivona`: ASCII/NICR gateway protocol.
   - `lamanti-kl`: Kalerm commercial protocol (`0xAA/0x55` framing).
   - `lamanti-jn`: Jetinno Vending MDB/CC2 protocol (`0x02` STX framing).
+* **Windows Architecture & Portability**:
+  - `serial_io.py`: Auto-scans `COM*` ports via `serial.tools.list_ports.comports()`, handles Windows non-path device names, and uses `pyserial` without POSIX `termios`.
+  - Zero-dependency Web Dashboard (`gui_web.py` / `run_web.bat`): Serves responsive dark-mode UI on `http://127.0.0.1:8080` using standard library `http.server`, auto-opening the browser.
+  - Launchers: `run.bat` (auto-detects GTK or falls back to Web UI), `run_web.bat`, `run_cli.bat`, `run_demo.bat`.
+  - Offline Simulation: Supports offline exploration for all 6 demo models (`S8`, `E8`, `Z10`, `NICR768`, `X680C`, `JL300`) with no hardware connected.
 * **Test Suite (14/14 tests pass)**:
   ```bash
-  cd "/home/a91/Projects/WRAT"
+  cd "/home/a91/Projects/WRAT_win"
   python3 -m unittest discover -s .
   ```
 

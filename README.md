@@ -1,14 +1,14 @@
 # W.R.A.T. — WhiteRat Asynchronous Telemetry
 
-[![Version: 0.3.3](https://img.shields.io/badge/version-0.3.3-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
+[![Version: 0.4.1-win](https://img.shields.io/badge/version-0.4.1--win-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
+[![GUI](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
+[![Platform: Linux | Windows](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.3.3)** — Active reverse-engineering and protocol integration.
-> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) is an extensible multi-manufacturer appliance telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines. Support for additional manufacturers is planned for future releases.
+> **Project Status: Alpha (v0.4.1 Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
+> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) supports **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -48,7 +48,27 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
 
 ---
 
-## 🚀 Quick Start
+## 🪟 Windows Quick Start (Windows 10 / 11)
+
+W.R.A.T. runs natively on Windows with **zero external C-library or GTK dependencies required** when using the Web Dashboard or CLI.
+
+### 1. Initial Setup (One-Time)
+Double-click `install_windows.bat` or run in Command Prompt / PowerShell:
+```cmd
+python -m pip install -r requirements-win.txt
+```
+
+### 2. Launching W.R.A.T. on Windows
+* **Web Dashboard (Recommended)**: Double-click **`run_web.bat`** (or run `python gui_web.py`).
+  - Automatically opens a sleek, responsive dark-mode dashboard in your default browser at `http://127.0.0.1:8080`.
+  - Features all 7 live sensor KPI cards, flow rate tracking, cup preparations, maintenance health bars, and JSON/CSV export.
+* **Universal GUI Launcher**: Double-click **`run.bat`** (launches GTK3 if installed, otherwise auto-falls back to Web Dashboard).
+* **Command Line Interface**: Double-click **`run_cli.bat`** (or run `python cli.py --sensors`).
+* **Offline Simulation Demo**: Double-click **`run_demo.bat`** to immediately test telemetry without hardware attached.
+
+---
+
+## 🚀 Linux Quick Start
 
 ### 1. Launch the Desktop GUI
 ```bash

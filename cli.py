@@ -42,7 +42,7 @@ def main():
     parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-m", "--manufacturer", choices=["auto", "jura", "nivona", "lamanti-kl", "lamanti-jn"], default="auto", help="Appliance manufacturer driver (default: auto)")
-    parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
+    parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. COM3, /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")
     parser.add_argument("--demo", action="store_true", help="Run with simulated demo machine")
     parser.add_argument("--demo-model", choices=["S8", "E8", "Z10", "NICR768", "X680C", "JL300"], default="S8", help="Model to simulate in demo mode")
@@ -90,7 +90,7 @@ def main():
             target_port = available[0]
             print(f"[*] Auto-detected serial port: {target_port}")
         else:
-            print("[!] No physical serial adapter detected (/dev/ttyUSB* or /dev/ttyACM*).")
+            print("[!] No physical serial adapter detected (COM* or /dev/ttyUSB*).")
             print("[*] Falling back to interactive demo simulation mode.")
             target_port = f"DEMO / SIMULATION ({args.demo_model})"
 

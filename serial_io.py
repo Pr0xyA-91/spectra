@@ -12,6 +12,7 @@ Supports:
 """
 
 import os
+import sys
 import glob
 import time
 import select
@@ -26,6 +27,7 @@ except ImportError:
 
 try:
     import serial
+    import serial.tools.list_ports
     HAS_PYSERIAL = True
 except ImportError:
     HAS_PYSERIAL = False
@@ -34,17 +36,33 @@ from jura_protocol import MockJuraMachine
 
 
 def list_serial_ports() -> List[str]:
-    """Discover available physical and virtual serial ports on Linux."""
+    """Discover available physical and virtual serial ports on Linux and Windows."""
     ports = []
-    # High priority: USB adapters commonly used for Jura diagnostics (FTDI, CH340, CP210x)
-    for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
-        ports.extend(sorted(glob.glob(pattern)))
-    # Virtual PTYs
-    for pty_path in sorted(glob.glob("/dev/pts/[0-9]*")):
-        ports.append(pty_path)
-    # Hardware motherboard serials (usually low priority)
-    for tty in sorted(glob.glob("/dev/ttyS[0-3]")):
-        ports.append(tty)
+
+    # Windows COM ports
+    if sys.platform.startswith("win"):
+        if HAS_PYSERIAL:
+            try:
+                for p in serial.tools.list_ports.comports():
+                    desc = f" ({p.description})" if p.description and p.description != "n/a" else ""
+                    ports.append(f"{p.device}{desc}")
+            except Exception:
+                pass
+        if not ports:
+            # Fallback scan COM1..COM16
+            for i in range(1, 17):
+                ports.append(f"COM{i}")
+    else:
+        # Linux / POSIX ports
+        # High priority: USB adapters commonly used for Jura diagnostics (FTDI, CH340, CP210x)
+        for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
+            ports.extend(sorted(glob.glob(pattern)))
+        # Virtual PTYs
+        for pty_path in sorted(glob.glob("/dev/pts/[0-9]*")):
+            ports.append(pty_path)
+        # Hardware motherboard serials (usually low priority)
+        for tty in sorted(glob.glob("/dev/ttyS[0-3]")):
+            ports.append(tty)
 
     # Always provide Demo / Simulation option
     ports.append("DEMO / SIMULATION (Jura S8)")
@@ -60,7 +78,10 @@ class JuraSerialConnection:
     """Universal serial transceiver interface for Jura diagnostics."""
 
     def __init__(self, port_name: str, baudrate: int = 9600, timeout: float = 1.5):
-        self.port_name = port_name
+        # Extract pure COM port if description is appended, e.g. "COM3 (USB-Serial)"
+        clean_port = port_name.split()[0] if port_name and port_name.upper().startswith("COM") else port_name
+        self.port_name = clean_port
+        self.raw_port_label = port_name
         self.baudrate = baudrate
         self.timeout = timeout
         self.is_demo = "DEMO" in port_name.upper() or port_name.lower() in ("mock", "demo")
@@ -81,11 +102,12 @@ class JuraSerialConnection:
             self._open_hardware_port()
 
     def _open_hardware_port(self):
-        if not os.path.exists(self.port_name):
+        is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith("COM")
+        if not is_windows and not os.path.exists(self.port_name):
             raise FileNotFoundError(f"Serial port {self.port_name} does not exist.")
 
         # Prefer native POSIX termios on Linux
-        if HAS_TERMIOS:
+        if HAS_TERMIOS and not is_windows:
             try:
                 self.fd = os.open(self.port_name, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
                 attrs = termios.tcgetattr(self.fd)
@@ -145,7 +167,7 @@ class JuraSerialConnection:
             self._demo_reply_buffer = self.mock_machine.process_input(data)
             return len(data)
 
-        if self.fd is not None:
+        if self.fd is not None and HAS_TERMIOS:
             written = os.write(self.fd, data)
             # Drain output buffer
             termios.tcdrain(self.fd)
@@ -194,7 +216,7 @@ class JuraSerialConnection:
             self._demo_reply_buffer = b""
             return
         time.sleep(0.04)
-        if self.fd is not None:
+        if self.fd is not None and HAS_TERMIOS:
             while select.select([self.fd], [], [], 0.04)[0]:
                 try:
                     os.read(self.fd, 1024)

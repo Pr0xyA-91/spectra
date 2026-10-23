@@ -1,0 +1,3 @@
+# W.R.A.T. Windows Dependencies
+# Core serial interface for physical COM adapters
+pyserial>=3.5

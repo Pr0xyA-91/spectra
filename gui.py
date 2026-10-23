@@ -11,9 +11,21 @@ import time
 import threading
 from datetime import datetime
 
-import gi
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib, Pango
+try:
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk, GLib, Pango
+    HAS_GTK = True
+    GTK_IMPORT_ERROR = None
+except (ImportError, ValueError) as e:
+    HAS_GTK = False
+    GTK_IMPORT_ERROR = str(e)
+    # Provide dummy fallback base class so class definitions parse cleanly
+    class _DummyGtkWindow:
+        pass
+    class _DummyGtk:
+        Window = _DummyGtkWindow
+    Gtk = _DummyGtk()
 
 import serial_io
 import profiles_db
@@ -523,7 +535,7 @@ class JuraDiagApp(Gtk.Window):
         active_idx = 0
         for idx, p in enumerate(ports):
             self.port_combo.append_text(p)
-            if p.startswith("/dev/ttyUSB"):
+            if p.startswith("/dev/ttyUSB") or p.startswith("COM"):
                 active_idx = idx
         if ports:
             self.port_combo.set_active(active_idx)
@@ -1014,6 +1026,25 @@ class JuraDiagApp(Gtk.Window):
 
 
 def main():
+    if not HAS_GTK:
+        print("=" * 78)
+        print("  W.R.A.T. — WhiteRat Asynchronous Telemetry")
+        print("=" * 78)
+        print("[!] PyGObject (GTK 3) is not installed in this Python environment.")
+        if GTK_IMPORT_ERROR:
+            print(f"    Notice: {GTK_IMPORT_ERROR}")
+        print("[*] Automatically launching the native W.R.A.T. Web Dashboard...")
+        print("=" * 78)
+        try:
+            import gui_web
+            gui_web.main()
+        except Exception as e:
+            print(f"[!] Failed to launch Web Dashboard: {e}")
+            print("[*] Running in Command-Line mode instead:")
+            import cli
+            cli.main()
+        return
+
     app = JuraDiagApp()
     app.connect("destroy", Gtk.main_quit)
     app.show_all()
