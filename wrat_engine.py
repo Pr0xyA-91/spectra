@@ -7,6 +7,8 @@ Coordinates device probing, live sensor polling, and telemetry extraction.
 
 from typing import Dict, List, Any, Optional, Callable, Tuple
 import time
+import csv
+import io
 
 from drivers import (
     BaseApplianceDriver,
@@ -46,13 +48,10 @@ class WRATSession:
     def ensure_connection(self):
         """Open physical or mock connection if not already provided."""
         if self.conn is None:
-            if self.port_name.lower().startswith("mock"):
-                self.conn = serial_io.MockJuraMachine()
-            else:
-                self.conn = serial_io.DirectSerialConnection(
-                    port_name=self.port_name,
-                    baudrate=self.baudrate
-                )
+            self.conn = serial_io.DirectSerialConnection(
+                port_name=self.port_name,
+                baudrate=self.baudrate
+            )
             self._owns_conn = True
 
     def close(self):
@@ -63,6 +62,12 @@ class WRATSession:
             except Exception:
                 pass
             self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def initialize_driver(self) -> BaseApplianceDriver:
         """Resolve driver based on user choice or automatic probing."""
@@ -132,8 +137,10 @@ class WRATSession:
         maintenance_list = [
             {
                 "name": m.name,
+                "label": m.name,
                 "count": m.count,
                 "percent": m.percent,
+                "percentage": m.percent,
                 "warning": m.warning
             }
             for m in t.maintenance
@@ -208,3 +215,20 @@ def format_text_summary(summary: Dict[str, Any]) -> str:
 
     lines.append("=" * 78)
     return "\n".join(lines) + "\n"
+
+
+def format_csv_summary(summary: Dict[str, Any]) -> str:
+    """Generate RFC 4180 compliant CSV string using standard csv.writer."""
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(["Category", "Metric", "Value"])
+    writer.writerow(["Identity", "Vendor", summary.get("vendor", "Unknown")])
+    writer.writerow(["Identity", "Model", summary.get("machine_model", "Unknown")])
+    writer.writerow(["Identity", "Serial", summary.get("serial_number", "N/A")])
+    writer.writerow(["Summary", "Total Cups", summary.get("total_cups", 0)])
+    writer.writerow(["Summary", "Total Preparations", summary.get("total_preparations", 0)])
+    for b in summary.get("beverages", []):
+        writer.writerow(["Beverage", b.get("name", "Product"), b.get("count", 0)])
+    for m in summary.get("maintenance", []):
+        writer.writerow(["Maintenance", m.get("name") or m.get("label", "Maintenance"), m.get("count", 0)])
+    return output.getvalue()

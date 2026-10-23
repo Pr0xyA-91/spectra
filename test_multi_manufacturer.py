@@ -230,6 +230,33 @@ class TestMultiManufacturerDrivers(unittest.TestCase):
         self.assertIn("beverages", summary)
         self.assertIn("maintenance", summary)
 
+    def test_demo_ports_multi_vendor_autodetect(self):
+        """Verify built-in DEMO / SIMULATION ports auto-detect to their respective manufacturer."""
+        cases = [
+            ("DEMO / SIMULATION (Jura S8)", "Jura"),
+            ("DEMO / SIMULATION (Nivona NICR768)", "Nivona"),
+            ("DEMO / SIMULATION (Lamanti-KL X680C)", "Lamanti-KL"),
+            ("DEMO / SIMULATION (Lamanti-JN JL300)", "Lamanti-JN"),
+        ]
+        for port_label, expected_vendor in cases:
+            with WRATSession(port_name=port_label, manufacturer="auto") as session:
+                sensors = session.query_live_sensors()
+                self.assertEqual(session.driver.vendor, expected_vendor)
+                self.assertIn("switches", sensors)
+                self.assertIn("telemetry", sensors)
+
+                ok = session.run_interrogation()
+                self.assertTrue(ok)
+                summary = session.get_structured_summary()
+                self.assertEqual(summary["vendor"], expected_vendor)
+                self.assertTrue(len(summary["maintenance"]) > 0)
+                self.assertNotEqual(summary["maintenance"][0]["name"], "Maintenance")
+                if expected_vendor == "Jura":
+                    names = [m["name"] for m in summary["maintenance"]]
+                    self.assertIn("Cleaning", names)
+                    self.assertIn("Descaling", names)
+                    self.assertIn("Rinsing", names)
+
 
 if __name__ == "__main__":
     unittest.main()

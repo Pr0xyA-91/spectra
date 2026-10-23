@@ -91,14 +91,25 @@ class JuraSerialConnection:
         self.is_open = False
 
         if self.is_demo:
-            if "Z10" in port_name.upper():
+            p_up = port_name.upper()
+            if any(k in p_up for k in ("NIVONA", "NICR", "NIVO")):
+                self.demo_vendor = "nivona"
+            elif any(k in p_up for k in ("LAMANTI-KL", "X680", "KALERM", "E30", "E60", "K95")):
+                self.demo_vendor = "lamanti-kl"
+            elif any(k in p_up for k in ("LAMANTI-JN", "JL300", "JL500", "JETINNO", "JLTT")):
+                self.demo_vendor = "lamanti-jn"
+            else:
+                self.demo_vendor = "jura"
+
+            if "Z10" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF545 V01.20", model_name="Z10")
-            elif "E8" in port_name.upper():
+            elif "E8" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
             self.is_open = True
         else:
+            self.demo_vendor = "hardware"
             self._open_hardware_port()
 
     def _open_hardware_port(self):
@@ -163,7 +174,28 @@ class JuraSerialConnection:
             raise IOError("Serial port is not open.")
 
         if self.is_demo:
-            # Route directly to Mock device
+            if getattr(self, "demo_vendor", "jura") == "lamanti-kl":
+                import struct
+                from drivers.lamanti_kl.driver import calculate_modbus_crc
+                if len(data) >= 8 and data[1] == 0x04:
+                    reg_count = struct.unpack(">H", data[4:6])[0]
+                    byte_count = reg_count * 2
+                    payload = struct.pack(">HHHHH", 3, 93, 125, 150, 0x00FF)
+                    if byte_count > len(payload):
+                        payload += b"\x00" * (byte_count - len(payload))
+                    else:
+                        payload = payload[:byte_count]
+                    hdr = struct.pack(">BBB", 0x01, 0x04, byte_count) + payload
+                    self._demo_reply_buffer = hdr + calculate_modbus_crc(hdr)
+                return len(data)
+            elif getattr(self, "demo_vendor", "jura") == "lamanti-jn":
+                import struct
+                from drivers.lamanti_jn.driver import calculate_jetinno_crc
+                if len(data) >= 6 and data[0] == 0xFE and data[3] == 0x14:
+                    body = struct.pack(">BBBBBBBB", 0xFE, 0x01, 0x00, 0x14, 0x00, 0x04, 0x02, 0x00) + bytes([93, 88])
+                    self._demo_reply_buffer = body + calculate_jetinno_crc(body)
+                return len(data)
+            # Route directly to Mock Jura device
             self._demo_reply_buffer = self.mock_machine.process_input(data)
             return len(data)
 
@@ -239,6 +271,17 @@ class JuraSerialConnection:
 
         if self.is_demo:
             time.sleep(0.02)
+            vendor = getattr(self, "demo_vendor", "jura")
+            if vendor in ("lamanti-kl", "lamanti-jn") or "SMART CONNECT" in self.port_name.upper():
+                return None
+            if vendor == "nivona":
+                if cmd_clean == "TY:":
+                    return "ty:NICR 0698 V01.04"
+                elif cmd_clean == "HZ:":
+                    return "hz:000000000000,0280,0000,0000,0000,0000,0,000000,0000,00"
+                elif cmd_clean == "RT:0002":
+                    return "rt:01720000"
+                return None
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"
             elif cmd_clean == "IC:":

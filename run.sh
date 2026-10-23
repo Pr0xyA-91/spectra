@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # W.R.A.T. - WhiteRat Asynchronous Telemetry - Launcher Script
-# Universal Appliance Telemetry Engine (Jura Diagnostics Module)
-# Supports modern Jura coffee machines (Generation 7+ & Smart Connect protocol)
+# Universal Appliance Telemetry Engine (Jura, Nivona, Lamanti-KL, Lamanti-JN)
 # ==============================================================================
 
 set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
+
+# Check if user requested Web Dashboard
+if [[ "$*" == *"--web"* ]]; then
+    exec python3 "$PROJECT_DIR/gui_web.py" "$@"
+fi
 
 # Check if user requested CLI mode or help
 if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]]; then

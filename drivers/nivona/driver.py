@@ -156,14 +156,17 @@ class NivonaDriver(BaseApplianceDriver):
         try:
             # Send HZ: (Hardware Zustand)
             hz_raw = self._query_ascii(conn, "HZ:", timeout=1.0)
-            parts = hz_raw[3:].strip().split() if hz_raw and hz_raw.startswith("hz:") else []
+            if hz_raw and hz_raw.startswith("hz:"):
+                payload_str = hz_raw[3:].strip()
+                parts = [p.strip() for p in payload_str.split(",")] if "," in payload_str else payload_str.split()
+            else:
+                parts = []
 
             # Nivona status bit mapping (shares Eugster/Frismag architecture)
             tank_ok = True
             tray_ok = True
             brew_unit_in = True
             grounds_ok = True
-            filling_loop = False
 
             if len(parts) >= 8:
                 try:
@@ -172,7 +175,6 @@ class NivonaDriver(BaseApplianceDriver):
                     tray_ok = not bool(w0 & 0x02)
                     brew_unit_in = not bool(w0 & 0x04)
                     grounds_ok = not bool(w0 & 0x08)
-                    filling_loop = (len(parts) > 7 and len(parts[7]) >= 4 and parts[7][3] == '1')
                 except Exception:
                     pass
 
@@ -254,21 +256,37 @@ class NivonaDriver(BaseApplianceDriver):
                 "icon": "☕"
             })
 
-            readiness = "Ready" if (tank_ok and tray_ok and brew_unit_in and grounds_ok and not filling_loop) else "Service Required"
-            if filling_loop:
-                readiness = "Press Maintenance (Fill System)"
-                alerts.append({
-                    "id": "fill_system",
-                    "level": "INFO",
-                    "title": "System Filling Requested",
-                    "description": "Appliance hydraulic circuit requires de-aeration / priming."
-                })
+            ready_ok = (tank_ok and tray_ok and brew_unit_in and grounds_ok)
+            readiness = "Ready" if ready_ok else "Service Required"
+            switches.append({
+                "id": "machine_ready",
+                "name": "Appliance Operating State",
+                "status": "Ready to Brew / Nominal" if ready_ok else "Not Ready (Check Contacts)",
+                "ok": ready_ok,
+                "badge": "READY" if ready_ok else "CHECK",
+                "details": "Overall machine readiness status",
+                "icon": "☕"
+            })
 
+            flow_vol = round(flow_pulses / 2.366, 1)
             return {
+                "protocol": "Eugster/Frismag AG ASCII",
                 "readiness": readiness,
                 "switches": switches,
                 "sensors": sensors,
                 "alerts": alerts,
+                "telemetry": {
+                    "is_dual_heater": False,
+                    "heater_count": 1,
+                    "heater_coffee_c": temp_c,
+                    "heater_coffee_str": f"{temp_c:.1f} °C" if not fast_poll else "Active",
+                    "heater_coffee_status": "Ready to Brew",
+                    "heater_steam_str": "Not Installed (Single Heater)",
+                    "heater_steam_status": "Not Installed",
+                    "flow_pulses": flow_pulses,
+                    "flow_rate_ml_s": 0.0,
+                    "flow_volume_ml": flow_vol,
+                },
                 "raw_hz": hz_raw or ""
             }
         except Exception as e:

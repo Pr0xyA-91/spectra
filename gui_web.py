@@ -168,11 +168,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   <!-- Navigation Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('tabSensors')">Physical Sensors & Contacts</button>
-    <button class="tab-btn" onclick="switchTab('tabDiagnostics')">Hardware Diagnostics & Safety</button>
-    <button class="tab-btn" onclick="switchTab('tabBeverages')">Beverages & Dispensings</button>
-    <button class="tab-btn" onclick="switchTab('tabMaintenance')">Maintenance & Hygiene</button>
-    <button class="tab-btn" onclick="switchTab('tabRaw')">Raw Telemetry & System Info</button>
+    <button class="tab-btn active" onclick="switchTab(event, 'tabSensors')">Physical Sensors & Contacts</button>
+    <button class="tab-btn" onclick="switchTab(event, 'tabDiagnostics')">Hardware Diagnostics & Safety</button>
+    <button class="tab-btn" onclick="switchTab(event, 'tabBeverages')">Beverages & Dispensings</button>
+    <button class="tab-btn" onclick="switchTab(event, 'tabMaintenance')">Maintenance & Hygiene</button>
+    <button class="tab-btn" onclick="switchTab(event, 'tabRaw')">Raw Telemetry & System Info</button>
   </div>
 
   <!-- Tab 1: Live Sensors -->
@@ -246,10 +246,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     let pollInterval = null;
     let fullStatsCache = null;
 
-    function switchTab(tabId) {
+    function escapeHtml(val) {
+      return String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function switchTab(evt, tabId) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
+      if (evt && evt.currentTarget) evt.currentTarget.classList.add('active');
       document.getElementById(tabId).classList.add('active');
     }
 
@@ -348,10 +357,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const tr = document.createElement('tr');
         const badgeClass = sw.ok ? 'badge-ok' : (sw.badge === 'HEATING' ? 'badge-info' : 'badge-warn');
         tr.innerHTML = `
-          <td><code>${sw.id}</code></td>
-          <td><b>${sw.name}</b></td>
-          <td>${sw.status}</td>
-          <td><span class="badge ${badgeClass}">${sw.badge}</span></td>
+          <td><code>${escapeHtml(sw.id)}</code></td>
+          <td><b>${escapeHtml(sw.name)}</b></td>
+          <td>${escapeHtml(sw.status)}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(sw.badge)}</span></td>
         `;
         tblSw.appendChild(tr);
       });
@@ -364,9 +373,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const badgeClass = sn.ok ? 'badge-ok' : 'badge-err';
         tr.innerHTML = `
           <td><span class="badge ${badgeClass}">${sn.ok ? '🟢 NOMINAL' : '🔴 FAULT'}</span></td>
-          <td><b>${sn.name}</b></td>
-          <td>${sn.details || sn.status}</td>
-          <td><code>${sn.badge || 'OK'}</code></td>
+          <td><b>${escapeHtml(sn.name)}</b></td>
+          <td>${escapeHtml(sn.details || sn.status)}</td>
+          <td><code>${escapeHtml(sn.badge || 'OK')}</code></td>
         `;
         tblSensors.appendChild(tr);
       });
@@ -408,9 +417,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const tr = document.createElement('tr');
         const pct = data.total_cups > 0 ? ((b.count / data.total_cups) * 100).toFixed(1) : 0;
         tr.innerHTML = `
-          <td><code>${b.code || b.index}</code></td>
-          <td><b>${b.name}</b></td>
-          <td>${b.count} cups</td>
+          <td><code>${escapeHtml(b.code !== undefined ? b.code : b.index)}</code></td>
+          <td><b>${escapeHtml(b.name)}</b></td>
+          <td>${escapeHtml(b.count)} cups</td>
           <td>${pct}%</td>
         `;
         tblBev.appendChild(tr);
@@ -421,12 +430,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       tblMaint.innerHTML = '';
       (data.maintenance || []).forEach(m => {
         const tr = document.createElement('tr');
-        const pct = m.percentage !== null && m.percentage !== undefined ? m.percentage : 100;
+        const rawPct = (m.percent !== null && m.percent !== undefined) ? m.percent : m.percentage;
+        const barPct = (rawPct !== null && rawPct !== undefined) ? Math.max(0, Math.min(100, Number(rawPct))) : 0;
+        const lblPct = (rawPct !== null && rawPct !== undefined) ? `${escapeHtml(rawPct)}%` : 'N/A';
         tr.innerHTML = `
-          <td><b>${m.label || m.name}</b></td>
-          <td>${m.count} cycles</td>
-          <td><div class="progress-wrap"><div class="progress-bar" style="width: ${pct}%"></div></div></td>
-          <td><b>${pct}%</b></td>
+          <td><b>${escapeHtml(m.label || m.name)}</b></td>
+          <td>${escapeHtml(m.count)} cycles</td>
+          <td><div class="progress-wrap"><div class="progress-bar" style="width: ${barPct}%"></div></div></td>
+          <td><b>${lblPct}</b></td>
         `;
         tblMaint.appendChild(tr);
       });
@@ -461,13 +472,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         mime = 'application/json';
         ext = 'json';
       } else if (format === 'csv') {
+        const csvCell = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
         const lines = ['Category,Item,Value'];
-        lines.push(`Identity,Vendor,${fullStatsCache.vendor || 'Unknown'}`);
-        lines.push(`Identity,Model,${fullStatsCache.machine_model || 'Unknown'}`);
-        lines.push(`Identity,Serial,${fullStatsCache.serial_number || 'N/A'}`);
+        lines.push(`Identity,Vendor,${csvCell(fullStatsCache.vendor || 'Unknown')}`);
+        lines.push(`Identity,Model,${csvCell(fullStatsCache.machine_model || 'Unknown')}`);
+        lines.push(`Identity,Serial,${csvCell(fullStatsCache.serial_number || 'N/A')}`);
         lines.push(`Summary,Total Cups,${fullStatsCache.total_cups || 0}`);
-        (fullStatsCache.beverages || []).forEach(b => lines.push(`Beverage,"${b.name}",${b.count}`));
-        (fullStatsCache.maintenance || []).forEach(m => lines.push(`Maintenance,"${m.label || m.name}",${m.count}`));
+        (fullStatsCache.beverages || []).forEach(b => lines.push(`Beverage,${csvCell(b.name)},${b.count}`));
+        (fullStatsCache.maintenance || []).forEach(m => lines.push(`Maintenance,${csvCell(m.label || m.name)},${m.count}`));
         content = lines.join('\n');
         mime = 'text/csv';
         ext = 'csv';
@@ -550,6 +562,11 @@ class WRATWebHandler(BaseHTTPRequestHandler):
             global _active_session, _current_port, _current_mfr
             with _poll_lock:
                 if not _active_session or _current_port != port or _current_mfr != mfr:
+                    if _active_session is not None:
+                        try:
+                            _active_session.close()
+                        except Exception:
+                            pass
                     _current_port = port
                     _current_mfr = mfr
                     _active_session = WRATSession(port_name=port, manufacturer=mfr)
@@ -566,12 +583,20 @@ class WRATWebHandler(BaseHTTPRequestHandler):
             mfr = params.get("mfr", ["auto"])[0]
 
             with _poll_lock:
+                if _active_session is not None:
+                    try:
+                        _active_session.close()
+                    except Exception:
+                        pass
+                    _active_session = None
                 session = WRATSession(port_name=port, manufacturer=mfr)
                 try:
                     session.run_interrogation()
                     data = session.get_structured_summary()
                 except Exception as e:
                     data = {"error": str(e)}
+                finally:
+                    session.close()
 
             self._send_json(data)
 
@@ -616,6 +641,11 @@ def main():
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n[*] Shutting down W.R.A.T. Web Server...")
+        if _active_session is not None:
+            try:
+                _active_session.close()
+            except Exception:
+                pass
         httpd.server_close()
 
 

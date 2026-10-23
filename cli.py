@@ -14,7 +14,7 @@ from typing import Optional
 import serial_io
 import profiles_db
 import stats_collector as sc
-from wrat_engine import WRATSession, format_text_summary
+from wrat_engine import WRATSession, format_text_summary, format_csv_summary
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
 __version__ = "0.1"
@@ -28,7 +28,7 @@ def print_banner():
  \        /    |    |   \ /    |    \ |    |   
   \__/\  /     |____|_  / \____|__  / |____|   
        \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.1 Windows Edition)
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.1)
    Universal Diagnostics Engine [Multi-Manufacturer Support]
    Supported: Jura | Nivona | Lamanti-KL | Lamanti-JN
     """
@@ -42,7 +42,7 @@ def main():
     parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-m", "--manufacturer", choices=["auto", "jura", "nivona", "lamanti-kl", "lamanti-jn"], default="auto", help="Appliance manufacturer driver (default: auto)")
-    parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. COM3, /dev/ttyUSB0, /dev/ttyACM0, or demo)")
+    parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")
     parser.add_argument("--demo", action="store_true", help="Run with simulated demo machine")
     parser.add_argument("--demo-model", choices=["S8", "E8", "Z10", "NICR768", "X680C", "JL300"], default="S8", help="Model to simulate in demo mode")
@@ -90,7 +90,7 @@ def main():
             target_port = available[0]
             print(f"[*] Auto-detected serial port: {target_port}")
         else:
-            print("[!] No physical serial adapter detected (COM* or /dev/ttyUSB*).")
+            print("[!] No physical serial adapter detected (/dev/ttyUSB* or /dev/ttyACM*).")
             print("[*] Falling back to interactive demo simulation mode.")
             target_port = f"DEMO / SIMULATION ({args.demo_model})"
 
@@ -111,6 +111,8 @@ def main():
         except Exception as e:
             print(f"[-] ERROR querying sensors: {e}")
             sys.exit(1)
+        finally:
+            session.close()
 
         print("\n" + "=" * 78)
         print(f"LIVE HARDWARE SENSORS & STATUS")
@@ -165,6 +167,8 @@ def main():
     except Exception as e:
         print(f"\n[-] Interrogation failed: {e}")
         sys.exit(1)
+    finally:
+        session.close()
 
     print("\n\n[+] Successfully interrogated machine!")
     summary = session.get_structured_summary()
@@ -204,16 +208,7 @@ def main():
         if fmt == "json":
             content = json.dumps(summary, indent=2, ensure_ascii=False)
         elif fmt == "csv":
-            lines = ["Category,Metric,Value"]
-            lines.append(f"Identity,Vendor,{summary.get('vendor')}")
-            lines.append(f"Identity,Model,{summary.get('machine_model')}")
-            lines.append(f"Identity,Serial,{summary.get('serial_number')}")
-            lines.append(f"Summary,Total Cups,{summary.get('total_cups')}")
-            for b in summary.get("beverages", []):
-                lines.append(f"Beverage,{b.get('name')},{b.get('count')}")
-            for m in summary.get("maintenance", []):
-                lines.append(f"Maintenance,{m.get('name')},{m.get('count')}")
-            content = "\n".join(lines)
+            content = format_csv_summary(summary)
         else:
             content = format_text_summary(summary)
 

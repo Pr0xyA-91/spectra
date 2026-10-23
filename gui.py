@@ -20,7 +20,6 @@ try:
 except (ImportError, ValueError) as e:
     HAS_GTK = False
     GTK_IMPORT_ERROR = str(e)
-    # Provide dummy fallback base class so class definitions parse cleanly
     class _DummyGtkWindow:
         pass
     class _DummyGtk:
@@ -30,7 +29,7 @@ except (ImportError, ValueError) as e:
 import serial_io
 import profiles_db
 import stats_collector as sc
-from wrat_engine import WRATSession, format_text_summary
+from wrat_engine import WRATSession, format_text_summary, format_csv_summary
 from drivers import DRIVER_DISPLAY_NAMES
 
 __version__ = "0.1"
@@ -581,6 +580,8 @@ class JuraDiagApp(Gtk.Window):
             except Exception as e:
                 GLib.idle_add(self._append_log, f"[-] Error: {e}")
                 success = False
+            finally:
+                session.close()
 
         GLib.idle_add(self._on_session_finished, session, success)
 
@@ -609,7 +610,7 @@ class JuraDiagApp(Gtk.Window):
         decalc_cnt = 0
         for m in summary.get("maintenance", []):
             m_name = m.get("name", "").lower()
-            if "clean" in m_name:
+            if m_name in ("cleaning", "cleanings", "times cleaned") or "coffee system clean" in m_name or "auto-clean" in m_name:
                 clean_cnt += m.get("count", 0)
             elif "decalc" in m_name or "descal" in m_name:
                 decalc_cnt += m.get("count", 0)
@@ -703,10 +704,7 @@ class JuraDiagApp(Gtk.Window):
                             except Exception:
                                 pass
                         try:
-                            if active_port.lower().startswith("mock"):
-                                conn = serial_io.MockJuraMachine()
-                            else:
-                                conn = serial_io.DirectSerialConnection(active_port, baudrate=9600)
+                            conn = serial_io.DirectSerialConnection(active_port, baudrate=9600)
                             current_port = active_port
                             current_mfr = active_mfr
                             session = WRATSession(active_port, manufacturer=active_mfr, conn=conn)
@@ -1005,16 +1003,7 @@ class JuraDiagApp(Gtk.Window):
             if filename.endswith(".json"):
                 data = json.dumps(summary, indent=2, ensure_ascii=False)
             elif filename.endswith(".csv"):
-                lines = ["Category,Metric,Value"]
-                lines.append(f"Identity,Vendor,{summary.get('vendor')}")
-                lines.append(f"Identity,Model,{summary.get('machine_model')}")
-                lines.append(f"Identity,Serial,{summary.get('serial_number')}")
-                lines.append(f"Summary,Total Cups,{summary.get('total_cups')}")
-                for b in summary.get("beverages", []):
-                    lines.append(f"Beverage,{b.get('name')},{b.get('count')}")
-                for m in summary.get("maintenance", []):
-                    lines.append(f"Maintenance,{m.get('name')},{m.get('count')}")
-                data = "\n".join(lines)
+                data = format_csv_summary(summary)
             else:
                 data = format_text_summary(summary)
 
@@ -1046,7 +1035,10 @@ def main():
         return
 
     app = JuraDiagApp()
-    app.connect("destroy", Gtk.main_quit)
+    def _on_destroy(*_args):
+        app.auto_poll_active = False
+        Gtk.main_quit()
+    app.connect("destroy", _on_destroy)
     app.show_all()
     Gtk.main()
 

@@ -239,14 +239,47 @@ class LamantiJNDriver(BaseApplianceDriver):
                 "unit": "ml/s"
             })
 
-            readiness = "Ready" if (door_closed and waste_tray_ok and grounds_box_ok and water_inlet_ok) else "Maintenance Required"
+            ready_ok = (door_closed and waste_tray_ok and grounds_box_ok and water_inlet_ok)
+            readiness = "Ready" if ready_ok else "Maintenance Required"
+            switches.append({
+                "id": "water_tank",
+                "name": "Water Supply Status",
+                "status": "Mains Pressure OK" if water_inlet_ok else "Low Water Pressure",
+                "ok": water_inlet_ok,
+                "badge": "OK" if water_inlet_ok else "LOW",
+                "details": "Hydraulic inlet supply monitor",
+                "icon": "💧"
+            })
+            switches.append({
+                "id": "machine_ready",
+                "name": "Appliance Operating State",
+                "status": "Ready to Brew / Nominal" if ready_ok else readiness,
+                "ok": ready_ok,
+                "badge": "READY" if ready_ok else "CHECK",
+                "details": "Jetinno IO controller state",
+                "icon": "☕"
+            })
 
             return {
+                "protocol": "Jetinno IO Protocol",
                 "readiness": readiness,
                 "switches": switches,
                 "sensors": sensors,
                 "alerts": alerts,
-                "error_counters": error_counters
+                "error_counters": error_counters,
+                "telemetry": {
+                    "is_dual_heater": True,
+                    "heater_count": 2,
+                    "heater_coffee_c": boiler_es_temp,
+                    "heater_coffee_str": f"{boiler_es_temp:.1f} °C",
+                    "heater_coffee_status": "Espresso Boiler Ready",
+                    "heater_steam_c": boiler_inst_temp,
+                    "heater_steam_str": f"{boiler_inst_temp:.1f} °C",
+                    "heater_steam_status": "Instant Boiler Ready",
+                    "flow_pulses": 0,
+                    "flow_rate_ml_s": 0.0,
+                    "flow_volume_ml": 0.0,
+                }
             }
         except Exception as e:
             return {

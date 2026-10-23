@@ -289,14 +289,40 @@ class LamantiKLDriver(BaseApplianceDriver):
                 })
                 error_counters[f"E{fault_code:02d}"] = 1
             else:
-                readiness = "Ready" if (tank_ok and tray_ok and grounds_ok and door_closed) else "Not Ready"
+                ready_ok = (tank_ok and tray_ok and grounds_ok and door_closed)
+                readiness = "Ready" if ready_ok else "Not Ready"
+
+            ready_ok = (fault_code == 0 and tank_ok and tray_ok and grounds_ok and door_closed)
+            switches.append({
+                "id": "machine_ready",
+                "name": "Appliance Operating State",
+                "status": "Ready to Brew / Nominal" if ready_ok else readiness,
+                "ok": ready_ok,
+                "badge": "READY" if ready_ok else ("FAULT" if fault_code != 0 else "CHECK"),
+                "details": "Kalerm MCU state evaluation",
+                "icon": "☕"
+            })
 
             return {
+                "protocol": "Kalerm Modbus RTU",
                 "readiness": readiness,
                 "switches": switches,
                 "sensors": sensors,
                 "alerts": alerts,
-                "error_counters": error_counters
+                "error_counters": error_counters,
+                "telemetry": {
+                    "is_dual_heater": True,
+                    "heater_count": 2,
+                    "heater_coffee_c": boiler_c,
+                    "heater_coffee_str": f"{boiler_c:.1f} °C",
+                    "heater_coffee_status": "Ready to Brew",
+                    "heater_steam_c": steam_c,
+                    "heater_steam_str": f"{steam_c:.1f} °C",
+                    "heater_steam_status": "Ready for Steam",
+                    "flow_pulses": flow_pulses,
+                    "flow_rate_ml_s": 0.0,
+                    "flow_volume_ml": round(flow_pulses / 2.2, 1),
+                }
             }
         except Exception as e:
             return {

@@ -129,9 +129,9 @@ class JuraDriver(BaseApplianceDriver):
 
         maintenance = [
             MaintenanceMetric(
-                name=m.get("name", "Maintenance"),
+                name=m.get("name") or m.get("label", "Maintenance"),
                 count=m.get("count", 0),
-                percent=m.get("percent")
+                percent=m.get("percent") if m.get("percent") is not None else m.get("percentage")
             )
             for m in summary.get("maintenance", [])
         ]

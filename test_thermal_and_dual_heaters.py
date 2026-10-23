@@ -227,6 +227,31 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertIsNotNone(flow_sensor)
         self.assertIn("ml/s", flow_sensor["status"])
 
+    def test_ascii_and_smart_connect_counter_mapping(self):
+        """Test that ASCII EEPROM mode and Smart Connect mode map maintenance and beverage labels accurately."""
+        # 1. ASCII EEPROM Demo (S8)
+        sess_ascii = sc.JuraStatsSession("DEMO / SIMULATION (Jura S8)")
+        self.assertTrue(sess_ascii.run_interrogation())
+        sum_ascii = sess_ascii.get_structured_summary()
+        maint_ascii = {m["label"]: m["count"] for m in sum_ascii["maintenance"]}
+        self.assertEqual(maint_ascii.get("Cleaning"), 166)
+        self.assertEqual(maint_ascii.get("Descaling"), 38)
+        self.assertEqual(maint_ascii.get("Rinsing"), 3609)
+        self.assertEqual(maint_ascii.get("Filter Change"), 1)
+        # Machine is ready to brew, so historical RE:0028 faults should not pollute active alerts
+        self.assertEqual(len(sum_ascii["alerts"]), 1)
+        self.assertFalse(sum_ascii["alerts"][0]["blocking"])
+
+        # 2. Smart Connect Encrypted Demo (S8 Smart Connect)
+        sess_sc = sc.JuraStatsSession("DEMO / SIMULATION (Jura S8 Smart Connect)")
+        self.assertTrue(sess_sc.run_interrogation())
+        sum_sc = sess_sc.get_structured_summary()
+        self.assertIn("Smart Connect", sum_sc["protocol_mode"])
+        maint_sc = {m["label"]: (m["count"], m["percentage"]) for m in sum_sc["maintenance"]}
+        self.assertEqual(maint_sc.get("Cleaning"), (184, 85))
+        self.assertEqual(maint_sc.get("FilterChange"), (2, 25))
+        self.assertEqual(maint_sc.get("Decalc"), (41, 95))
+
 
 if __name__ == "__main__":
     unittest.main()
