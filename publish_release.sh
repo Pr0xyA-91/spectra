@@ -23,9 +23,19 @@ git checkout public-main
 # Sync all files from SOURCE_BRANCH
 git checkout "$SOURCE_BRANCH" -- .
 
-# Strictly ensure GEMINI.md is removed
+# Strictly ensure private notes and guidelines are removed
 if [ -f "GEMINI.md" ]; then
     git rm -f GEMINI.md
+fi
+if [ -f "SESSION_NOTES.md" ]; then
+    git rm -f SESSION_NOTES.md
+fi
+
+# Scrub hardcoded user home directories for public portability
+if [ -f "JuraModernDiag.desktop" ]; then
+    sed -i 's|Exec=/home/[^/]*/Projects/[^/]*/run.sh|Exec=bash -c '"'"'"$(dirname "%k")"/run.sh'"'"'|g' JuraModernDiag.desktop
+    sed -i 's|Icon=/home/[^/]*/Projects/[^/]*/icon.png|Icon=utilities-system-monitor|g' JuraModernDiag.desktop
+    git add JuraModernDiag.desktop
 fi
 
 # Commit if there are changes
