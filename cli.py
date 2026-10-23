@@ -12,7 +12,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 
 def print_banner():
@@ -23,14 +23,14 @@ def print_banner():
 /\__|    |  |  /|  | \/ / __ \    Y    (  <_> ) /_/ \  ___/|  | \/   |  \ |    `   \  |/ __ \_/ /_/  >
 \________|____/ |__|   (____  /____|__  /\____/\____ |\___  >__|  |___|  /_______  /__/____  /\___  / 
                             \/        \/            \/    \/           \/        \/        \//_____/  
-        Universal Diagnostic & Statistics Reader for Jura Coffee Machines (v0.3.1)
+        Universal Diagnostic & Statistics Reader for Jura Coffee Machines (v0.3.2)
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Jura Modern Diagnostics & Statistics Telemetry Tool (v0.3.1)"
+        description="Jura Modern Diagnostics & Statistics Telemetry Tool (v0.3.2)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"Jura Modern Diag {__version__}")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
@@ -108,10 +108,30 @@ def main():
                 print(f"  * {c_name:<36}: {c_cnt:>5} events")
 
         if sensors_data.get("telemetry"):
-            print("\n[HARDWARE TELEMETRY & SYSTEM SETTINGS]")
+            print("\n[THERMAL HEATING & DUAL-THERMOBLOCK SENSORS]")
             telem = sensors_data["telemetry"]
-            if "heater_ntc_raw" in telem:
-                print(f"  * Thermoblock NTC Sensor Raw ADC   : {telem['heater_ntc_raw']}")
+            is_dual = telem.get("is_dual_heater", False)
+            arch_str = "Dual-Heater Model (2 Thermoblocks)" if is_dual else "Single-Heater Model (1 Thermoblock)"
+            print(f"  * Machine Architecture             : {arch_str}")
+
+            c_str = telem.get("heater_coffee_str", "N/A")
+            c_stat = telem.get("heater_coffee_status", "Nominal")
+            raw_c = telem.get("heater_coffee_raw", telem.get("heater_ntc_raw", 0))
+            print(f"  ☕ Coffee Thermoblock (TB1)        : {c_str:<12} [{c_stat}] (ADC: 0x{raw_c:04X})")
+
+            s_str = telem.get("heater_steam_str", "N/A")
+            s_stat = telem.get("heater_steam_status", "")
+            raw_s = telem.get("heater_steam_raw", 0)
+            if is_dual:
+                print(f"  💨 Steam Thermoblock (TB2)         : {s_str:<12} [{s_stat}] (ADC: 0x{raw_s:04X})")
+            else:
+                print(f"  💨 Steam Thermoblock (TB2)         : Not Installed (Single Heater Model)")
+
+            if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
+                raw_a = telem.get("ambient_temp_raw", 0)
+                print(f"  💧 Water Intake / Ambient Sensor   : {telem['ambient_temp_str']:<12} (ADC: 0x{raw_a:04X})")
+
+            print("\n[SYSTEM SETTINGS & HYDRAULIC SENSORS]")
             if "water_hardness_dh" in telem:
                 print(f"  * Configured Water Hardness        : {telem['water_hardness_dh']} °dH")
             if "filter_volume_liters" in telem:

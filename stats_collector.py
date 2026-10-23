@@ -30,7 +30,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -58,6 +58,82 @@ def calculate_gs1_check_digit(digits: str) -> int:
         weight = 3 if idx % 2 == 0 else 1
         total += int(char) * weight
     return (10 - (total % 10)) % 10
+
+
+# Known dual-thermoblock / two-heater machine profiles (Coffee + Steam)
+DUAL_HEATER_EFS = {
+    "EF516", "EF532", "EF533", "EF534", "EF535", "EF540", "EF636", "EF638",
+    "EF645", "EF652", "EF655", "EF657", "EF658", "EF658S", "EF659", "EF722",
+    "EF776", "EF783", "EF787", "EF788", "EF790", "Z10", "GIGA"
+}
+
+
+def decode_jura_temperature(val: Any) -> Optional[float]:
+    """
+    Convert Jura NTC temperature reading into Celsius (°C) with 0.1°C precision.
+    Jura microcontrollers report temperatures in tenths of a degree Celsius (0.1 °C):
+    - Ambient / room temperature: 0x00E2 (226) -> 22.6 °C
+    - Active brewing temperature: 0x03C4 (964) -> 96.4 °C
+    - Active steam thermoblock:   0x0546 (1350) -> 135.0 °C
+    Values >= 1900 (e.g. 0x0802 = 2050) denote inactive / disabled / not installed circuits.
+    """
+    if val is None:
+        return None
+    try:
+        if isinstance(val, str):
+            val_clean = val.strip().lower()
+            if val_clean.startswith("0x"):
+                num = int(val_clean, 16)
+            else:
+                num = int(val_clean, 16)
+        elif isinstance(val, (int, float)):
+            num = int(val)
+        else:
+            return None
+    except ValueError:
+        return None
+
+    if num <= 0 or num >= 1900:
+        return None
+
+    # Standard Jura 0.1 °C resolution (15.0 °C to 185.0 °C):
+    if 150 <= num <= 1850:
+        return round(num / 10.0, 1)
+
+    # Fallback for direct integer Celsius (15 °C .. 150 °C)
+    if 15 <= num < 150:
+        return round(float(num), 1)
+
+    return None
+
+
+def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False) -> str:
+    """
+    Evaluate plain-language operational status from decoded temperature in Celsius.
+    - Coffee thermoblock: nominal brewing temperature is ~90°C - 98°C.
+    - Steam thermoblock: nominal steaming temperature is ~125°C - 145°C.
+    """
+    if temp_c is None:
+        return "Not Installed" if is_steam else "Disconnected / Sensor Fault"
+
+    if is_steam:
+        if 120.0 <= temp_c <= 155.0:
+            return "Ready for Steam"
+        elif temp_c > 155.0:
+            return "Thermal Safety Warning (>155°C)"
+        elif temp_c >= 50.0:
+            return "Heating Up (Steam)"
+        else:
+            return "Cold / Standby"
+    else:
+        if 85.0 <= temp_c <= 105.0:
+            return "Ready to Brew"
+        elif temp_c > 105.0:
+            return "Steam Purge / Hot"
+        elif temp_c >= 45.0:
+            return "Heating Up (Coffee)"
+        else:
+            return "Cold / Standby"
 
 
 def query_live_sensors(
@@ -98,7 +174,14 @@ def query_live_sensors(
         if is_ascii:
             results["protocol"] = "Plain ASCII (Optical/Serial)"
 
-            # 1. HZ: Live Microswitches & Operating Status
+            # Detect Machine EF-Code for Model-Specific Topology (Dual vs Single Heater)
+            detected_ef = ""
+            if ty_resp and ty_resp.startswith("ty:"):
+                toks = ty_resp[3:].strip().split()
+                if toks:
+                    detected_ef = toks[0].upper()
+
+            # 1. HZ: Live Microswitches, Thermoblock Sensors & Operating Status
             hz_resp = conn.query_ascii("HZ:")
             results["raw_status"] = hz_resp or "N/A"
 
@@ -106,6 +189,9 @@ def query_live_sensors(
             tray_ok = True
             ready_ok = True
             heater_ntc_raw = 0
+            steam_ntc_raw = 0
+            steam_sec_raw = 0
+            ambient_ntc_raw = 0
             rotary_pos = "0"
 
             if hz_resp and hz_resp.startswith("hz:"):
@@ -124,13 +210,50 @@ def query_live_sensors(
                 parts = payload.split(",")
                 if len(parts) > 0 and len(parts[0]) > 0:
                     ready_ok = (parts[0][0] == "0")
+                if len(parts) > 2:
+                    try:
+                        ambient_ntc_raw = int(parts[2], 16)
+                    except ValueError:
+                        ambient_ntc_raw = 0
+                if len(parts) > 3:
+                    try:
+                        steam_sec_raw = int(parts[3], 16)
+                    except ValueError:
+                        steam_sec_raw = 0
                 if len(parts) > 4:
                     try:
                         heater_ntc_raw = int(parts[4], 16)
                     except ValueError:
                         heater_ntc_raw = 0
+                if len(parts) > 5:
+                    try:
+                        steam_ntc_raw = int(parts[5], 16)
+                    except ValueError:
+                        steam_ntc_raw = 0
                 if len(parts) > 6:
                     rotary_pos = parts[6]
+
+            # Decode temperatures in Celsius (0.1 °C resolution)
+            temp_ambient = decode_jura_temperature(ambient_ntc_raw)
+            temp_coffee = decode_jura_temperature(heater_ntc_raw)
+            temp_steam = decode_jura_temperature(steam_ntc_raw)
+            if temp_steam is None and steam_sec_raw > 0:
+                temp_steam = decode_jura_temperature(steam_sec_raw)
+
+            # Dual-Heater Model Determination
+            # 1. Profile/Catalog match
+            is_known_dual = (
+                detected_ef in DUAL_HEATER_EFS
+                or any(detected_ef.startswith(x) for x in DUAL_HEATER_EFS)
+                or (profile and any(code in profile.get("ef_code", "").upper() for code in DUAL_HEATER_EFS))
+                or "Z10" in port_name.upper()
+                or "GIGA" in port_name.upper()
+                or "DUAL" in port_name.upper()
+            )
+            # 2. Dynamic live hardware check (steam thermoblock returned active valid temperature)
+            is_hardware_dual = (temp_steam is not None)
+            is_dual_heater = is_known_dual or is_hardware_dual
+            heater_count = 2 if is_dual_heater else 1
 
             # 2. RE:0028 Sensor & Component Fault Bitfield
             r28 = conn.query_ascii("RE:0028")
@@ -207,24 +330,43 @@ def query_live_sensors(
                 }
             ]
 
-            # Build Diagnostic Hardware Health & Safety Sensors
-            fault_defs = [
-                (0x0002, "ntc_short", "Thermoblock NTC Sensor (Short)", "Short-circuit detected", "Circuit resistance nominal"),
-                (0x0004, "ntc_broken", "Thermoblock NTC Sensor (Broken/Open)", "Sensor wire open/broken", "Sensor lead continuity intact"),
-                (0x0008, "bu_pos", "Brew Unit Position Sensor", "Position alignment mismatch", "Encoder and position feedback aligned"),
-                (0x0010, "bu_ini", "Brew Unit Zero / Home Switch", "Zero initialization fault", "Zero-position microswitch functional"),
-                (0x0400, "heater", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
-                (0x0040, "relay_main", "Main Power Relay", "Power relay contact fault", "Main relay switching nominal"),
-                (0x0080, "overheat", "Thermal Overheat Protection", "Thermal safety cutoff tripped", "Thermal safety margin verified"),
-                (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
-                (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
-                (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
-                (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
-                (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
-                (0x8000, "ku_sensor", "Ceramic Valve Sensor", "Ceramic valve sensor error", "Ceramic valve sensor nominal"),
-                (0x0020, "decalc", "Decalcification Sensor", "Descaling process interrupted", "Descaling cycle nominal"),
-                (0x0001, "channel", "Encoder Channel / Cable", "Pulse / cable check recommended", "Encoder pulses verified")
-            ]
+            # Build Diagnostic Hardware Health & Safety Sensors (dynamically mapped for Single vs Dual Heater)
+            if is_dual_heater:
+                fault_defs = [
+                    (0x0002, "coffee_ntc_short", "Coffee Thermoblock NTC (Short)", "Coffee NTC short-circuit detected", "Coffee NTC resistance nominal"),
+                    (0x0004, "coffee_ntc_broken", "Coffee Thermoblock NTC (Broken)", "Coffee NTC wire open/broken", "Coffee NTC sensor continuity intact"),
+                    (0x0040, "steam_ntc_short", "Steam Thermoblock NTC (Short)", "Steam NTC short-circuit detected", "Steam NTC resistance nominal"),
+                    (0x0080, "steam_ntc_broken", "Steam Thermoblock NTC (Broken)", "Steam NTC wire open/broken", "Steam NTC sensor continuity intact"),
+                    (0x0008, "bu_pos", "Brew Unit Position Sensor", "Position alignment mismatch", "Encoder and position feedback aligned"),
+                    (0x0010, "bu_ini", "Brew Unit Zero / Home Switch", "Zero initialization fault", "Zero-position microswitch functional"),
+                    (0x0400, "heater_elem", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
+                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
+                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
+                    (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
+                    (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
+                    (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
+                    (0x8000, "ku_sensor", "Ceramic Valve Sensor", "Ceramic valve sensor error", "Ceramic valve sensor nominal"),
+                    (0x0020, "decalc", "Decalcification Sensor", "Descaling process interrupted", "Descaling cycle nominal"),
+                    (0x0001, "channel", "Encoder Channel / Cable", "Pulse / cable check recommended", "Encoder pulses verified")
+                ]
+            else:
+                fault_defs = [
+                    (0x0002, "ntc_short", "Thermoblock NTC Sensor (Short)", "Short-circuit detected", "Circuit resistance nominal"),
+                    (0x0004, "ntc_broken", "Thermoblock NTC Sensor (Broken/Open)", "Sensor wire open/broken", "Sensor lead continuity intact"),
+                    (0x0008, "bu_pos", "Brew Unit Position Sensor", "Position alignment mismatch", "Encoder and position feedback aligned"),
+                    (0x0010, "bu_ini", "Brew Unit Zero / Home Switch", "Zero initialization fault", "Zero-position microswitch functional"),
+                    (0x0400, "heater", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
+                    (0x0040, "relay_main", "Main Power Relay", "Power relay contact fault", "Main relay switching nominal"),
+                    (0x0080, "overheat", "Thermal Overheat Protection", "Thermal safety cutoff tripped", "Thermal safety margin verified"),
+                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
+                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
+                    (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
+                    (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
+                    (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
+                    (0x8000, "ku_sensor", "Ceramic Valve Sensor", "Ceramic valve sensor error", "Ceramic valve sensor nominal"),
+                    (0x0020, "decalc", "Decalcification Sensor", "Descaling process interrupted", "Descaling cycle nominal"),
+                    (0x0001, "channel", "Encoder Channel / Cable", "Pulse / cable check recommended", "Encoder pulses verified")
+                ]
 
             sensor_list = []
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
@@ -239,16 +381,28 @@ def query_live_sensors(
                 })
             results["sensors"] = sensor_list
 
-            # 4. Error Frequency Counters (0x01B0 .. 0x01B6, 0x0103)
-            counter_queries = [
-                ("RE:01B0", "Encoder Channel Errors", "Thermoblock NTC Short Circuits"),
-                ("RE:01B1", "Thermoblock NTC Broken/Open Errors", "Brew Unit Position Faults"),
-                ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
-                ("RE:01B3", "Main Power Relay Faults", "Thermal Overheat Safety Cutoffs"),
-                ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
-                ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
-                ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
-            ]
+            # 4. Error Frequency Counters (dynamically mapped for Single vs Dual Heater)
+            if is_dual_heater:
+                counter_queries = [
+                    ("RE:01B0", "Encoder Channel Errors", "Coffee Thermoblock NTC Short Circuits"),
+                    ("RE:01B1", "Coffee Thermoblock NTC Broken Errors", "Brew Unit Position Faults"),
+                    ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
+                    ("RE:01B3", "Steam Thermoblock NTC Short Circuits", "Steam Thermoblock NTC Broken Errors"),
+                    ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
+                    ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
+                    ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
+                ]
+            else:
+                counter_queries = [
+                    ("RE:01B0", "Encoder Channel Errors", "Thermoblock NTC Short Circuits"),
+                    ("RE:01B1", "Thermoblock NTC Broken/Open Errors", "Brew Unit Position Faults"),
+                    ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
+                    ("RE:01B3", "Main Power Relay Faults", "Thermal Overheat Safety Cutoffs"),
+                    ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
+                    ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
+                    ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
+                ]
+
             counters: Dict[str, int] = {}
             for q_cmd, low_lbl, high_lbl in counter_queries:
                 resp_c = conn.query_ascii(q_cmd)
@@ -274,7 +428,24 @@ def query_live_sensors(
                 counters["Ceramic Valve Sensor Errors"] = 0
 
             results["error_counters"] = counters
+
+            coffee_status = evaluate_thermoblock_status(temp_coffee, is_steam=False)
+            steam_status = evaluate_thermoblock_status(temp_steam, is_steam=True) if is_dual_heater else "Not Installed"
+
             results["telemetry"] = {
+                "is_dual_heater": is_dual_heater,
+                "heater_count": heater_count,
+                "heater_coffee_c": temp_coffee,
+                "heater_coffee_raw": heater_ntc_raw,
+                "heater_coffee_status": coffee_status,
+                "heater_coffee_str": f"{temp_coffee:.1f} °C" if temp_coffee is not None else (f"ADC {heater_ntc_raw}" if heater_ntc_raw else "N/A"),
+                "heater_steam_c": temp_steam,
+                "heater_steam_raw": steam_ntc_raw,
+                "heater_steam_status": steam_status,
+                "heater_steam_str": (f"{temp_steam:.1f} °C" if temp_steam is not None else "Installed (Standby)") if is_dual_heater else "Not Installed (Single Heater Model)",
+                "ambient_temp_c": temp_ambient,
+                "ambient_temp_raw": ambient_ntc_raw,
+                "ambient_temp_str": f"{temp_ambient:.1f} °C" if temp_ambient is not None else "N/A",
                 "heater_ntc_raw": heater_ntc_raw,
                 "water_hardness_dh": water_hardness,
                 "filter_volume_liters": filter_liters,
@@ -347,8 +518,25 @@ def query_live_sensors(
                 }
             ]
             results["alerts"] = active_alerts
+
+            profile_ef = (profile or {}).get("ef_code", "")
+            model_fam = (profile or {}).get("model_family", "")
+            is_dual_sc = (
+                profile_ef.upper() in DUAL_HEATER_EFS
+                or any(profile_ef.upper().startswith(x) for x in DUAL_HEATER_EFS)
+                or any(kw in model_fam.upper() for kw in ["Z10", "GIGA", "DUAL"])
+                or "Z10" in port_name.upper()
+                or "GIGA" in port_name.upper()
+            )
+
             results["telemetry"] = {
-                "active_alert_count": len(active_alerts)
+                "active_alert_count": len(active_alerts),
+                "is_dual_heater": is_dual_sc,
+                "heater_count": 2 if is_dual_sc else 1,
+                "heater_coffee_str": "Nominal",
+                "heater_coffee_status": "Ready",
+                "heater_steam_str": "Nominal" if is_dual_sc else "Not Installed (Single Heater Model)",
+                "heater_steam_status": "Ready" if is_dual_sc else "Not Installed",
             }
 
     except Exception as e:
@@ -962,11 +1150,30 @@ class JuraStatsSession:
 
         # Live Sensors & Hardware Output
         ls = self.live_sensors or data.get("live_sensors")
-        if ls and (ls.get("switches") or ls.get("sensors")):
+        if ls and (ls.get("switches") or ls.get("sensors") or ls.get("telemetry")):
             out.append("-" * 78)
             ts = ls.get("timestamp", now_str)
-            out.append(f"LIVE HARDWARE SENSORS & MICROSWITCHES (Read at: {ts}):")
+            out.append(f"LIVE HARDWARE SENSORS & TELEMETRY (Read at: {ts}):")
             out.append("-" * 78)
+
+            telem = ls.get("telemetry", {})
+            if telem:
+                out.append("   [Thermoblock Heaters & Thermal Sensors]")
+                is_dual = telem.get("is_dual_heater", False)
+                arch_str = "Dual-Heater Model (2 Thermoblocks)" if is_dual else "Single-Heater Model (1 Thermoblock)"
+                out.append(f"   * Appliance Architecture        : {arch_str}")
+                c_str = telem.get("heater_coffee_str", "N/A")
+                c_stat = telem.get("heater_coffee_status", "")
+                out.append(f"   * Coffee Thermoblock (TB1)      : {c_str:<12} [{c_stat}]")
+                s_str = telem.get("heater_steam_str", "N/A")
+                s_stat = telem.get("heater_steam_status", "")
+                if is_dual:
+                    out.append(f"   * Steam Thermoblock (TB2)       : {s_str:<12} [{s_stat}]")
+                else:
+                    out.append(f"   * Steam Thermoblock (TB2)       : Not Installed (Single Heater Model)")
+                if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
+                    out.append(f"   * Water Intake / Ambient Sensor : {telem['ambient_temp_str']}")
+                out.append("")
 
             if ls.get("switches"):
                 out.append("   [Microswitches & Physical Contacts]")
