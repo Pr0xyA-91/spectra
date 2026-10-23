@@ -23,9 +23,12 @@ git checkout public-main
 # Sync all files from SOURCE_BRANCH
 git checkout "$SOURCE_BRANCH" -- .
 
-# Strictly ensure GEMINI.md is removed
+# Strictly ensure private notes and guidelines are removed
 if [ -f "GEMINI.md" ]; then
     git rm -f GEMINI.md
+fi
+if [ -f "SESSION_NOTES.md" ]; then
+    git rm -f SESSION_NOTES.md
 fi
 
 # Scrub hardcoded user home directories for public portability
