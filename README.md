@@ -1,13 +1,13 @@
 # Jura Modern Diagnostics & Statistics Suite
 
-[![Version: 0.2](https://img.shields.io/badge/version-0.2-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
+[![Version: 0.3.1](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.2)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
+> **Project Status: Alpha (v0.3.1)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -25,8 +25,12 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
 
 ## ✨ Features
 
-- **Native Linux Desktop Application**: Fast, dark-mode GTK 3 desktop application with KPI summary cards, sortable beverage breakdown tables, maintenance cycle progress bars, active alert bitfield inspection, and a live communication console.
-- **Full Headless CLI**: Command-line interface with colored output, progress bar, and multi-format export capabilities.
+- **Native Linux Desktop Application**: Fast, dark-mode GTK 3 desktop application with KPI summary cards, sortable beverage breakdown tables, maintenance cycle progress bars, active alert bitfield inspection, a dedicated **Live Sensors & Hardware** tab with a manual **🔄 Refresh Live Sensors** button, and a live communication console.
+- **Full Headless CLI**: Command-line interface with colored output, progress bar, multi-format export capabilities, and a dedicated `--sensors` (`-s`) flag for rapid live sensor polling.
+- **Live Hardware Sensors & Safety Diagnostics**:
+  - **Physical Microswitches & Contacts**: Interrogates water tank level float, drip tray/drawer presence switch, machine readiness state, and CLARIS water filter configuration in real time (`HZ:`).
+  - **Component Health & Safety Verification**: Decodes the 15-bit hardware fault and sensor verification register (`RE:0028`) covering thermoblock NTC short/open circuits, brew unit position alignment, zero-home microswitch, coffee heating element, main power relay, thermal overheat safety cutoff, flowmeter intake/rinse timeouts, ceramic valve, and multiway distribution valves.
+  - **Historical Sensor Trip Counters**: Reads exact lifetime fault trip frequencies (`0x01B0`–`0x01B6`, `0x0103`) directly from EEPROM logs.
 - **170+ Machine Profiles**: Unified database recognizing all generations of Jura machines:
   - **Modern Gen 7+**: E4, E6, E8, ENA 4/8, D4/D6, S8, J6/J8/J10, Z6/Z8/Z10, C3/C8, Commercial X4/X6/X8/X10, W4/W8, WE6/WE8, and GIGA series (5, 6, 10, W10, X3, X7, X8, X9).
   - **Classic / Professional**: IMPRESSA XJ5, XJ6, XJ9, XF50, XS90, F50, J9, C5, and WJ500.
@@ -53,6 +57,11 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
 Read diagnostics from a connected machine:
 ```bash
 ./run.sh --cli -p /dev/ttyUSB0
+```
+
+Read live hardware sensors, microswitches, and fault trip counters only:
+```bash
+./run.sh --cli -p /dev/ttyUSB0 --sensors
 ```
 
 Read in Demo / Simulation mode (no hardware required):

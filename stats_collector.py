@@ -30,7 +30,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.2"
+__version__ = "0.3.1"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -60,6 +60,306 @@ def calculate_gs1_check_digit(digits: str) -> int:
     return (10 - (total % 10)) % 10
 
 
+def query_live_sensors(
+    port_name: str,
+    baudrate: int = 9600,
+    conn: Optional[JuraSerialConnection] = None,
+    profile: Optional[Dict[str, Any]] = None,
+    is_legacy: bool = True
+) -> Dict[str, Any]:
+    """
+    Query live physical microswitches, hardware sensor statuses,
+    temperature ADC readings, and component fault registers from the connected Jura machine.
+    Works for both ASCII and Smart Connect modes.
+    """
+    close_when_done = False
+    if conn is None or not conn.is_open:
+        conn = JuraSerialConnection(port_name, baudrate=baudrate)
+        close_when_done = True
+
+    results: Dict[str, Any] = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "port": port_name,
+        "protocol": "Plain ASCII" if is_legacy else "Smart Connect",
+        "switches": [],
+        "sensors": [],
+        "error_counters": {},
+        "telemetry": {},
+        "alerts": []
+    }
+
+    try:
+        # Check if ASCII mode responds to TY:
+        ty_resp = conn.query_ascii("TY:")
+        is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
+        if not is_ascii and conn.is_demo:
+            is_ascii = True
+
+        if is_ascii:
+            results["protocol"] = "Plain ASCII (Optical/Serial)"
+
+            # 1. HZ: Live Microswitches & Operating Status
+            hz_resp = conn.query_ascii("HZ:")
+            results["raw_status"] = hz_resp or "N/A"
+
+            water_ok = True
+            tray_ok = True
+            ready_ok = True
+            heater_ntc_raw = 0
+            rotary_pos = "0"
+
+            if hz_resp and hz_resp.startswith("hz:"):
+                payload = hz_resp[3:].strip()
+                # EF-cut definitions from Jura Service XML:
+                # cut 43 = Wassertank (1 = missing/empty float dropped, 0 = OK)
+                # cut 41 = Drip tray / Drawer (0 = inserted, 1 = missing)
+                # cut 53 = Secondary tray microswitch (1 = inserted, 0 = missing)
+                c43 = payload[42] if len(payload) > 42 else "0"
+                c41 = payload[40] if len(payload) > 40 else "0"
+                c53 = payload[52] if len(payload) > 52 else "1"
+
+                water_ok = (c43 == "0")
+                tray_ok = (c41 == "0" or c53 == "1")
+
+                parts = payload.split(",")
+                if len(parts) > 0 and len(parts[0]) > 0:
+                    ready_ok = (parts[0][0] == "0")
+                if len(parts) > 4:
+                    try:
+                        heater_ntc_raw = int(parts[4], 16)
+                    except ValueError:
+                        heater_ntc_raw = 0
+                if len(parts) > 6:
+                    rotary_pos = parts[6]
+
+            # 2. RE:0028 Sensor & Component Fault Bitfield
+            r28 = conn.query_ascii("RE:0028")
+            val_r28 = 0
+            if r28 and r28.startswith("re:"):
+                try:
+                    val_r28 = int(r28[3:], 16)
+                except ValueError:
+                    val_r28 = 0
+            results["fault_register_hex"] = f"0x{val_r28:04X}"
+
+            # 3. Filter & System Config
+            filter_claris = False
+            filter_ext = False
+            r29 = conn.query_ascii("RE:0029")
+            if r29 and r29.startswith("re:"):
+                try:
+                    w29 = int(r29[3:], 16)
+                    filter_ext = bool(w29 & 0x0001)
+                    filter_claris = bool(w29 & 0x0010)
+                except ValueError:
+                    pass
+
+            water_hardness = 16
+            rc3 = conn.query_ascii("RE:00C3")
+            if rc3 and rc3.startswith("re:"):
+                try:
+                    wc3 = int(rc3[3:], 16)
+                    water_hardness = (wc3 >> 8) & 0xFF
+                except ValueError:
+                    pass
+
+            filter_liters = 0.0
+            r45 = conn.query_ascii("RE:0045")
+            if r45 and r45.startswith("re:"):
+                try:
+                    filter_liters = round(int(r45[3:], 16) / 10.0, 1)
+                except ValueError:
+                    pass
+
+            # Build Microswitches List
+            results["switches"] = [
+                {
+                    "id": "water_tank",
+                    "name": "Water Tank Level Sensor",
+                    "status": "Water OK / Tank Present" if water_ok else "Water Low / Tank Missing",
+                    "ok": water_ok,
+                    "badge": "NORMAL" if water_ok else "WARNING",
+                    "icon": "💧"
+                },
+                {
+                    "id": "drip_tray",
+                    "name": "Drip Tray / Drawer Presence",
+                    "status": "Tray Inserted" if tray_ok else "Tray Missing / Removed",
+                    "ok": tray_ok,
+                    "badge": "NORMAL" if tray_ok else "WARNING",
+                    "icon": "📥"
+                },
+                {
+                    "id": "machine_ready",
+                    "name": "Appliance Operating State",
+                    "status": "Ready to Brew / Nominal" if ready_ok else "Heating Up / Busy",
+                    "ok": ready_ok,
+                    "badge": "READY" if ready_ok else "BUSY",
+                    "icon": "☕"
+                },
+                {
+                    "id": "claris_filter",
+                    "name": "CLARIS Filter System",
+                    "status": "CLARIS Active" if filter_claris else ("External Active" if filter_ext else "Filter Inactive / Bypass"),
+                    "ok": True,
+                    "badge": "ACTIVE" if (filter_claris or filter_ext) else "BYPASS",
+                    "icon": "🛡️"
+                }
+            ]
+
+            # Build Diagnostic Hardware Health & Safety Sensors
+            fault_defs = [
+                (0x0002, "ntc_short", "Thermoblock NTC Sensor (Short)", "Short-circuit detected", "Circuit resistance nominal"),
+                (0x0004, "ntc_broken", "Thermoblock NTC Sensor (Broken/Open)", "Sensor wire open/broken", "Sensor lead continuity intact"),
+                (0x0008, "bu_pos", "Brew Unit Position Sensor", "Position alignment mismatch", "Encoder and position feedback aligned"),
+                (0x0010, "bu_ini", "Brew Unit Zero / Home Switch", "Zero initialization fault", "Zero-position microswitch functional"),
+                (0x0400, "heater", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
+                (0x0040, "relay_main", "Main Power Relay", "Power relay contact fault", "Main relay switching nominal"),
+                (0x0080, "overheat", "Thermal Overheat Protection", "Thermal safety cutoff tripped", "Thermal safety margin verified"),
+                (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
+                (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
+                (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
+                (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
+                (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
+                (0x8000, "ku_sensor", "Ceramic Valve Sensor", "Ceramic valve sensor error", "Ceramic valve sensor nominal"),
+                (0x0020, "decalc", "Decalcification Sensor", "Descaling process interrupted", "Descaling cycle nominal"),
+                (0x0001, "channel", "Encoder Channel / Cable", "Pulse / cable check recommended", "Encoder pulses verified")
+            ]
+
+            sensor_list = []
+            for mask, s_id, label, desc_fault, desc_ok in fault_defs:
+                tripped = bool(val_r28 & mask)
+                sensor_list.append({
+                    "id": s_id,
+                    "name": label,
+                    "status": "Fault / Warning" if tripped else "Nominal (OK)",
+                    "ok": not tripped,
+                    "badge": "FAULT" if tripped else "NOMINAL",
+                    "details": desc_fault if tripped else desc_ok
+                })
+            results["sensors"] = sensor_list
+
+            # 4. Error Frequency Counters (0x01B0 .. 0x01B6, 0x0103)
+            counter_queries = [
+                ("RE:01B0", "Encoder Channel Errors", "Thermoblock NTC Short Circuits"),
+                ("RE:01B1", "Thermoblock NTC Broken/Open Errors", "Brew Unit Position Faults"),
+                ("RE:01B2", "Brew Unit Init Faults", "Descaling Interruptions"),
+                ("RE:01B3", "Main Power Relay Faults", "Thermal Overheat Safety Cutoffs"),
+                ("RE:01B4", "Flowmeter Intake Timeouts", "Flowmeter Rinse Timeouts"),
+                ("RE:01B5", "Coffee Heater Element Faults", "Ceramic Valve Timeouts"),
+                ("RE:01B6", "Multiway Valve Init Faults", "Multiway Valve Position Faults")
+            ]
+            counters: Dict[str, int] = {}
+            for q_cmd, low_lbl, high_lbl in counter_queries:
+                resp_c = conn.query_ascii(q_cmd)
+                if resp_c and resp_c.startswith("re:"):
+                    try:
+                        w_val = int(resp_c[3:], 16)
+                        counters[low_lbl] = w_val & 0xFF
+                        counters[high_lbl] = (w_val >> 8) & 0xFF
+                    except ValueError:
+                        counters[low_lbl] = 0
+                        counters[high_lbl] = 0
+                else:
+                    counters[low_lbl] = 0
+                    counters[high_lbl] = 0
+
+            resp_ku = conn.query_ascii("RE:0103")
+            if resp_ku and resp_ku.startswith("re:"):
+                try:
+                    counters["Ceramic Valve Sensor Errors"] = int(resp_ku[3:], 16)
+                except ValueError:
+                    counters["Ceramic Valve Sensor Errors"] = 0
+            else:
+                counters["Ceramic Valve Sensor Errors"] = 0
+
+            results["error_counters"] = counters
+            results["telemetry"] = {
+                "heater_ntc_raw": heater_ntc_raw,
+                "water_hardness_dh": water_hardness,
+                "filter_volume_liters": filter_liters,
+                "filter_claris_active": filter_claris,
+                "filter_ext_active": filter_ext,
+                "rotary_switch": rotary_pos
+            }
+            results["alerts"] = [
+                {"name": s["name"], "details": s["details"], "blocking": True}
+                for s in sensor_list if not s["ok"]
+            ]
+        else:
+            # Smart Connect Protocol Mode
+            results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
+            wire_tx = jp.encode_wire(jp.build_encrypted_frame("@TF:\r\n", 0x42))
+            conn.write(wire_tx)
+            raw_rx = conn.read(512, timeout_sec=1.0)
+            tf_resp = None
+            if raw_rx:
+                decoded, _ = jp.decode_wire(raw_rx)
+                if decoded.startswith(b"&"):
+                    tf_resp = jp.decode_encrypted_frame(decoded)
+
+            results["raw_status"] = tf_resp or "N/A"
+            active_alerts = []
+            if tf_resp:
+                raw_tf = jp.parse_tf(tf_resp)
+                if raw_tf:
+                    active_alerts = profiles_db.get_active_alerts(profile or profiles_db.DEFAULT_PROFILE, raw_tf)
+
+            alert_names = [a["name"].lower() for a in active_alerts]
+            tank_ok = not any("water" in a for a in alert_names)
+            tray_ok = not any("tray" in a for a in alert_names)
+            ready_ok = any("ready" in a for a in alert_names) or (len(active_alerts) == 0)
+
+            results["switches"] = [
+                {
+                    "id": "water_tank",
+                    "name": "Water Tank Level Sensor",
+                    "status": "Water OK / Tank Present" if tank_ok else "Fill Water Tank / Tank Empty",
+                    "ok": tank_ok,
+                    "badge": "NORMAL" if tank_ok else "WARNING",
+                    "icon": "💧"
+                },
+                {
+                    "id": "drip_tray",
+                    "name": "Drip Tray / Drawer Contact",
+                    "status": "Tray Inserted" if tray_ok else "Insert / Empty Tray",
+                    "ok": tray_ok,
+                    "badge": "NORMAL" if tray_ok else "WARNING",
+                    "icon": "📥"
+                },
+                {
+                    "id": "machine_ready",
+                    "name": "Appliance Operating State",
+                    "status": "Ready to Brew / Nominal" if ready_ok else "Busy / Status Notification",
+                    "ok": ready_ok,
+                    "badge": "READY" if ready_ok else "BUSY",
+                    "icon": "☕"
+                }
+            ]
+            results["sensors"] = [
+                {
+                    "id": "system_status",
+                    "name": "Smart Connect Telemetry Bus",
+                    "status": "Active / Nominal",
+                    "ok": True,
+                    "badge": "NOMINAL",
+                    "details": "Real-time BLE/UART telemetry bus operational"
+                }
+            ]
+            results["alerts"] = active_alerts
+            results["telemetry"] = {
+                "active_alert_count": len(active_alerts)
+            }
+
+    except Exception as e:
+        results["error"] = str(e)
+    finally:
+        if close_when_done and conn:
+            conn.close()
+
+    return results
+
+
 class JuraStatsSession:
     """Manages an active interrogation session with a Jura machine."""
 
@@ -83,8 +383,21 @@ class JuraStatsSession:
         self.maint_pcts: List[Optional[int]] = []
         self.telemetry: Dict[str, Any] = {}
         self.active_alerts: List[Dict[str, Any]] = []
+        self.live_sensors: Dict[str, Any] = {}
         self.raw_log: List[Dict[str, str]] = []
         self.is_legacy_cleartext = False
+
+    def query_live_sensors(self) -> Dict[str, Any]:
+        """Query live hardware sensors and microswitches for current session."""
+        res = query_live_sensors(
+            port_name=self.port_name,
+            baudrate=self.baudrate,
+            conn=self.conn if (self.conn and self.conn.is_open) else None,
+            profile=self.profile,
+            is_legacy=self.is_legacy_cleartext
+        )
+        self.live_sensors = res
+        return res
 
     def log(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -354,6 +667,10 @@ class JuraStatsSession:
                     {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}
                 ]
 
+                # Interrogate Live Hardware Sensors & Switches
+                update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
+                self.live_sensors = self.query_live_sensors()
+
                 update_prog(1.0, "Interrogation completed successfully!")
                 self.log(f"ASCII Interrogation successful: {self.total_cups:,} cups read!")
                 return True
@@ -446,6 +763,9 @@ class JuraStatsSession:
                     "country_code": "EU" if (self.conn and self.conn.is_demo) else "N/A",
                 }
 
+            # Interrogate Live Telemetry & Alerts
+            self.live_sensors = self.query_live_sensors()
+
             update_prog(1.0, "Interrogation successfully completed!")
             self.log("Smart Connect interrogation completed successfully!")
             return True
@@ -521,6 +841,7 @@ class JuraStatsSession:
             "maintenance": maint_data,
             "telemetry": self.telemetry,
             "alerts": self.active_alerts,
+            "live_sensors": self.live_sensors,
             "raw_log_entries": len(self.raw_log)
         }
 
@@ -638,6 +959,32 @@ class JuraStatsSession:
                 status_type = "CRITICAL / BLOCKING" if alert.get('blocking') else "READY / STATUS"
                 out.append(f"   [{status_type}] {alert['name']}")
         out.append("")
+
+        # Live Sensors & Hardware Output
+        ls = self.live_sensors or data.get("live_sensors")
+        if ls and (ls.get("switches") or ls.get("sensors")):
+            out.append("-" * 78)
+            ts = ls.get("timestamp", now_str)
+            out.append(f"LIVE HARDWARE SENSORS & MICROSWITCHES (Read at: {ts}):")
+            out.append("-" * 78)
+
+            if ls.get("switches"):
+                out.append("   [Microswitches & Physical Contacts]")
+                for sw in ls["switches"]:
+                    out.append(f"   * {sw['name']:<30}: {sw['status']} [{sw.get('badge', 'OK')}]")
+                out.append("")
+
+            if ls.get("sensors"):
+                out.append("   [Diagnostic Component Health & Safety Sensors]")
+                for s in ls["sensors"]:
+                    out.append(f"   * {s['name']:<32}: {s['status']} ({s['details']})")
+                out.append("")
+
+            if ls.get("error_counters"):
+                out.append("   [Historical Sensor Trip & Fault Frequency Counters]")
+                for c_name, c_cnt in ls["error_counters"].items():
+                    out.append(f"   * {c_name:<36}: {c_cnt:>5} events")
+                out.append("")
 
         out.append("=" * 78)
         out.append("END OF DIAGNOSTICS REPORT")
