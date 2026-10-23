@@ -232,8 +232,20 @@ class JuraSerialConnection:
                 return "re:0033"
             elif cmd_clean == "RE:0032":
                 return "re:2EBE"
+            elif cmd_clean == "RE:0015":
+                return "re:703A"
             elif cmd_clean == "RE:00DA":
                 return "re:435A"
+            elif cmd_clean == "RE:00DB":
+                return "re:2F4C"
+            elif cmd_clean == "RE:00DC":
+                return "re:2D8C"
+            elif cmd_clean == "RE:00E9":
+                return "re:0000"
+            elif cmd_clean == "RE:00EA":
+                return "re:0007"
+            elif cmd_clean == "RE:00C3":
+                return "re:1E32"
             elif cmd_clean.startswith("RT:"):
                 return "rt:0000000000000000000000000000000000000000000000000000000000000000"
             elif cmd_clean.startswith("RE:"):

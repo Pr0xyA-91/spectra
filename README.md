@@ -1,13 +1,13 @@
 # Jura Modern Diagnostics & Statistics Suite
 
-[![Version: 0.1-alpha](https://img.shields.io/badge/version-0.1--alpha-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
+[![Version: 0.2](https://img.shields.io/badge/version-0.2-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.1-alpha)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
+> **Project Status: Alpha (v0.2)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 

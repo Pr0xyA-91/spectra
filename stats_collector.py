@@ -30,7 +30,34 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.1-alpha"
+__version__ = "0.2"
+
+
+def decode_jura_date(val: int) -> Optional[datetime]:
+    """
+    Decodes Jura 16-bit packed EEPROM date format:
+    Bits 0..4 (5 bits): Day of month (1..31)
+    Bits 5..8 (4 bits): Month (1..12)
+    Bits 9..15 (7 bits): Year offset from 1990 (e.g. 23 -> 2013)
+    """
+    if not val or val == 0xFFFF or val == 0:
+        return None
+    day = val & 0x1F
+    month = (val >> 5) & 0x0F
+    year = 1990 + (val >> 9)
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def calculate_gs1_check_digit(digits: str) -> int:
+    """Calculate GS1 standard mod-10 check digit."""
+    total = 0
+    for idx, char in enumerate(reversed(digits)):
+        weight = 3 if idx % 2 == 0 else 1
+        total += int(char) * weight
+    return (10 - (total % 10)) % 10
 
 
 class JuraStatsSession:
@@ -153,17 +180,29 @@ class JuraStatsSession:
                     else:
                         self.log(f"Notice: Block 0x{blk:04X} returned empty/timeout")
 
-                # Explicitly query machine identity & production EEPROM words
-                # 0x0030: Machine Sequence Number (Maschinennummer)
-                # 0x0031: Internal Serial Word (Seriennummer)
-                # 0x0032: Production Date in days elapsed since 1980-01-01 (Produktionsdatum)
-                # 0x00DA: Country / Regional Destination Code (Country_Code)
+                # Explicitly query machine identity, production, and service history EEPROM words
+                # 0x0030: Appliance / Machine Number (Maschinennummer: e.g. 18016)
+                # 0x0031: Internal Serial Word (Seriennummer: e.g. 51)
+                # 0x0032: Production Date bitfield (Produktionsdatum: e.g. 30.5.2013)
+                # 0x0015: Preparations since last intervention (Service-Counter: e.g. 28730)
+                # 0x00DA: SPDL Country / Destination Market Code (e.g. 'CZ')
+                # 0x00DB: SPDL Date Download (e.g. 12.10.2013)
+                # 0x00DC: SPDL Date Language File (e.g. 12.12.2012)
+                # 0x00E9: Retail High Word (Service cup counter baseline high word)
+                # 0x00EA: Retail Low Word (Service cup counter baseline low word)
+                # 0x00C3: Water Hardness (High byte: °dH)
                 update_prog(0.80, "Reading machine serial and production records...")
                 id_addrs = [
                     (0x30, "0030", "Machine Number"),
                     (0x31, "0031", "Serial Word"),
                     (0x32, "0032", "Production Date"),
-                    (0xDA, "00DA", "Country Code"),
+                    (0x15, "0015", "Service Counter"),
+                    (0xDA, "00DA", "SPDL Country Code"),
+                    (0xDB, "00DB", "SPDL Download Date"),
+                    (0xDC, "00DC", "SPDL Language Date"),
+                    (0xE9, "00E9", "Retail High"),
+                    (0xEA, "00EA", "Retail Low"),
+                    (0xC3, "00C3", "Water Hardness"),
                 ]
                 for addr_int, addr_hex, desc in id_addrs:
                     if addr_int not in eeprom or eeprom[addr_int] == 0:
@@ -210,31 +249,30 @@ class JuraStatsSession:
                 # Hardware and Serial Identification
                 machine_num = eeprom.get(0x30, 0)
                 serial_word = eeprom.get(0x31, 0)
-                prod_days = eeprom.get(0x32, 0)
+                prod_val = eeprom.get(0x32, 0)
                 country_word = eeprom.get(0xDA, 0)
+                spdl_dl_val = eeprom.get(0xDB, 0)
+                spdl_lang_val = eeprom.get(0xDC, 0)
+                since_prep = eeprom.get(0x15, 0)
+                retail_high = eeprom.get(0xE9, 0)
+                retail_low = eeprom.get(0xEA, 0)
+                c3_val = eeprom.get(0xC3, 0)
 
-                app_code = f"{machine_num:04X}{prod_days:04X}" if (machine_num or prod_days) else "N/A"
+                app_code = f"{machine_num:04X}{prod_val:04X}" if (machine_num or prod_val) else "N/A"
 
                 # Jura Production Date decoding:
-                # Word 0x0032 stores days elapsed since Jura epoch 1980-01-01
-                prod_date_str = "N/A"
-                date_prefix = ""
-                if prod_days and prod_days > 0:
-                    try:
-                        EPOCH_1980 = datetime(1980, 1, 1).date()
-                        dt = EPOCH_1980 + timedelta(days=prod_days)
-                        prod_date_str = dt.strftime("%d.%m.%Y")
-                        date_prefix = dt.strftime("%Y%m%d")
-                    except Exception as e:
-                        self.log(f"Warning: Could not parse production date from days {prod_days}: {e}")
+                # 16-bit bitfield: Day (bits 0..4), Month (bits 5..8), Year = 1990 + (bits 9..15)
+                prod_dt = decode_jura_date(prod_val)
+                prod_date_str = f"{prod_dt.day}.{prod_dt.month}.{prod_dt.year}" if prod_dt else "N/A"
+                date_prefix = prod_dt.strftime("%Y%m%d") if prod_dt else ""
 
-                # Jura Serial Number format:
-                # On the physical barcode/chassis label, Jura combines:
-                # [YYYYMMDD] (Production Date) + [NNNNN] (5-digit Machine Sequence Number)
+                # Jura 14-digit Serial Number format (GS1 Application Identifier 21):
+                # Formed by YYYYMMDD (Production Date) + 6-digit zero-padded Appliance Number
+                # Example: 20130530 + 018016 -> "20130530018016"
                 if date_prefix and machine_num:
-                    serial_number = f"{date_prefix}{machine_num:05d}"
+                    serial_number = f"{date_prefix}{machine_num:06d}"
                 elif machine_num:
-                    serial_number = f"SN-{machine_num:05d}"
+                    serial_number = f"{machine_num:06d}"
                 else:
                     serial_number = "N/A"
 
@@ -248,6 +286,35 @@ class JuraStatsSession:
                     if chars:
                         country_code = chars
 
+                # SPDL Dates:
+                spdl_dl_dt = decode_jura_date(spdl_dl_val)
+                spdl_dl_str = f"{spdl_dl_dt.day}.{spdl_dl_dt.month}.{spdl_dl_dt.year}" if spdl_dl_dt else "N/A"
+
+                spdl_lang_dt = decode_jura_date(spdl_lang_val)
+                spdl_lang_str = f"{spdl_lang_dt.day}.{spdl_lang_dt.month}.{spdl_lang_dt.year}" if spdl_lang_dt else "N/A"
+
+                # Water Hardness:
+                water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
+
+                # Cups and preparations since last service intervention:
+                retail_ref = (retail_high * 65536) + retail_low
+                cups_since_intervention = max(0, self.total_cups - retail_ref) if (retail_ref > 0 or retail_high or retail_low) else self.total_cups
+                prep_since_intervention = since_prep if since_prep > 0 else since_serv
+
+                # Article Number and Full EAN Code:
+                article_num = str(self.profile.get("article_number", "13705"))
+                display_fw = self.profile.get("software_version_display", "EF518D V02.04")
+                app_type = self.profile.get("appliance_type", f"{article_num} {self.model_family}")
+
+                ean_code = "N/A"
+                if article_num and serial_number != "N/A":
+                    try:
+                        base_ean = f"07610917{int(article_num):05d}"
+                        gtin14 = f"{base_ean}{calculate_gs1_check_digit(base_ean)}"
+                        ean_code = f"(01){gtin14}(21){serial_number}"
+                    except Exception:
+                        pass
+
                 self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
                 self.maint_pcts = [None, None, None, None]
 
@@ -258,19 +325,28 @@ class JuraStatsSession:
                 self.telemetry = {
                     "serial_number": serial_number,
                     "production_date": prod_date_str,
+                    "appliance_number": machine_num,
                     "machine_number": machine_num,
-                    "serial_word": serial_word,
-                    "country_code": country_code,
+                    "serial_number_word": serial_word,
+                    "article_number": article_num,
+                    "ean_code": ean_code,
+                    "appliance_code": app_code,
+                    "appliance_type": app_type,
+                    "software_version_display": display_fw,
+                    "spdl_download_date": spdl_dl_str,
+                    "spdl_country_code": country_code,
+                    "spdl_language_date": spdl_lang_str,
+                    "water_hardness_dh": water_hardness,
                     "total_cups": self.total_cups,
                     "total_preparations": self.total_preparations,
+                    "preparations_since_intervention": prep_since_intervention,
+                    "cups_since_intervention": cups_since_intervention,
                     "grinder_seconds": grinder_sec,
                     "grinder_formatted": f"{gh}h {gm}m {gs}s",
                     "water_dispensed_liters": round(water_dl / 10.0, 1),
                     "descaling_agent_liters": round(decalc_dl / 10.0, 1),
-                    "since_last_service_preparations": since_serv,
+                    "since_last_service_preparations": prep_since_intervention,
                     "water_since_decalc_liters": round(water_since_decalc / 10.0, 1),
-                    "appliance_number": machine_num,
-                    "appliance_code": app_code,
                     "power_spec": self.power_spec,
                 }
 
@@ -472,29 +548,49 @@ class JuraStatsSession:
         out.append("-" * 78)
         out.append("APPLIANCE IDENTIFICATION & SYSTEM DATA:")
         out.append("-" * 78)
-        out.append(f"Appliance Model:   {data['machine_model']}")
-        out.append(f"Firmware String:   {data['firmware_string']}")
+        if self.telemetry and "appliance_type" in self.telemetry:
+            out.append(f"Appliance Type:    {self.telemetry['appliance_type']}")
+        else:
+            out.append(f"Appliance Model:   {data['machine_model']}")
+        if self.telemetry and "article_number" in self.telemetry:
+            out.append(f"Article Number:    {self.telemetry['article_number']}")
+        out.append(f"Software Version:  {data['firmware_string']}")
+        if self.telemetry and "software_version_display" in self.telemetry:
+            out.append(f"Software Version Display: {self.telemetry['software_version_display']}")
+        if self.telemetry and "serial_number" in self.telemetry and self.telemetry["serial_number"] != "N/A":
+            out.append(f"Serial Number:     {self.telemetry['serial_number']}")
+        if self.telemetry and "serial_number_word" in self.telemetry and self.telemetry["serial_number_word"]:
+            out.append(f"Serial Word (ID):  {self.telemetry['serial_number_word']}")
+        if self.telemetry and "appliance_number" in self.telemetry:
+            out.append(f"Appliance Number:  {self.telemetry['appliance_number']}")
+        if self.telemetry and "production_date" in self.telemetry and self.telemetry["production_date"] != "N/A":
+            out.append(f"Date of Production:{self.telemetry['production_date']:>14}")
+        if self.telemetry and "appliance_code" in self.telemetry and self.telemetry["appliance_code"] != "N/A":
+            out.append(f"Appliance Code:    {self.telemetry['appliance_code']}")
+        if self.telemetry and "ean_code" in self.telemetry and self.telemetry["ean_code"] != "N/A":
+            out.append(f"EAN-Code:          {self.telemetry['ean_code']}")
         out.append(f"Protocol:          {data['protocol_mode']}")
         out.append(f"Power Spec:        {data['power_spec']}")
         if self.telemetry:
-            if "serial_number" in self.telemetry and self.telemetry["serial_number"] != "N/A":
-                out.append(f"Serial Number:     {self.telemetry['serial_number']}")
-            if "production_date" in self.telemetry and self.telemetry["production_date"] != "N/A":
-                out.append(f"Date of Production:{self.telemetry['production_date']:>14}")
-            if "machine_number" in self.telemetry and self.telemetry["machine_number"]:
-                out.append(f"Machine Number:    {self.telemetry['machine_number']}")
-            if "country_code" in self.telemetry and self.telemetry["country_code"] != "N/A":
-                out.append(f"Destination Region:{self.telemetry['country_code']:>6}")
-            if "appliance_code" in self.telemetry and self.telemetry["appliance_code"] != "N/A":
-                out.append(f"Appliance Code:    {self.telemetry['appliance_code']}")
+            if "spdl_download_date" in self.telemetry and self.telemetry["spdl_download_date"] != "N/A":
+                out.append(f"SPDL Date Download:{self.telemetry['spdl_download_date']:>14}")
+            if "spdl_country_code" in self.telemetry and self.telemetry["spdl_country_code"] != "N/A":
+                out.append(f"SPDL Country Code: {self.telemetry['spdl_country_code']}")
+            if "spdl_language_date" in self.telemetry and self.telemetry["spdl_language_date"] != "N/A":
+                out.append(f"SPDL Date Lang:    {self.telemetry['spdl_language_date']:>14}")
+            if "water_hardness_dh" in self.telemetry:
+                out.append(f"Water Hardness:    {self.telemetry['water_hardness_dh']} °dH")
         out.append("")
 
         out.append("-" * 78)
         out.append("BEVERAGE PREPARATIONS & DISPENSING COUNTERS:")
         out.append("-" * 78)
-        out.append(f"   {data['total_cups']:>8}      Grand Total Cups Dispensed")
-        if data['total_preparations'] != data['total_cups']:
-            out.append(f"   {data['total_preparations']:>8}      Total Brew Cycles (Single + Double)")
+        out.append(f"   {data['total_cups']:>8}      Total Number of Coffee Cups")
+        if self.telemetry and "cups_since_intervention" in self.telemetry:
+            out.append(f"   {self.telemetry['cups_since_intervention']:>8}      Total Coffee Cups Since Last Intervention")
+        out.append(f"   {data['total_preparations']:>8}      Total Coffee Preparations")
+        if self.telemetry and "preparations_since_intervention" in self.telemetry:
+            out.append(f"   {self.telemetry['preparations_since_intervention']:>8}      Preparations Since Last Intervention")
         out.append("   " + "-" * 55)
 
         for bev in sorted(data['beverages'], key=lambda x: x['count'], reverse=True):

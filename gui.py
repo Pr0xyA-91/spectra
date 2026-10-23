@@ -18,12 +18,12 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.1-alpha"
+__version__ = "0.2"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Jura Modern Diagnostics Suite (v0.1-alpha)")
+        super().__init__(title="Jura Modern Diagnostics Suite (v0.2)")
         self.set_default_size(980, 680)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -158,7 +158,7 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.1-alpha</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.2</span></b>")
         app_title.set_alignment(0, 0.5)
         sub_title = Gtk.Label(label="Universal Optical & Smart Connect Protocol Reader")
         sub_title.get_style_context().add_class("card-label")
@@ -451,17 +451,39 @@ class JuraDiagApp(Gtk.Window):
 
         # Populate Info Tab
         self.info_store.clear()
+        if summary.get("telemetry") and "appliance_type" in summary["telemetry"]:
+            self.info_store.append(["Appliance Type", str(summary["telemetry"]["appliance_type"])])
         self.info_store.append(["Machine Family", summary["machine_model"]])
         if summary.get("telemetry"):
             tel = summary["telemetry"]
             if "serial_number" in tel and tel["serial_number"] != "N/A":
-                self.info_store.append(["Serial Number (Barcode)", str(tel["serial_number"])])
+                self.info_store.append(["Serial Number (14-Digit)", str(tel["serial_number"])])
+            if "ean_code" in tel and tel["ean_code"] != "N/A":
+                self.info_store.append(["EAN-Code", str(tel["ean_code"])])
+            if "article_number" in tel:
+                self.info_store.append(["Article Number", str(tel["article_number"])])
             if "production_date" in tel and tel["production_date"] != "N/A":
                 self.info_store.append(["Date of Production", str(tel["production_date"])])
-            if "machine_number" in tel and tel["machine_number"]:
-                self.info_store.append(["Machine Sequence No", str(tel["machine_number"])])
-            if "country_code" in tel and tel["country_code"] != "N/A":
-                self.info_store.append(["Destination Market", str(tel["country_code"])])
+            if "appliance_number" in tel and tel["appliance_number"]:
+                self.info_store.append(["Appliance Number", str(tel["appliance_number"])])
+            if "serial_number_word" in tel and tel["serial_number_word"]:
+                self.info_store.append(["Logic Board Serial (ID)", str(tel["serial_number_word"])])
+            if "appliance_code" in tel and tel["appliance_code"] != "N/A":
+                self.info_store.append(["Appliance Code", str(tel["appliance_code"])])
+            if "software_version_display" in tel:
+                self.info_store.append(["Software Version Display", str(tel["software_version_display"])])
+            if "spdl_country_code" in tel and tel["spdl_country_code"] != "N/A":
+                self.info_store.append(["SPDL Country Code", str(tel["spdl_country_code"])])
+            if "spdl_download_date" in tel and tel["spdl_download_date"] != "N/A":
+                self.info_store.append(["SPDL Date Download", str(tel["spdl_download_date"])])
+            if "spdl_language_date" in tel and tel["spdl_language_date"] != "N/A":
+                self.info_store.append(["SPDL Date Language File", str(tel["spdl_language_date"])])
+            if "water_hardness_dh" in tel:
+                self.info_store.append(["Water Hardness", f"{tel['water_hardness_dh']} °dH"])
+            if "cups_since_intervention" in tel:
+                self.info_store.append(["Cups Since Last Intervention", f"{tel['cups_since_intervention']:,}"])
+            if "preparations_since_intervention" in tel:
+                self.info_store.append(["Preparations Since Last Intervention", f"{tel['preparations_since_intervention']:,}"])
         self.info_store.append(["Firmware Identifier", summary["firmware_string"]])
         self.info_store.append(["Profile EF Code", summary["ef_code"]])
         if summary.get("telemetry"):
