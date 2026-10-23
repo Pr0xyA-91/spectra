@@ -124,10 +124,10 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertFalse(switches["machine_ready"]["ok"])
         self.assertEqual(switches["machine_ready"]["status"], "Not Ready (Drip Tray Missing)")
 
-        # 2. Tray Inserted telemetry payload
+        # 2. Tray Inserted telemetry payload (Nominal)
         def mock_query_in(cmd, timeout=1.0):
             if cmd.strip() == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03CE,0802,4,000100,0000,00"
+                return "hz:010001100000,027E,00E2,0000,03CE,0802,4,000000,0000,00"
             return orig_query(cmd, timeout=timeout)
         tray_out_conn.query_ascii = mock_query_in
 
@@ -137,6 +137,37 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(switches2["drip_tray"]["status"], "Tray Inserted")
         self.assertTrue(switches2["machine_ready"]["ok"])
         self.assertEqual(switches2["machine_ready"]["status"], "Ready to Brew / Nominal")
+
+    def test_clogged_system_and_filling_loop_detection(self):
+        """Test detection of flowmeter timeouts and 'Press Maintenance / Fill System' loop."""
+        clogged_conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = clogged_conn.query_ascii
+
+        def mock_query_clogged(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
+            elif cmd_c == "RE:0028":
+                return "re:0339"
+            elif cmd_c == "IC:":
+                return "ic:0C08"
+            return orig_query(cmd, timeout=timeout)
+        clogged_conn.query_ascii = mock_query_clogged
+
+        res = sc.query_live_sensors("mock", conn=clogged_conn)
+        switches = {s["id"]: s for s in res["switches"]}
+        self.assertFalse(switches["machine_ready"]["ok"])
+        self.assertEqual(switches["machine_ready"]["badge"], "CLOGGED")
+        self.assertIn("System Clogged", switches["machine_ready"]["status"])
+        self.assertIn("Filling Loop", switches["machine_ready"]["status"])
+
+        self.assertIn("hydraulic_system", switches)
+        self.assertFalse(switches["hydraulic_system"]["ok"])
+        self.assertEqual(switches["hydraulic_system"]["badge"], "CLOGGED")
+
+        # Verify active blocking alert is emitted
+        alert_codes = [a.get("code") for a in res.get("alerts", [])]
+        self.assertIn("CLOGGED_FILLING_LOOP", alert_codes)
 
 
 if __name__ == "__main__":

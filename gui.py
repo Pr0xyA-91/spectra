@@ -707,27 +707,37 @@ class JuraDiagApp(Gtk.Window):
         # Machine State
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
+            st = sw.get("status", "")
             if sw["ok"]:
-                self.lbl_live_state.set_text("READY TO BREW")
+                self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY TO BREW</span>")
                 self.lbl_sub_state.set_text("Appliance Ready")
             else:
-                if "Tray Missing" in sw.get("status", "") or ("drip_tray" in switches and not switches["drip_tray"]["ok"]):
-                    self.lbl_live_state.set_text("NOT READY")
+                if "Clogged" in st or "Filling" in st or "Maintenance" in st:
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>SYSTEM CLOGGED</span>")
+                    self.lbl_sub_state.set_text("Press Maintenance (Filling Loop)")
+                elif "Tray Missing" in st or ("drip_tray" in switches and not switches["drip_tray"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Insert Drip Tray")
-                elif "Water" in sw.get("status", "") or ("water_tank" in switches and not switches["water_tank"]["ok"]):
-                    self.lbl_live_state.set_text("NOT READY")
+                elif "Water" in st or ("water_tank" in switches and not switches["water_tank"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Fill Water Tank")
-                elif "Heating" in sw.get("status", ""):
-                    self.lbl_live_state.set_text("HEATING UP")
+                elif "Grounds" in st:
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
+                    self.lbl_sub_state.set_text("Empty Grounds Container")
+                elif "Heating" in st:
+                    self.lbl_live_state.set_markup("<span color='#f9e2af'>HEATING UP</span>")
                     self.lbl_sub_state.set_text("Heating Thermoblock")
-                elif "Busy" in sw.get("status", ""):
-                    self.lbl_live_state.set_text("BUSY")
-                    self.lbl_sub_state.set_text("In Progress")
+                elif "Busy" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>BUSY</span>")
+                    self.lbl_sub_state.set_text("Operation in Progress")
+                elif "Hardware Fault" in st:
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>HARDWARE FAULT</span>")
+                    self.lbl_sub_state.set_text(st.replace("Hardware Fault (", "").replace(")", ""))
                 else:
-                    self.lbl_live_state.set_text("NOT READY")
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>NOT READY</span>")
                     self.lbl_sub_state.set_text(sw.get("badge", "Check Appliance"))
         else:
-            self.lbl_live_state.set_text("READY")
+            self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY</span>")
             self.lbl_sub_state.set_text("Nominal")
 
         # Thermoblock Heaters & Thermal Sensors

@@ -97,7 +97,14 @@ def main():
         print("\n[PHYSICAL MICROSWITCHES & LEVEL SENSORS]")
         for sw in sensors_data.get("switches", []):
             badge = f"[{sw.get('badge', 'OK')}]"
-            print(f"  {sw.get('icon', '*')} {sw['name']:<32}: {sw['status']:<30} {badge:>10}")
+            print(f"  {sw.get('icon', '*')} {sw['name']:<32}: {sw['status']:<58} {badge:>10}")
+
+        if sensors_data.get("alerts"):
+            print("\n[ACTIVE SYSTEM WARNINGS & LOCKOUTS]")
+            for a in sensors_data["alerts"]:
+                lvl = a.get("level", "WARNING")
+                msg = a.get("message") or f"{a.get('name')}: {a.get('details')}"
+                print(f"  ⚠️ [{lvl}] {msg}")
 
         print("\n[DIAGNOSTIC COMPONENT HEALTH & SAFETY]")
         for s in sensors_data.get("sensors", []):

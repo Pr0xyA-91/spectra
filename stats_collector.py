@@ -245,31 +245,15 @@ def query_live_sensors(
                     water_low = True
                 water_ok = not water_low
 
-                # Appliance operating / ready status:
-                # Machine can only be ready if tray is inserted, water is present, and thermoblock is heated.
-                is_busy = (len(parts) > 0 and len(parts[0]) > 0 and parts[0][0] != "0")
-                temp_coffee_val = decode_jura_temperature(heater_ntc_raw)
+                # - Grounds Container Alarm:
+                grounds_full = False
+                if len(parts) > 7 and len(parts[7]) > 1 and parts[7][1] == "1":
+                    grounds_full = True
 
-                if not tray_ok:
-                    ready_ok = False
-                    ready_status = "Not Ready (Drip Tray Missing)"
-                    ready_badge = "MISSING"
-                elif not water_ok:
-                    ready_ok = False
-                    ready_status = "Not Ready (Fill Water Tank)"
-                    ready_badge = "EMPTY"
-                elif is_busy:
-                    ready_ok = False
-                    ready_status = "Busy (Operation in Progress)"
-                    ready_badge = "BUSY"
-                elif temp_coffee_val is not None and temp_coffee_val < 80.0:
-                    ready_ok = False
-                    ready_status = f"Heating Up ({temp_coffee_val:.1f} °C)"
-                    ready_badge = "HEATING"
-                else:
-                    ready_ok = True
-                    ready_status = "Ready to Brew / Nominal"
-                    ready_badge = "READY"
+                # - System Fill / Maintenance Prompt:
+                fill_system_prompt = False
+                if len(parts) > 7 and len(parts[7]) > 3 and parts[7][3] == "1":
+                    fill_system_prompt = True
 
             # Decode temperatures in Celsius (0.1 °C resolution)
             temp_ambient = decode_jura_temperature(ambient_ntc_raw)
@@ -293,7 +277,7 @@ def query_live_sensors(
             is_dual_heater = is_known_dual or is_hardware_dual
             heater_count = 2 if is_dual_heater else 1
 
-            # 2. RE:0028 Sensor & Component Fault Bitfield
+            # 2. Query Diagnostic Fault & Input Registers (RE:0028 & IC:)
             r28 = conn.query_ascii("RE:0028")
             val_r28 = 0
             if r28 and r28.startswith("re:"):
@@ -303,7 +287,92 @@ def query_live_sensors(
                     val_r28 = 0
             results["fault_register_hex"] = f"0x{val_r28:04X}"
 
-            # 3. Filter & System Config
+            ic_resp = conn.query_ascii("IC:")
+            ic_val = 0
+            if ic_resp and ic_resp.startswith("ic:"):
+                try:
+                    ic_val = int(ic_resp[3:], 16)
+                    results["raw_ic"] = ic_resp
+                except ValueError:
+                    pass
+
+            # 3. Comprehensive Machine Operational State & Fault Evaluation
+            # Priority detection: Blockages, Filling Loop, Microswitches, Safety Trips
+            flowmeter_timeout = bool(val_r28 & 0x0300)
+            ntc_fault = bool(val_r28 & 0x0006) if not is_dual_heater else bool(val_r28 & 0x00C6)
+            heater_fault = bool(val_r28 & 0x0400)
+            bu_fault = bool(val_r28 & 0x0018)
+            valve_fault = bool(val_r28 & 0x3800)
+            is_busy = (len(parts) > 0 and len(parts[0]) > 0 and parts[0][0] != "0")
+            temp_coffee_val = temp_coffee
+
+            if not tray_ok:
+                ready_ok = False
+                ready_status = "Not Ready (Drip Tray Missing)"
+                ready_badge = "MISSING"
+                ready_icon = "📥"
+            elif not water_ok:
+                ready_ok = False
+                ready_status = "Not Ready (Fill Water Tank)"
+                ready_badge = "EMPTY"
+                ready_icon = "💧"
+            elif grounds_full:
+                ready_ok = False
+                ready_status = "Not Ready (Empty Grounds Container)"
+                ready_badge = "FULL"
+                ready_icon = "🗑️"
+            elif flowmeter_timeout or fill_system_prompt:
+                ready_ok = False
+                if flowmeter_timeout and fill_system_prompt:
+                    ready_status = "System Clogged / Press Maintenance (Stuck in Filling Loop)"
+                elif flowmeter_timeout:
+                    ready_status = "Fluid System Clogged (Flowmeter Timeout / No Flow)"
+                else:
+                    ready_status = "Press Maintenance (Fill System Required)"
+                ready_badge = "CLOGGED"
+                ready_icon = "⚠️"
+                results["alerts"].append({
+                    "level": "CRITICAL",
+                    "code": "CLOGGED_FILLING_LOOP",
+                    "message": "Hydraulic circuit is clogged or airbound. Flowmeter timeout detected (no water flow). Machine is prompting 'Press Maintenance' to fill system."
+                })
+            elif ntc_fault:
+                ready_ok = False
+                ready_status = "Hardware Fault (Thermoblock NTC Sensor)"
+                ready_badge = "FAULT"
+                ready_icon = "🛑"
+            elif heater_fault:
+                ready_ok = False
+                ready_status = "Hardware Fault (Heating Element Anomaly / Error 5)"
+                ready_badge = "FAULT"
+                ready_icon = "🛑"
+            elif bu_fault:
+                ready_ok = False
+                ready_status = "Hardware Fault (Brew Unit Blocked / Error 8)"
+                ready_badge = "FAULT"
+                ready_icon = "🛑"
+            elif valve_fault:
+                ready_ok = False
+                ready_status = "Hardware Fault (Ceramic/Multiway Valve Error / Error 6)"
+                ready_badge = "FAULT"
+                ready_icon = "🛑"
+            elif is_busy:
+                ready_ok = False
+                ready_status = "Busy (Operation in Progress)"
+                ready_badge = "BUSY"
+                ready_icon = "⏳"
+            elif temp_coffee_val is not None and temp_coffee_val < 80.0:
+                ready_ok = False
+                ready_status = f"Heating Up ({temp_coffee_val:.1f} °C)"
+                ready_badge = "HEATING"
+                ready_icon = "🔥"
+            else:
+                ready_ok = True
+                ready_status = "Ready to Brew / Nominal"
+                ready_badge = "READY"
+                ready_icon = "☕"
+
+            # 4. Filter & System Config
             filter_claris = False
             filter_ext = False
             r29 = conn.query_ascii("RE:0029")
@@ -351,12 +420,20 @@ def query_live_sensors(
                     "icon": "📥"
                 },
                 {
+                    "id": "hydraulic_system",
+                    "name": "Hydraulic System & Flowmeter",
+                    "status": "System Clogged / Flowmeter Timeout (No Flow)" if flowmeter_timeout else ("Fill System Loop Active" if fill_system_prompt else "Nominal (Hydraulic Flow OK)"),
+                    "ok": not (flowmeter_timeout or fill_system_prompt),
+                    "badge": "CLOGGED" if flowmeter_timeout else ("FILLING" if fill_system_prompt else "NORMAL"),
+                    "icon": "⚠️" if (flowmeter_timeout or fill_system_prompt) else "🌊"
+                },
+                {
                     "id": "machine_ready",
                     "name": "Appliance Operating State",
                     "status": ready_status,
                     "ok": ready_ok,
                     "badge": ready_badge,
-                    "icon": "☕"
+                    "icon": ready_icon
                 },
                 {
                     "id": "claris_filter",
@@ -378,8 +455,8 @@ def query_live_sensors(
                     (0x0008, "bu_pos", "Brew Unit Position Sensor", "Position alignment mismatch", "Encoder and position feedback aligned"),
                     (0x0010, "bu_ini", "Brew Unit Zero / Home Switch", "Zero initialization fault", "Zero-position microswitch functional"),
                     (0x0400, "heater_elem", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
-                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
-                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
+                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake (System clogged or airbound)", "Impulse frequency nominal"),
+                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse (System clogged or airbound)", "Rinse flowrate nominal"),
                     (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
                     (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
                     (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
@@ -396,8 +473,8 @@ def query_live_sensors(
                     (0x0400, "heater", "Coffee Heating Element", "Heating rate anomaly / element fault", "Thermoblock heating curve nominal"),
                     (0x0040, "relay_main", "Main Power Relay", "Power relay contact fault", "Main relay switching nominal"),
                     (0x0080, "overheat", "Thermal Overheat Protection", "Thermal safety cutoff tripped", "Thermal safety margin verified"),
-                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake", "Impulse frequency nominal"),
-                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse", "Rinse flowrate nominal"),
+                    (0x0100, "fmto_intake", "Flowmeter Monitor (Intake)", "Flow timeout during intake (System clogged or airbound)", "Impulse frequency nominal"),
+                    (0x0200, "fmto_rinse", "Flowmeter Monitor (Rinse)", "Flow timeout during rinse (System clogged or airbound)", "Rinse flowrate nominal"),
                     (0x0800, "ku_timeout", "Ceramic Valve (Timeout)", "Ceramic valve position timeout", "Valve positioning nominal"),
                     (0x1000, "mv_pos", "Multiway Valve (Position)", "Multiway valve position error", "Valve position feedback verified"),
                     (0x2000, "mv_ini", "Multiway Valve (Init)", "Multiway valve init error", "Valve initialization verified"),
@@ -491,10 +568,11 @@ def query_live_sensors(
                 "filter_ext_active": filter_ext,
                 "rotary_switch": rotary_pos
             }
-            results["alerts"] = [
+            # Append component faults to alerts list
+            results["alerts"].extend([
                 {"name": s["name"], "details": s["details"], "blocking": True}
                 for s in sensor_list if not s["ok"]
-            ]
+            ])
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
@@ -889,13 +967,17 @@ class JuraStatsSession:
                     "power_spec": self.power_spec,
                 }
 
-                self.active_alerts = [
-                    {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}
-                ]
-
                 # Interrogate Live Hardware Sensors & Switches
                 update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
                 self.live_sensors = self.query_live_sensors()
+                if self.live_sensors.get("alerts"):
+                    self.active_alerts = [
+                        {"bit": 0, "blocking": True, "name": a["message"]} for a in self.live_sensors["alerts"]
+                    ]
+                else:
+                    self.active_alerts = [
+                        {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}
+                    ]
 
                 update_prog(1.0, "Interrogation completed successfully!")
                 self.log(f"ASCII Interrogation successful: {self.total_cups:,} cups read!")
