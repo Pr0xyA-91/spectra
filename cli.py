@@ -13,7 +13,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.2"
+__version__ = "0.3.4"
 
 
 def print_banner():
@@ -24,7 +24,7 @@ def print_banner():
  \        /    |    |   \ /    |    \ |    |   
   \__/\  /     |____|_  / \____|__  / |____|   
        \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.2)
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)
          Universal Diagnostics Engine [Jura Module]
     """
     print(banner)
@@ -32,7 +32,7 @@ def print_banner():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.2)"
+        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.4)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
@@ -97,7 +97,14 @@ def main():
         print("\n[PHYSICAL MICROSWITCHES & LEVEL SENSORS]")
         for sw in sensors_data.get("switches", []):
             badge = f"[{sw.get('badge', 'OK')}]"
-            print(f"  {sw.get('icon', '*')} {sw['name']:<32}: {sw['status']:<30} {badge:>10}")
+            print(f"  {sw.get('icon', '*')} {sw['name']:<32}: {sw['status']:<58} {badge:>10}")
+
+        if sensors_data.get("alerts"):
+            print("\n[ACTIVE SYSTEM WARNINGS & LOCKOUTS]")
+            for a in sensors_data["alerts"]:
+                lvl = a.get("level", "WARNING")
+                msg = a.get("message") or f"{a.get('name')}: {a.get('details')}"
+                print(f"  ⚠️ [{lvl}] {msg}")
 
         print("\n[DIAGNOSTIC COMPONENT HEALTH & SAFETY]")
         for s in sensors_data.get("sensors", []):

@@ -7,6 +7,7 @@ maintenance history, active alerts, and live sensors from Jura coffee machines.
 
 import sys
 import os
+import time
 import threading
 from datetime import datetime
 
@@ -18,12 +19,12 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.2"
+__version__ = "0.3.4"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.2)")
+        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)")
         self.set_default_size(1020, 700)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -32,6 +33,10 @@ class JuraDiagApp(Gtk.Window):
 
         self.session: Optional[sc.JuraStatsSession] = None
         self.is_reading = False
+        self.is_polling = False
+        self.serial_lock = threading.Lock()
+        self.auto_poll_active = False
+        self.auto_poll_thread: Optional[threading.Thread] = None
 
         # Main Layout Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -167,7 +172,7 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.2</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.4</span></b>")
         app_title.set_alignment(0, 0.5)
         sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Jura Diagnostics Module")
         sub_title.get_style_context().add_class("card-label")
@@ -315,7 +320,12 @@ class JuraDiagApp(Gtk.Window):
         self.spinner_sensors = Gtk.Spinner()
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
-        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' to poll microswitches and diagnostic registers.")
+        # Continuous Live Polling Toggle
+        self.chk_auto_poll = Gtk.CheckButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
+        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 4)
+
+        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
@@ -350,6 +360,7 @@ class JuraDiagApp(Gtk.Window):
         card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
         card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
         card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
+        card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
         card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
         badges_box.pack_start(card_tank, True, True, 0)
@@ -357,6 +368,7 @@ class JuraDiagApp(Gtk.Window):
         badges_box.pack_start(card_state, True, True, 0)
         badges_box.pack_start(card_coffee, True, True, 0)
         badges_box.pack_start(card_steam, True, True, 0)
+        badges_box.pack_start(card_flow, True, True, 0)
         badges_box.pack_start(card_filter, True, True, 0)
 
         main_box.pack_start(badges_box, False, False, 4)
@@ -527,13 +539,14 @@ class JuraDiagApp(Gtk.Window):
         thread.start()
 
     def _run_session_worker(self, port: str):
-        session = sc.JuraStatsSession(port, baudrate=9600, log_cb=lambda msg: GLib.idle_add(self._append_log, msg))
+        with self.serial_lock:
+            session = sc.JuraStatsSession(port, baudrate=9600, log_cb=lambda msg: GLib.idle_add(self._append_log, msg))
 
-        def update_prog(pct, status):
-            GLib.idle_add(self.progress_bar.set_fraction, pct)
-            GLib.idle_add(self.progress_bar.set_text, f"[{int(pct*100)}%] {status}")
+            def update_prog(pct, status):
+                GLib.idle_add(self.progress_bar.set_fraction, pct)
+                GLib.idle_add(self.progress_bar.set_text, f"[{int(pct*100)}%] {status}")
 
-        success = session.run_interrogation(progress_cb=update_prog)
+            success = session.run_interrogation(progress_cb=update_prog)
         GLib.idle_add(self._on_session_finished, session, success)
 
     def _on_session_finished(self, session: sc.JuraStatsSession, success: bool):
@@ -648,8 +661,73 @@ class JuraDiagApp(Gtk.Window):
         if hasattr(session, "live_sensors") and session.live_sensors:
             self._on_live_sensors_updated(session.live_sensors)
 
+    def _on_auto_poll_toggled(self, widget):
+        if self.chk_auto_poll.get_active():
+            self.auto_poll_active = True
+            self.btn_refresh_sensors.set_sensitive(False)
+            self.lbl_sensors_status.set_text("Continuous auto-polling active (2s)...")
+            if self.auto_poll_thread is None or not self.auto_poll_thread.is_alive():
+                self.auto_poll_thread = threading.Thread(target=self._auto_poll_worker, daemon=True)
+                self.auto_poll_thread.start()
+        else:
+            self.auto_poll_active = False
+            self.btn_refresh_sensors.set_sensitive(True)
+            self.lbl_sensors_status.set_text("Auto-poll stopped. Ready for manual refresh.")
+
+    def _auto_poll_worker(self):
+        conn: Optional[serial_io.JuraSerialConnection] = None
+        current_port = None
+        try:
+            while self.auto_poll_active:
+                if self.is_reading:
+                    time.sleep(0.5)
+                    continue
+
+                active_port = self.port_combo.get_active_text()
+                if not active_port:
+                    time.sleep(1.0)
+                    continue
+
+                # Maintain persistent connection across fast polls
+                with self.serial_lock:
+                    if conn is None or current_port != active_port or not conn.is_open:
+                        if conn:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                        try:
+                            conn = serial_io.JuraSerialConnection(active_port, baudrate=9600)
+                            current_port = active_port
+                        except Exception as e:
+                            GLib.idle_add(self.lbl_sensors_status.set_text, f"Connection error: {e}")
+                            time.sleep(2.0)
+                            continue
+
+                    try:
+                        res = sc.query_live_sensors(active_port, conn=conn, fast_poll=True)
+                    except Exception as e:
+                        res = {"error": str(e)}
+
+                if self.auto_poll_active:
+                    GLib.idle_add(self._on_live_sensors_updated, res)
+
+                # Sleep 1.5s in 100ms slices to allow immediate cancellation
+                for _ in range(15):
+                    if not self.auto_poll_active:
+                        break
+                    time.sleep(0.1)
+        finally:
+            with self.serial_lock:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+
     def _on_refresh_sensors_clicked(self, widget):
-        if self.is_reading:
+        if self.is_reading or self.is_polling or self.auto_poll_active:
             return
 
         active_port = self.port_combo.get_active_text()
@@ -657,31 +735,40 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_sensors_status.set_text("No serial port selected!")
             return
 
+        self.is_polling = True
         self.btn_refresh_sensors.set_sensitive(False)
         self.spinner_sensors.start()
         self.lbl_sensors_status.set_text(f"Querying live hardware sensors on {active_port}...")
 
-        thread = threading.Thread(target=self._run_sensor_poll_worker, args=(active_port,), daemon=True)
+        def worker():
+            try:
+                with self.serial_lock:
+                    result = sc.query_live_sensors(active_port, baudrate=9600, fast_poll=False)
+            except Exception as e:
+                result = {"error": str(e)}
+            finally:
+                self.is_polling = False
+            GLib.idle_add(self._on_live_sensors_updated, result)
+
+        thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _run_sensor_poll_worker(self, port: str):
-        result = sc.query_live_sensors(port, baudrate=9600)
-        GLib.idle_add(self._on_live_sensors_updated, result)
-
     def _on_live_sensors_updated(self, result: dict):
-        self.btn_refresh_sensors.set_sensitive(True)
+        if not self.auto_poll_active:
+            self.btn_refresh_sensors.set_sensitive(True)
         self.spinner_sensors.stop()
 
         if not result:
             return
 
         if "error" in result:
-            self.lbl_sensors_status.set_text(f"Sensor polling error: {result['error']}")
+            self.lbl_sensors_status.set_text(f"Poll notice: {result['error']}")
             return
 
         ts = result.get("timestamp", datetime.now().strftime("%H:%M:%S"))
         proto = result.get("protocol", "UART")
-        self.lbl_sensors_status.set_text(f"Last polled: {ts} (via {proto})")
+        mode_tag = "auto" if self.auto_poll_active else "manual"
+        self.lbl_sensors_status.set_text(f"Last polled ({mode_tag}): {ts} (via {proto})")
 
         # Update KPI Cards
         switches = {sw["id"]: sw for sw in result.get("switches", [])}
@@ -707,27 +794,43 @@ class JuraDiagApp(Gtk.Window):
         # Machine State
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
+            st = sw.get("status", "")
             if sw["ok"]:
-                self.lbl_live_state.set_text("READY TO BREW")
+                self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY TO BREW</span>")
                 self.lbl_sub_state.set_text("Appliance Ready")
             else:
-                if "Tray Missing" in sw.get("status", "") or ("drip_tray" in switches and not switches["drip_tray"]["ok"]):
-                    self.lbl_live_state.set_text("NOT READY")
+                if "Press Maintenance" in st or "Maintenance" in st:
+                    self.lbl_live_state.set_markup("<span color='#fab387'>PRESS MAINTENANCE</span>")
+                    if "Repeated No Flow" in st or "Filling Loop" in st:
+                        self.lbl_sub_state.set_text("Filling Loop (Repeated No Flow)")
+                    else:
+                        self.lbl_sub_state.set_text("System Fill Required")
+                elif "Clogged" in st:
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>SYSTEM CLOGGED</span>")
+                    self.lbl_sub_state.set_text("Hydraulic Blockage Detected")
+                elif "Tray Missing" in st or ("drip_tray" in switches and not switches["drip_tray"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Insert Drip Tray")
-                elif "Water" in sw.get("status", "") or ("water_tank" in switches and not switches["water_tank"]["ok"]):
-                    self.lbl_live_state.set_text("NOT READY")
+                elif "Water" in st or ("water_tank" in switches and not switches["water_tank"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Fill Water Tank")
-                elif "Heating" in sw.get("status", ""):
-                    self.lbl_live_state.set_text("HEATING UP")
+                elif "Grounds" in st:
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
+                    self.lbl_sub_state.set_text("Empty Grounds Container")
+                elif "Heating" in st:
+                    self.lbl_live_state.set_markup("<span color='#f9e2af'>HEATING UP</span>")
                     self.lbl_sub_state.set_text("Heating Thermoblock")
-                elif "Busy" in sw.get("status", ""):
-                    self.lbl_live_state.set_text("BUSY")
-                    self.lbl_sub_state.set_text("In Progress")
+                elif "Busy" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>BUSY</span>")
+                    self.lbl_sub_state.set_text("Operation in Progress")
+                elif "Hardware Fault" in st:
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>HARDWARE FAULT</span>")
+                    self.lbl_sub_state.set_text(st.replace("Hardware Fault (", "").replace(")", ""))
                 else:
-                    self.lbl_live_state.set_text("NOT READY")
+                    self.lbl_live_state.set_markup("<span color='#f38ba8'>NOT READY</span>")
                     self.lbl_sub_state.set_text(sw.get("badge", "Check Appliance"))
         else:
-            self.lbl_live_state.set_text("READY")
+            self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY</span>")
             self.lbl_sub_state.set_text("Nominal")
 
         # Thermoblock Heaters & Thermal Sensors
@@ -752,11 +855,25 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_live_steam_tb.set_text("Not Installed")
             self.lbl_sub_steam_tb.set_text("Single Heater Model")
 
-        # Filter / Hardness
-        dh = telem.get("water_hardness_dh", 16)
-        claris = telem.get("filter_claris_active", False)
-        self.lbl_live_filter.set_text(f"{dh} °dH")
-        self.lbl_sub_filter.set_text("CLARIS Active" if claris else "Bypass Mode")
+        # Filter / Hardness (Manual refresh only)
+        if "water_hardness_dh" in telem:
+            dh = telem["water_hardness_dh"]
+            claris = telem.get("filter_claris_active", False)
+            ext = telem.get("filter_ext_active", False)
+            self.lbl_live_filter.set_text(f"{dh} °dH")
+            mode_desc = "CLARIS Active" if claris else ("External Active" if ext else "Bypass Mode")
+            self.lbl_sub_filter.set_text(mode_desc)
+
+        # Water Flow Rate (ml/s) & Cycle Delivered Volume
+        flow_rate = telem.get("flow_rate_ml_s", 0.0)
+        flow_pulses = telem.get("flow_pulses", 0)
+        flow_vol = telem.get("flow_volume_ml", 0.0)
+        if flow_rate > 0.0:
+            self.lbl_live_flow.set_markup(f"<span color='#89dceb'><b>{flow_rate:.1f} ml/s</b></span>")
+            self.lbl_sub_flow.set_text(f"Flowing ({flow_vol:.1f} ml / {flow_pulses} P)")
+        else:
+            self.lbl_live_flow.set_text("0.0 ml/s")
+            self.lbl_sub_flow.set_text("No Flow / Idle" if flow_pulses == 0 else f"Cycle: {flow_vol:.1f} ml ({flow_pulses} P)")
 
         # Populate Hardware Diagnostics Store
         self.live_sensors_store.clear()

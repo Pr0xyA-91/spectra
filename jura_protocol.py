@@ -10,6 +10,11 @@ Handles:
 - Real-time alerts and telemetry (@TF:)
 - Legacy cleartext fallback (TY:, RT:, RE:)
 - High-fidelity Mock Jura Machine for offline simulation and unit testing
+
+Credits & Attribution:
+Built upon reverse-engineering research and protocol contributions by CM-P,
+Hajo Noerenberg (hn / cmd2jura), Jutta-Proto, makefu (jura-connect), AlexxIT,
+Otto Winter (ESPHome), and the open-source hardware community.
 """
 
 import time
