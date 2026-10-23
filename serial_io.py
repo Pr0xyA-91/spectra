@@ -245,7 +245,12 @@ class JuraSerialConnection:
             elif cmd_clean == "RE:00EA":
                 return "re:0007"
             elif cmd_clean == "HZ:":
-                return "hz:000000000000,0000,0001,0000,00E4,0802,3,000000,0000,00"
+                if "Z10" in self.port_name.upper():
+                    # Dual heater demo model (Coffee: 94.2°C, Steam: 135.0°C)
+                    return "hz:010001100000,027E,00E2,0000,03AE,0546,4,000000,0000,00"
+                else:
+                    # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
+                    return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
             elif cmd_clean == "RE:0028":
                 return "re:0000"
             elif cmd_clean == "RE:0029":

@@ -1,13 +1,13 @@
 # Jura Modern Diagnostics & Statistics Suite
 
-[![Version: 0.3.1](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
+[![Version: 0.3.2](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.3.1)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
+> **Project Status: Alpha (v0.3.2)** — Active reverse-engineering and protocol integration. Supports live diagnostic reading from classic TOP-tronic and modern Smart Connect machines.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -28,6 +28,8 @@ This application runs natively on Linux (no Wine or Windows VM required) and imp
 - **Native Linux Desktop Application**: Fast, dark-mode GTK 3 desktop application with KPI summary cards, sortable beverage breakdown tables, maintenance cycle progress bars, active alert bitfield inspection, a dedicated **Live Sensors & Hardware** tab with a manual **🔄 Refresh Live Sensors** button, and a live communication console.
 - **Full Headless CLI**: Command-line interface with colored output, progress bar, multi-format export capabilities, and a dedicated `--sensors` (`-s`) flag for rapid live sensor polling.
 - **Live Hardware Sensors & Safety Diagnostics**:
+  - **Accurate Celsius (°C) Temperature Decoding**: Accurately translates raw Jura microcontroller NTC sensor readings into tenths-of-a-degree Celsius (0.1 °C precision) for Coffee Thermoblock (`TB1`), Steam Thermoblock (`TB2`), and Cold Water Intake/Ambient temperature sensors. Automatically evaluates real-time operational thermal status (`Ready to Brew`, `Heating Up`, `Cold / Standby`, `Ready for Steam`).
+  - **Full Dual-Heater & Single-Heater Accommodation**: Built-in architecture detection seamlessly accommodates dual-thermoblock models (e.g., Jura Z10, GIGA series, commercial dual-heater units) and single-thermoblock models (e.g., E8, S8, IMPRESSA XJ5). Dynamically adjusts component diagnostic registers (`RE:0028`) and historical fault counters (`RE:01B3`) to Steam NTC sensors on dual-heater units while presenting single-heater machines with clean `Not Installed (Single Heater Model)` indicators.
   - **Physical Microswitches & Contacts**: Interrogates water tank level float, drip tray/drawer presence switch, machine readiness state, and CLARIS water filter configuration in real time (`HZ:`).
   - **Component Health & Safety Verification**: Decodes the 15-bit hardware fault and sensor verification register (`RE:0028`) covering thermoblock NTC short/open circuits, brew unit position alignment, zero-home microswitch, coffee heating element, main power relay, thermal overheat safety cutoff, flowmeter intake/rinse timeouts, ceramic valve, and multiway distribution valves.
   - **Historical Sensor Trip Counters**: Reads exact lifetime fault trip frequencies (`0x01B0`–`0x01B6`, `0x0103`) directly from EEPROM logs.

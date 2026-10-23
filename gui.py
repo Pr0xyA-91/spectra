@@ -18,13 +18,13 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Jura Modern Diagnostics Suite (v0.3.1)")
-        self.set_default_size(980, 680)
+        super().__init__(title="Jura Modern Diagnostics Suite (v0.3.2)")
+        self.set_default_size(1020, 700)
         self.set_position(Gtk.WindowPosition.CENTER)
 
         # Apply dark modern CSS styling
@@ -101,13 +101,18 @@ class JuraDiagApp(Gtk.Window):
             background-color: #24273a;
             border: 1px solid #363a4f;
             border-radius: 8px;
-            padding: 12px 16px;
-            margin: 4px;
+            padding: 10px 12px;
+            margin: 3px;
         }
         .card-value {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: bold;
             color: #89b4fa;
+        }
+        .card-sub {
+            font-size: 11px;
+            color: #a6e3a1;
+            font-weight: 500;
         }
         .card-label {
             font-size: 11px;
@@ -162,7 +167,7 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.3.1</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.3.2</span></b>")
         app_title.set_alignment(0, 0.5)
         sub_title = Gtk.Label(label="Universal Optical & Smart Connect Protocol Reader")
         sub_title.get_style_context().add_class("card-label")
@@ -320,30 +325,38 @@ class JuraDiagApp(Gtk.Window):
         badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         badges_box.set_homogeneous(True)
 
-        def make_sensor_card(title: str, default_val: str):
-            c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        def make_sensor_card(title: str, default_val: str, default_sub: str = ""):
+            c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             c.get_style_context().add_class("card")
             val_lbl = Gtk.Label(label=default_val)
             val_lbl.get_style_context().add_class("card-value")
             val_lbl.set_xalign(0.5)
-            val_lbl.set_line_wrap(True)
+
+            sub_lbl = Gtk.Label(label=default_sub)
+            sub_lbl.get_style_context().add_class("card-sub")
+            sub_lbl.set_xalign(0.5)
+
             title_lbl = Gtk.Label(label=title)
             title_lbl.get_style_context().add_class("card-label")
             title_lbl.set_xalign(0.5)
-            c.pack_start(val_lbl, True, True, 2)
-            c.pack_start(title_lbl, False, False, 2)
-            return c, val_lbl
 
-        card_tank, self.lbl_live_tank = make_sensor_card("💧 Water Tank", "UNKNOWN")
-        card_tray, self.lbl_live_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN")
-        card_state, self.lbl_live_state = make_sensor_card("☕ Machine State", "UNKNOWN")
-        card_ntc, self.lbl_live_ntc = make_sensor_card("🌡️ Thermoblock NTC", "UNKNOWN")
-        card_filter, self.lbl_live_filter = make_sensor_card("🛡️ Filter / Hardness", "UNKNOWN")
+            c.pack_start(val_lbl, False, False, 1)
+            c.pack_start(sub_lbl, False, False, 1)
+            c.pack_start(title_lbl, False, False, 1)
+            return c, val_lbl, sub_lbl
+
+        card_tank, self.lbl_live_tank, self.lbl_sub_tank = make_sensor_card("💧 Water Tank", "UNKNOWN", "Level Float")
+        card_tray, self.lbl_live_tray, self.lbl_sub_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN", "Microswitch")
+        card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
+        card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
+        card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
+        card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
         badges_box.pack_start(card_tank, True, True, 0)
         badges_box.pack_start(card_tray, True, True, 0)
         badges_box.pack_start(card_state, True, True, 0)
-        badges_box.pack_start(card_ntc, True, True, 0)
+        badges_box.pack_start(card_coffee, True, True, 0)
+        badges_box.pack_start(card_steam, True, True, 0)
         badges_box.pack_start(card_filter, True, True, 0)
 
         main_box.pack_start(badges_box, False, False, 4)
@@ -677,36 +690,56 @@ class JuraDiagApp(Gtk.Window):
         if "water_tank" in switches:
             sw = switches["water_tank"]
             self.lbl_live_tank.set_text("WATER OK" if sw["ok"] else "LOW / EMPTY")
+            self.lbl_sub_tank.set_text("Float Sensor Nominal" if sw["ok"] else "Refill Water Tank")
         else:
             self.lbl_live_tank.set_text("NOMINAL")
+            self.lbl_sub_tank.set_text("Float Sensor OK")
 
         # Drip Tray
         if "drip_tray" in switches:
             sw = switches["drip_tray"]
             self.lbl_live_tray.set_text("INSERTED" if sw["ok"] else "MISSING")
+            self.lbl_sub_tray.set_text("Drawer Inserted" if sw["ok"] else "Insert / Empty Tray")
         else:
             self.lbl_live_tray.set_text("INSERTED")
+            self.lbl_sub_tray.set_text("Tray OK")
 
         # Machine State
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
             self.lbl_live_state.set_text("READY TO BREW" if sw["ok"] else "HEATING / BUSY")
+            self.lbl_sub_state.set_text("Appliance Ready" if sw["ok"] else "In Progress")
         else:
             self.lbl_live_state.set_text("READY")
+            self.lbl_sub_state.set_text("Nominal")
 
-        # Thermoblock NTC
+        # Thermoblock Heaters & Thermal Sensors
         telem = result.get("telemetry", {})
-        if "heater_ntc_raw" in telem:
-            raw_ntc = telem["heater_ntc_raw"]
-            self.lbl_live_ntc.set_text(f"ADC {raw_ntc} (Nominal)")
+        if "heater_coffee_str" in telem:
+            self.lbl_live_coffee_tb.set_text(telem["heater_coffee_str"])
+            self.lbl_sub_coffee_tb.set_text(telem.get("heater_coffee_status", "Ready to Brew"))
+        elif "heater_ntc_raw" in telem:
+            self.lbl_live_coffee_tb.set_text(f"ADC {telem['heater_ntc_raw']}")
+            self.lbl_sub_coffee_tb.set_text("Nominal")
         else:
-            self.lbl_live_ntc.set_text("NOMINAL")
+            self.lbl_live_coffee_tb.set_text("NOMINAL")
+            self.lbl_sub_coffee_tb.set_text("Standby")
+
+        is_dual = telem.get("is_dual_heater", False)
+        if is_dual:
+            s_str = telem.get("heater_steam_str", "Installed")
+            s_stat = telem.get("heater_steam_status", "Ready for Steam")
+            self.lbl_live_steam_tb.set_text(s_str)
+            self.lbl_sub_steam_tb.set_text(s_stat)
+        else:
+            self.lbl_live_steam_tb.set_text("Not Installed")
+            self.lbl_sub_steam_tb.set_text("Single Heater Model")
 
         # Filter / Hardness
         dh = telem.get("water_hardness_dh", 16)
         claris = telem.get("filter_claris_active", False)
-        f_lbl = f"{dh} °dH (Claris)" if claris else f"{dh} °dH (Bypass)"
-        self.lbl_live_filter.set_text(f_lbl)
+        self.lbl_live_filter.set_text(f"{dh} °dH")
+        self.lbl_sub_filter.set_text("CLARIS Active" if claris else "Bypass Mode")
 
         # Populate Hardware Diagnostics Store
         self.live_sensors_store.clear()
