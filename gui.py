@@ -712,9 +712,15 @@ class JuraDiagApp(Gtk.Window):
                 self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY TO BREW</span>")
                 self.lbl_sub_state.set_text("Appliance Ready")
             else:
-                if "Clogged" in st or "Filling" in st or "Maintenance" in st:
+                if "Press Maintenance" in st or "Maintenance" in st:
+                    self.lbl_live_state.set_markup("<span color='#fab387'>PRESS MAINTENANCE</span>")
+                    if "Repeated No Flow" in st or "Filling Loop" in st:
+                        self.lbl_sub_state.set_text("Filling Loop (Repeated No Flow)")
+                    else:
+                        self.lbl_sub_state.set_text("System Fill Required")
+                elif "Clogged" in st:
                     self.lbl_live_state.set_markup("<span color='#f38ba8'>SYSTEM CLOGGED</span>")
-                    self.lbl_sub_state.set_text("Press Maintenance (Filling Loop)")
+                    self.lbl_sub_state.set_text("Hydraulic Blockage Detected")
                 elif "Tray Missing" in st or ("drip_tray" in switches and not switches["drip_tray"]["ok"]):
                     self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Insert Drip Tray")

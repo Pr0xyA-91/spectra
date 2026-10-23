@@ -293,13 +293,22 @@ def query_live_sensors(
             results["fault_register_hex"] = f"0x{val_r28:04X}"
 
             ic_resp = conn.query_ascii("IC:")
-            ic_val = 0
             if ic_resp and ic_resp.startswith("ic:"):
+                results["raw_ic"] = ic_resp
+
+            # Query flowmeter history counters to distinguish single timeout vs repeated no flow
+            r1b4 = conn.query_ascii("RE:01B4")
+            fm_intake_timeouts = 0
+            fm_rinse_timeouts = 0
+            if r1b4 and r1b4.startswith("re:"):
                 try:
-                    ic_val = int(ic_resp[3:], 16)
-                    results["raw_ic"] = ic_resp
+                    w_1b4 = int(r1b4[3:], 16)
+                    fm_intake_timeouts = w_1b4 & 0xFF
+                    fm_rinse_timeouts = (w_1b4 >> 8) & 0xFF
                 except ValueError:
                     pass
+            total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
+            repeated_no_flow = (total_fm_timeouts >= 2)
 
             # 3. Comprehensive Machine Operational State & Fault Evaluation
             # Priority detection: Blockages, Filling Loop, Microswitches, Safety Trips
@@ -326,21 +335,31 @@ def query_live_sensors(
                 ready_status = "Not Ready (Empty Grounds Container)"
                 ready_badge = "FULL"
                 ready_icon = "🗑️"
-            elif flowmeter_timeout or fill_system_prompt:
+            elif fill_system_prompt:
                 ready_ok = False
-                if flowmeter_timeout and fill_system_prompt:
-                    ready_status = "System Clogged / Press Maintenance (Stuck in Filling Loop)"
-                elif flowmeter_timeout:
-                    ready_status = "Fluid System Clogged (Flowmeter Timeout / No Flow)"
+                if repeated_no_flow:
+                    ready_status = "Press Maintenance (Filling Loop - Repeated No Flow)"
+                    ready_badge = "CLOGGED"
+                    ready_icon = "⚠️"
+                    results["alerts"].append({
+                        "level": "CRITICAL",
+                        "code": "CLOGGED_FILLING_LOOP",
+                        "message": f"Machine reports 'Press Maintenance' with repeated no-flow timeouts ({fm_intake_timeouts} intake, {fm_rinse_timeouts} rinse events). Hydraulic circuit is clogged."
+                    })
                 else:
-                    ready_status = "Press Maintenance (Fill System Required)"
-                ready_badge = "CLOGGED"
-                ready_icon = "⚠️"
-                results["alerts"].append({
-                    "level": "CRITICAL",
-                    "code": "CLOGGED_FILLING_LOOP",
-                    "message": "Hydraulic circuit is clogged or airbound. Flowmeter timeout detected (no water flow). Machine is prompting 'Press Maintenance' to fill system."
-                })
+                    ready_status = "Press Maintenance"
+                    ready_badge = "MAINTENANCE"
+                    ready_icon = "🔧"
+            elif flowmeter_timeout:
+                ready_ok = False
+                if repeated_no_flow:
+                    ready_status = "Hydraulic Flow Error (Repeated No Flow)"
+                    ready_badge = "CLOGGED"
+                    ready_icon = "⚠️"
+                else:
+                    ready_status = "Flowmeter Timeout Detected"
+                    ready_badge = "TIMEOUT"
+                    ready_icon = "⚠️"
             elif ntc_fault:
                 ready_ok = False
                 ready_status = "Hardware Fault (Thermoblock NTC Sensor)"
@@ -406,6 +425,27 @@ def query_live_sensors(
                 except ValueError:
                     pass
 
+            if repeated_no_flow:
+                hyd_status = f"Repeated No Flow ({total_fm_timeouts} Timeouts Recorded)"
+                hyd_badge = "CLOGGED"
+                hyd_ok = False
+                hyd_icon = "⚠️"
+            elif flowmeter_timeout:
+                hyd_status = "Flowmeter Timeout Detected"
+                hyd_badge = "TIMEOUT"
+                hyd_ok = False
+                hyd_icon = "⚠️"
+            elif fill_system_prompt:
+                hyd_status = "Fill System Prompt Active"
+                hyd_badge = "FILLING"
+                hyd_ok = False
+                hyd_icon = "🔧"
+            else:
+                hyd_status = "Nominal (Hydraulic Flow OK)"
+                hyd_badge = "NORMAL"
+                hyd_ok = True
+                hyd_icon = "🌊"
+
             # Build Microswitches List
             results["switches"] = [
                 {
@@ -427,10 +467,10 @@ def query_live_sensors(
                 {
                     "id": "hydraulic_system",
                     "name": "Hydraulic System & Flowmeter",
-                    "status": "System Clogged / Flowmeter Timeout (No Flow)" if flowmeter_timeout else ("Fill System Loop Active" if fill_system_prompt else "Nominal (Hydraulic Flow OK)"),
-                    "ok": not (flowmeter_timeout or fill_system_prompt),
-                    "badge": "CLOGGED" if flowmeter_timeout else ("FILLING" if fill_system_prompt else "NORMAL"),
-                    "icon": "⚠️" if (flowmeter_timeout or fill_system_prompt) else "🌊"
+                    "status": hyd_status,
+                    "ok": hyd_ok,
+                    "badge": hyd_badge,
+                    "icon": hyd_icon
                 },
                 {
                     "id": "machine_ready",
@@ -976,9 +1016,16 @@ class JuraStatsSession:
                 update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
                 self.live_sensors = self.query_live_sensors()
                 if self.live_sensors.get("alerts"):
-                    self.active_alerts = [
-                        {"bit": 0, "blocking": True, "name": a["message"]} for a in self.live_sensors["alerts"]
-                    ]
+                    self.active_alerts = []
+                    for a in self.live_sensors["alerts"]:
+                        name = a.get("name")
+                        details = a.get("details", "")
+                        msg = a.get("message") or (f"{name}: {details}" if name else str(a))
+                        self.active_alerts.append({
+                            "bit": 0,
+                            "blocking": a.get("blocking", True),
+                            "name": msg
+                        })
                 else:
                     self.active_alerts = [
                         {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}

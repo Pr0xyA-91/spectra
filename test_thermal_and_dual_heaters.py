@@ -139,35 +139,49 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(switches2["machine_ready"]["status"], "Ready to Brew / Nominal")
 
     def test_clogged_system_and_filling_loop_detection(self):
-        """Test detection of flowmeter timeouts and 'Press Maintenance / Fill System' loop."""
+        """Test detection of flowmeter timeouts and 'Press Maintenance' status with filling loop."""
         clogged_conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = clogged_conn.query_ascii
 
-        def mock_query_clogged(cmd, timeout=1.0):
+        # Case A: Repeated no-flow in history (RE:01B4 = 0x0103) -> displays filling loop
+        def mock_query_clogged_repeat(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "HZ:":
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
             elif cmd_c == "RE:0028":
                 return "re:0339"
-            elif cmd_c == "IC:":
-                return "ic:0C08"
+            elif cmd_c == "RE:01B4":
+                return "re:0103"
             return orig_query(cmd, timeout=timeout)
-        clogged_conn.query_ascii = mock_query_clogged
+        clogged_conn.query_ascii = mock_query_clogged_repeat
 
         res = sc.query_live_sensors("mock", conn=clogged_conn)
         switches = {s["id"]: s for s in res["switches"]}
         self.assertFalse(switches["machine_ready"]["ok"])
         self.assertEqual(switches["machine_ready"]["badge"], "CLOGGED")
-        self.assertIn("System Clogged", switches["machine_ready"]["status"])
-        self.assertIn("Filling Loop", switches["machine_ready"]["status"])
+        self.assertEqual(switches["machine_ready"]["status"], "Press Maintenance (Filling Loop - Repeated No Flow)")
 
         self.assertIn("hydraulic_system", switches)
         self.assertFalse(switches["hydraulic_system"]["ok"])
         self.assertEqual(switches["hydraulic_system"]["badge"], "CLOGGED")
 
-        # Verify active blocking alert is emitted
-        alert_codes = [a.get("code") for a in res.get("alerts", [])]
-        self.assertIn("CLOGGED_FILLING_LOOP", alert_codes)
+        # Case B: No repeated no-flow history (RE:01B4 = 0x0000) -> simply displays "Press Maintenance"
+        def mock_query_single_prompt(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
+            elif cmd_c == "RE:0028":
+                return "re:0000"
+            elif cmd_c == "RE:01B4":
+                return "re:0000"
+            return orig_query(cmd, timeout=timeout)
+        clogged_conn.query_ascii = mock_query_single_prompt
+
+        res_single = sc.query_live_sensors("mock", conn=clogged_conn)
+        switches_single = {s["id"]: s for s in res_single["switches"]}
+        self.assertFalse(switches_single["machine_ready"]["ok"])
+        self.assertEqual(switches_single["machine_ready"]["badge"], "MAINTENANCE")
+        self.assertEqual(switches_single["machine_ready"]["status"], "Press Maintenance")
 
 
 if __name__ == "__main__":
