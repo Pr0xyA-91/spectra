@@ -57,7 +57,7 @@ python3 gui.py
   - Automatically checks out `public-main`, syncs from `main`, strictly purges `GEMINI.md`, sanitizes `.desktop` launchers to portable invocation (`bash -c '"$(dirname "%k")"/run.sh'`), and pushes to `public:main`.
 
 ### B. W.R.A.T. Multi-Manufacturer Suite (`/home/a91/Projects/WRAT`)
-* **Branch**: `feat/multi-manufacturer-support` | **Version**: `v0.4.1`
+* **Branch**: `main_mm` | **Version**: `v0.3.4_mm`
 * **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/diag_sw-alpha_J.git`
 * **Supported Brands**:
   - `jura`: Native TOP-tronic ASCII + Smart Connect `@`-protocol.
