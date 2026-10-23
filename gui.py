@@ -18,12 +18,12 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.2"
+__version__ = "0.3.1"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Jura Modern Diagnostics Suite (v0.2)")
+        super().__init__(title="Jura Modern Diagnostics Suite (v0.3.1)")
         self.set_default_size(980, 680)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -65,7 +65,11 @@ class JuraDiagApp(Gtk.Window):
         self.maint_tab = self._create_maintenance_tab()
         self.notebook.append_page(self.maint_tab, Gtk.Label(label="🧼 Maintenance & Hygiene"))
 
-        # Tab 3: Alerts & Status
+        # Tab 3: Live Sensors & Hardware
+        self.sensors_tab = self._create_sensors_tab()
+        self.notebook.append_page(self.sensors_tab, Gtk.Label(label="⚡ Live Sensors"))
+
+        # Tab 4: Alerts & Status
         self.alerts_tab = self._create_alerts_tab()
         self.notebook.append_page(self.alerts_tab, Gtk.Label(label="⚠️ Machine Alerts & Status"))
 
@@ -158,7 +162,7 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.2</span></b>")
+        app_title.set_markup("<b><span size='large' color='#89b4fa'>Jura Modern Diagnostics</span> <span size='small' color='#f9e2af'>v0.3.1</span></b>")
         app_title.set_alignment(0, 0.5)
         sub_title = Gtk.Label(label="Universal Optical & Smart Connect Protocol Reader")
         sub_title.get_style_context().add_class("card-label")
@@ -291,6 +295,125 @@ class JuraDiagApp(Gtk.Window):
 
         scrolled.add(self.maint_tree)
         return scrolled
+
+    def _create_sensors_tab(self) -> Gtk.Widget:
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        main_box.set_border_width(8)
+
+        # Control Bar
+        ctrl_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.btn_refresh_sensors = Gtk.Button(label="🔄 Refresh Live Sensors")
+        self.btn_refresh_sensors.get_style_context().add_class("primary-btn")
+        self.btn_refresh_sensors.connect("clicked", self._on_refresh_sensors_clicked)
+        ctrl_bar.pack_start(self.btn_refresh_sensors, False, False, 0)
+
+        self.spinner_sensors = Gtk.Spinner()
+        ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
+
+        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' to poll microswitches and diagnostic registers.")
+        self.lbl_sensors_status.set_xalign(0.0)
+        ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
+
+        main_box.pack_start(ctrl_bar, False, False, 4)
+
+        # Live Status Summary Badges
+        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        badges_box.set_homogeneous(True)
+
+        def make_sensor_card(title: str, default_val: str):
+            c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            c.get_style_context().add_class("card")
+            val_lbl = Gtk.Label(label=default_val)
+            val_lbl.get_style_context().add_class("card-value")
+            val_lbl.set_xalign(0.5)
+            val_lbl.set_line_wrap(True)
+            title_lbl = Gtk.Label(label=title)
+            title_lbl.get_style_context().add_class("card-label")
+            title_lbl.set_xalign(0.5)
+            c.pack_start(val_lbl, True, True, 2)
+            c.pack_start(title_lbl, False, False, 2)
+            return c, val_lbl
+
+        card_tank, self.lbl_live_tank = make_sensor_card("💧 Water Tank", "UNKNOWN")
+        card_tray, self.lbl_live_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN")
+        card_state, self.lbl_live_state = make_sensor_card("☕ Machine State", "UNKNOWN")
+        card_ntc, self.lbl_live_ntc = make_sensor_card("🌡️ Thermoblock NTC", "UNKNOWN")
+        card_filter, self.lbl_live_filter = make_sensor_card("🛡️ Filter / Hardness", "UNKNOWN")
+
+        badges_box.pack_start(card_tank, True, True, 0)
+        badges_box.pack_start(card_tray, True, True, 0)
+        badges_box.pack_start(card_state, True, True, 0)
+        badges_box.pack_start(card_ntc, True, True, 0)
+        badges_box.pack_start(card_filter, True, True, 0)
+
+        main_box.pack_start(badges_box, False, False, 4)
+
+        # Paned view for Diagnostics and Counters
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(580)
+
+        # Left: Hardware Health & Safety Diagnostics
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl_left = Gtk.Label(label="<b>🔍 Hardware Component Diagnostics &amp; Safety Sensors</b>")
+        lbl_left.set_use_markup(True)
+        lbl_left.set_xalign(0.0)
+        left_box.pack_start(lbl_left, False, False, 2)
+
+        scrolled_left = Gtk.ScrolledWindow()
+        scrolled_left.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        # Model: StatusIcon(str), SensorName(str), Badge(str), Details(str)
+        self.live_sensors_store = Gtk.ListStore(str, str, str, str)
+        self.live_sensors_tree = Gtk.TreeView(model=self.live_sensors_store)
+
+        col_st = Gtk.TreeViewColumn("Status", Gtk.CellRendererText(), text=0)
+        col_st.set_min_width(100)
+        self.live_sensors_tree.append_column(col_st)
+
+        col_sname = Gtk.TreeViewColumn("Diagnostic Sensor / Component", Gtk.CellRendererText(), text=1)
+        col_sname.set_min_width(220)
+        self.live_sensors_tree.append_column(col_sname)
+
+        col_sdet = Gtk.TreeViewColumn("Verification Details", Gtk.CellRendererText(), text=3)
+        col_sdet.set_min_width(260)
+        self.live_sensors_tree.append_column(col_sdet)
+
+        scrolled_left.add(self.live_sensors_tree)
+        left_box.pack_start(scrolled_left, True, True, 0)
+        paned.pack1(left_box, True, False)
+
+        # Right: Historical Sensor Trip & Fault Frequency Counters
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl_right = Gtk.Label(label="<b>📊 Historical Sensor Fault &amp; Trip Frequency Counters</b>")
+        lbl_right.set_use_markup(True)
+        lbl_right.set_xalign(0.0)
+        right_box.pack_start(lbl_right, False, False, 2)
+
+        scrolled_right = Gtk.ScrolledWindow()
+        scrolled_right.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        # Model: CounterName(str), Count(int), Assessment(str)
+        self.live_counters_store = Gtk.ListStore(str, int, str)
+        self.live_counters_tree = Gtk.TreeView(model=self.live_counters_store)
+
+        col_cname = Gtk.TreeViewColumn("Fault / Event Category", Gtk.CellRendererText(), text=0)
+        col_cname.set_min_width(220)
+        self.live_counters_tree.append_column(col_cname)
+
+        col_cnt = Gtk.TreeViewColumn("Trip Count", Gtk.CellRendererText(), text=1)
+        col_cnt.set_min_width(90)
+        self.live_counters_tree.append_column(col_cnt)
+
+        col_cass = Gtk.TreeViewColumn("Evaluation", Gtk.CellRendererText(), text=2)
+        col_cass.set_min_width(160)
+        self.live_counters_tree.append_column(col_cass)
+
+        scrolled_right.add(self.live_counters_tree)
+        right_box.pack_start(scrolled_right, True, True, 0)
+        paned.pack2(right_box, True, False)
+
+        main_box.pack_start(paned, True, True, 4)
+        return main_box
 
     def _create_alerts_tab(self) -> Gtk.Widget:
         scrolled = Gtk.ScrolledWindow()
@@ -507,6 +630,100 @@ class JuraDiagApp(Gtk.Window):
         self.info_store.append(["Baud Rate", "9600 Baud (8-N-1)"])
         self.info_store.append(["Protocol Mode", summary.get("protocol_mode", "ASCII Optical")])
         self.info_store.append(["Diagnostics Timestamp", summary["timestamp"]])
+
+        # Populate Live Sensors Tab if available from session
+        if hasattr(session, "live_sensors") and session.live_sensors:
+            self._on_live_sensors_updated(session.live_sensors)
+
+    def _on_refresh_sensors_clicked(self, widget):
+        if self.is_reading:
+            return
+
+        active_port = self.port_combo.get_active_text()
+        if not active_port:
+            self.lbl_sensors_status.set_text("No serial port selected!")
+            return
+
+        self.btn_refresh_sensors.set_sensitive(False)
+        self.spinner_sensors.start()
+        self.lbl_sensors_status.set_text(f"Querying live hardware sensors on {active_port}...")
+
+        thread = threading.Thread(target=self._run_sensor_poll_worker, args=(active_port,), daemon=True)
+        thread.start()
+
+    def _run_sensor_poll_worker(self, port: str):
+        result = sc.query_live_sensors(port, baudrate=9600)
+        GLib.idle_add(self._on_live_sensors_updated, result)
+
+    def _on_live_sensors_updated(self, result: dict):
+        self.btn_refresh_sensors.set_sensitive(True)
+        self.spinner_sensors.stop()
+
+        if not result:
+            return
+
+        if "error" in result:
+            self.lbl_sensors_status.set_text(f"Sensor polling error: {result['error']}")
+            return
+
+        ts = result.get("timestamp", datetime.now().strftime("%H:%M:%S"))
+        proto = result.get("protocol", "UART")
+        self.lbl_sensors_status.set_text(f"Last polled: {ts} (via {proto})")
+
+        # Update KPI Cards
+        switches = {sw["id"]: sw for sw in result.get("switches", [])}
+
+        # Water Tank
+        if "water_tank" in switches:
+            sw = switches["water_tank"]
+            self.lbl_live_tank.set_text("WATER OK" if sw["ok"] else "LOW / EMPTY")
+        else:
+            self.lbl_live_tank.set_text("NOMINAL")
+
+        # Drip Tray
+        if "drip_tray" in switches:
+            sw = switches["drip_tray"]
+            self.lbl_live_tray.set_text("INSERTED" if sw["ok"] else "MISSING")
+        else:
+            self.lbl_live_tray.set_text("INSERTED")
+
+        # Machine State
+        if "machine_ready" in switches:
+            sw = switches["machine_ready"]
+            self.lbl_live_state.set_text("READY TO BREW" if sw["ok"] else "HEATING / BUSY")
+        else:
+            self.lbl_live_state.set_text("READY")
+
+        # Thermoblock NTC
+        telem = result.get("telemetry", {})
+        if "heater_ntc_raw" in telem:
+            raw_ntc = telem["heater_ntc_raw"]
+            self.lbl_live_ntc.set_text(f"ADC {raw_ntc} (Nominal)")
+        else:
+            self.lbl_live_ntc.set_text("NOMINAL")
+
+        # Filter / Hardness
+        dh = telem.get("water_hardness_dh", 16)
+        claris = telem.get("filter_claris_active", False)
+        f_lbl = f"{dh} °dH (Claris)" if claris else f"{dh} °dH (Bypass)"
+        self.lbl_live_filter.set_text(f_lbl)
+
+        # Populate Hardware Diagnostics Store
+        self.live_sensors_store.clear()
+        for s in result.get("sensors", []):
+            st_icon = "🟢 NOMINAL" if s.get("ok", True) else "🔴 FAULT"
+            self.live_sensors_store.append([
+                st_icon,
+                s.get("name", "Unknown Sensor"),
+                s.get("badge", "NOMINAL"),
+                s.get("details", "")
+            ])
+
+        # Populate Error Counters Store
+        self.live_counters_store.clear()
+        for c_name, c_cnt in result.get("error_counters", {}).items():
+            eval_str = "Nominal (0 events)" if c_cnt == 0 else f"⚠️ Recorded {c_cnt} event(s)"
+            self.live_counters_store.append([c_name, c_cnt, eval_str])
 
     def _on_export_clicked(self):
         if not self.session:
