@@ -316,3 +316,8 @@ class JuraSerialConnection:
                 pass
             self.py_serial = None
         self.is_open = False
+
+
+# Universal Alias for multi-vendor abstraction
+DirectSerialConnection = JuraSerialConnection
+

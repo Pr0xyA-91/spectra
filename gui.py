@@ -32,6 +32,7 @@ class JuraDiagApp(Gtk.Window):
 
         self.session: Optional[sc.JuraStatsSession] = None
         self.is_reading = False
+        self.auto_poll_tag = None
 
         # Main Layout Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -315,7 +316,12 @@ class JuraDiagApp(Gtk.Window):
         self.spinner_sensors = Gtk.Spinner()
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
-        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' to poll microswitches and diagnostic registers.")
+        # Continuous Live Polling Toggle
+        self.chk_auto_poll = Gtk.CheckButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
+        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 4)
+
+        self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
@@ -647,6 +653,24 @@ class JuraDiagApp(Gtk.Window):
         # Populate Live Sensors Tab if available from session
         if hasattr(session, "live_sensors") and session.live_sensors:
             self._on_live_sensors_updated(session.live_sensors)
+
+    def _on_auto_poll_toggled(self, widget):
+        if self.chk_auto_poll.get_active():
+            if self.auto_poll_tag is None:
+                self.auto_poll_tag = GLib.timeout_add(2000, self._auto_poll_tick)
+                self._on_refresh_sensors_clicked(None)
+        else:
+            if self.auto_poll_tag is not None:
+                GLib.source_remove(self.auto_poll_tag)
+                self.auto_poll_tag = None
+
+    def _auto_poll_tick(self) -> bool:
+        if not self.chk_auto_poll.get_active():
+            self.auto_poll_tag = None
+            return False
+        if not self.is_reading:
+            self._on_refresh_sensors_clicked(None)
+        return True
 
     def _on_refresh_sensors_clicked(self, widget):
         if self.is_reading:
