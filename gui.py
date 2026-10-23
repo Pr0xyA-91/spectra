@@ -569,8 +569,14 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_kpi_model.set_text(summary["machine_model"])
         self.lbl_kpi_total.set_text(f"{summary['total_cups']:,}")
 
-        clean_cnt = session.maint_counts[0] if session.maint_counts else 0
-        decalc_cnt = session.maint_counts[1] if len(session.maint_counts) > 1 else 0
+        clean_cnt = 0
+        decalc_cnt = 0
+        for m in summary.get("maintenance", []):
+            m_lbl = m.get("label", "").lower()
+            if m_lbl in ("cleaning", "cleanings"):
+                clean_cnt = m.get("count", 0)
+            elif "decalc" in m_lbl or "descal" in m_lbl:
+                decalc_cnt = m.get("count", 0)
         self.lbl_kpi_clean.set_text(f"{clean_cnt:,}")
         self.lbl_kpi_decalc.set_text(f"{decalc_cnt:,}")
 
@@ -637,10 +643,6 @@ class JuraDiagApp(Gtk.Window):
         self.info_store.append(["Profile EF Code", summary["ef_code"]])
         if summary.get("telemetry"):
             tel = summary["telemetry"]
-            if "appliance_number" in tel:
-                self.info_store.append(["Appliance Number", str(tel["appliance_number"])])
-            if "appliance_code" in tel and tel["appliance_code"] != "N/A":
-                self.info_store.append(["Appliance Code", str(tel["appliance_code"])])
             if "grinder_formatted" in tel:
                 self.info_store.append(["Grinder Operating Time", f"{tel['grinder_formatted']} ({tel.get('grinder_seconds', 0)} s)"])
             if "water_dispensed_liters" in tel:
@@ -953,7 +955,10 @@ class JuraDiagApp(Gtk.Window):
 
 def main():
     app = JuraDiagApp()
-    app.connect("destroy", Gtk.main_quit)
+    def _on_destroy(*_args):
+        app.auto_poll_active = False
+        Gtk.main_quit()
+    app.connect("destroy", _on_destroy)
     app.show_all()
     Gtk.main()
 

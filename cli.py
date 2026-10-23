@@ -39,7 +39,7 @@ def main():
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")
     parser.add_argument("--demo", action="store_true", help="Run with simulated demo machine (Jura S8)")
-    parser.add_argument("--demo-model", choices=["S8", "E8", "Z10"], default="S8", help="Model to simulate in demo mode")
+    parser.add_argument("--demo-model", choices=["S8", "E8", "Z10", "S8-SC"], default="S8", help="Model to simulate in demo mode")
     parser.add_argument("-s", "--sensors", "--live-sensors", action="store_true", help="Read and display live sensors, switches, and fault telemetry")
     parser.add_argument("-o", "--export", help="Output file path to save diagnostic report (.txt, .json, .csv)")
     parser.add_argument("-f", "--format", choices=["text", "json", "csv"], default="text", help="Report format (default: text)")
