@@ -17,6 +17,11 @@ Orchestrates:
   3. Offline Demo / Simulation mode (MockJuraMachine)
 - Unified profile matching across 170+ Jura models
 - Exporting to Formatted Text Reports, JSON, and CSV
+
+Credits & Attribution:
+Built upon reverse-engineering research and protocol contributions by CM-P,
+Hajo Noerenberg (hn), Jutta-Proto, Ryan Alden, tinaught, makefu, AlexxIT,
+and the open-source coffee telemetry and home automation communities.
 """
 
 import time
