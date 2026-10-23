@@ -14,7 +14,7 @@ from typing import Optional
 import serial_io
 import profiles_db
 import stats_collector as sc
-from wrat_engine import WRATSession
+from wrat_engine import WRATSession, format_text_summary
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
 __version__ = "0.1"
@@ -215,7 +215,7 @@ def main():
                 lines.append(f"Maintenance,{m.get('name')},{m.get('count')}")
             content = "\n".join(lines)
         else:
-            content = json.dumps(summary, indent=2, ensure_ascii=False)
+            content = format_text_summary(summary)
 
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(content)

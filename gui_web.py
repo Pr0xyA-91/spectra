@@ -206,6 +206,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div>
         <button onclick="exportData('json')">💾 Export JSON</button>
         <button onclick="exportData('csv')">📄 Export CSV</button>
+        <button onclick="exportData('txt')">📝 Export Text Report</button>
       </div>
     </div>
     <table>
@@ -461,13 +462,44 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         ext = 'json';
       } else if (format === 'csv') {
         const lines = ['Category,Item,Value'];
+        lines.push(`Identity,Vendor,${fullStatsCache.vendor || 'Unknown'}`);
         lines.push(`Identity,Model,${fullStatsCache.machine_model || 'Unknown'}`);
+        lines.push(`Identity,Serial,${fullStatsCache.serial_number || 'N/A'}`);
         lines.push(`Summary,Total Cups,${fullStatsCache.total_cups || 0}`);
         (fullStatsCache.beverages || []).forEach(b => lines.push(`Beverage,"${b.name}",${b.count}`));
         (fullStatsCache.maintenance || []).forEach(m => lines.push(`Maintenance,"${m.label || m.name}",${m.count}`));
         content = lines.join('\n');
         mime = 'text/csv';
         ext = 'csv';
+      } else if (format === 'txt') {
+        const lines = [];
+        lines.push('==============================================================================');
+        lines.push(`W.R.A.T. DIAGNOSTIC REPORT: ${fullStatsCache.vendor || 'Appliance'} — ${fullStatsCache.machine_model || 'Unknown'}`);
+        lines.push(`Serial Number: ${fullStatsCache.serial_number || 'N/A'} | Protocol: ${fullStatsCache.protocol_mode || 'N/A'}`);
+        lines.push(`Total Dispensed: ${(fullStatsCache.total_cups || 0).toLocaleString()} cups (${(fullStatsCache.total_preparations || 0).toLocaleString()} preparations)`);
+        lines.push('==============================================================================\n');
+        lines.push('[BEVERAGE DISPENSING COUNTERS]');
+        (fullStatsCache.beverages || []).forEach(b => {
+          const dStr = b.is_double ? ' (Double)' : '';
+          lines.push(`  * ${(b.name + dStr).padEnd(36)}: ${(b.count || 0).toString().padStart(8)}`);
+        });
+        lines.push('\n[MAINTENANCE & HYGIENE]');
+        (fullStatsCache.maintenance || []).forEach(m => {
+          const pctStr = (m.percent !== null && m.percent !== undefined) ? ` (${m.percent}%)` : '';
+          lines.push(`  * ${(m.name || m.label || 'Task').padEnd(36)}: ${(m.count || 0).toString().padStart(8)}${pctStr}`);
+        });
+        if (fullStatsCache.telemetry) {
+          lines.push('\n[OPERATIONAL METRICS & HARDWARE SPECS]');
+          Object.entries(fullStatsCache.telemetry).forEach(([k, v]) => {
+            if (typeof v !== 'object') {
+              lines.push(`  * ${k.replace(/_/g, ' ').toUpperCase().padEnd(36)}: ${v}`);
+            }
+          });
+        }
+        lines.push('==============================================================================');
+        content = lines.join('\n');
+        mime = 'text/plain';
+        ext = 'txt';
       }
       const blob = new Blob([content], { type: mime });
       const a = document.createElement('a');

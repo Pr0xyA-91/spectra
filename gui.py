@@ -30,7 +30,7 @@ except (ImportError, ValueError) as e:
 import serial_io
 import profiles_db
 import stats_collector as sc
-from wrat_engine import WRATSession
+from wrat_engine import WRATSession, format_text_summary
 from drivers import DRIVER_DISPLAY_NAMES
 
 __version__ = "0.1"
@@ -1016,7 +1016,7 @@ class JuraDiagApp(Gtk.Window):
                     lines.append(f"Maintenance,{m.get('name')},{m.get('count')}")
                 data = "\n".join(lines)
             else:
-                data = json.dumps(summary, indent=2, ensure_ascii=False)
+                data = format_text_summary(summary)
 
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(data)

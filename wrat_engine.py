@@ -159,3 +159,52 @@ class WRATSession:
             "timestamp": t.timestamp,
             "power_spec": ident.voltage_spec
         }
+
+    def get_formatted_report(self) -> str:
+        """Generate human-readable text diagnostic report."""
+        return format_text_summary(self.get_structured_summary())
+
+
+def format_text_summary(summary: Dict[str, Any]) -> str:
+    """Generate a clean, human-readable terminal/text diagnostic report."""
+    if not summary:
+        return "No diagnostic data available.\n"
+
+    lines = []
+    lines.append("=" * 78)
+    vendor = summary.get("vendor", "Appliance")
+    model = summary.get("machine_model", "Unknown")
+    lines.append(f"W.R.A.T. DIAGNOSTIC REPORT: {vendor} — {model}")
+    serial = summary.get("serial_number", "N/A")
+    proto = summary.get("protocol_mode", "N/A")
+    lines.append(f"Serial Number: {serial} | Protocol: {proto}")
+    cups = summary.get("total_cups", 0)
+    preps = summary.get("total_preparations", 0)
+    lines.append(f"Total Dispensed: {cups:,} cups ({preps:,} total preparations)")
+    lines.append("=" * 78)
+
+    lines.append("\n[BEVERAGE DISPENSING COUNTERS]")
+    for b in summary.get("beverages", []):
+        d_str = " (Double)" if b.get("is_double") else ""
+        name = b.get("name", "Beverage") + d_str
+        count = b.get("count", 0)
+        lines.append(f"  * {name:<36}: {count:>8,}")
+
+    lines.append("\n[MAINTENANCE & HYGIENE]")
+    for m in summary.get("maintenance", []):
+        pct = m.get("percent")
+        pct_str = f" ({pct}%)" if pct is not None else ""
+        name = m.get("name", "Maintenance Task")
+        count = m.get("count", 0)
+        lines.append(f"  * {name:<36}: {count:>8,}{pct_str}")
+
+    telem = summary.get("telemetry")
+    if telem:
+        lines.append("\n[OPERATIONAL METRICS & HARDWARE SPECS]")
+        for k, v in telem.items():
+            if not isinstance(v, (dict, list)):
+                key_fmt = k.replace("_", " ").title()
+                lines.append(f"  * {key_fmt:<36}: {v}")
+
+    lines.append("=" * 78)
+    return "\n".join(lines) + "\n"
