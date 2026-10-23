@@ -188,6 +188,8 @@ def query_live_sensors(
             water_ok = True
             tray_ok = True
             ready_ok = True
+            ready_status = "Ready to Brew / Nominal"
+            ready_badge = "READY"
             heater_ntc_raw = 0
             steam_ntc_raw = 0
             steam_sec_raw = 0
@@ -196,20 +198,8 @@ def query_live_sensors(
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
-                # EF-cut definitions from Jura Service XML:
-                # cut 43 = Wassertank (1 = missing/empty float dropped, 0 = OK)
-                # cut 41 = Drip tray / Drawer (0 = inserted, 1 = missing)
-                # cut 53 = Secondary tray microswitch (1 = inserted, 0 = missing)
-                c43 = payload[42] if len(payload) > 42 else "0"
-                c41 = payload[40] if len(payload) > 40 else "0"
-                c53 = payload[52] if len(payload) > 52 else "1"
-
-                water_ok = (c43 == "0")
-                tray_ok = (c41 == "0" or c53 == "1")
-
                 parts = payload.split(",")
-                if len(parts) > 0 and len(parts[0]) > 0:
-                    ready_ok = (parts[0][0] == "0")
+
                 if len(parts) > 2:
                     try:
                         ambient_ntc_raw = int(parts[2], 16)
@@ -232,6 +222,54 @@ def query_live_sensors(
                         steam_ntc_raw = 0
                 if len(parts) > 6:
                     rotary_pos = parts[6]
+
+                # Physical Microswitches & Cuts:
+                # In Jura telemetry, parts[7] and parts[9] convey live microswitch cuts:
+                # - Drip Tray / Drawer:
+                #   parts[7][0] is '1' when missing/removed, '0' when inserted.
+                #   parts[9][0] is '1' when missing/removed, '0' when inserted.
+                tray_missing = False
+                if len(parts) > 7 and len(parts[7]) > 0 and parts[7][0] == "1":
+                    tray_missing = True
+                if len(parts) > 9 and len(parts[9]) > 0 and parts[9][0] == "1":
+                    tray_missing = True
+                tray_ok = not tray_missing
+
+                # - Water Tank Float Sensor:
+                #   parts[7][2] is '1' when tank missing/float dropped, '0' when OK.
+                #   parts[9][1] is '1' when tank empty/missing, '0' when OK.
+                water_low = False
+                if len(parts) > 7 and len(parts[7]) > 2 and parts[7][2] == "1":
+                    water_low = True
+                if len(parts) > 9 and len(parts[9]) > 1 and parts[9][1] == "1":
+                    water_low = True
+                water_ok = not water_low
+
+                # Appliance operating / ready status:
+                # Machine can only be ready if tray is inserted, water is present, and thermoblock is heated.
+                is_busy = (len(parts) > 0 and len(parts[0]) > 0 and parts[0][0] != "0")
+                temp_coffee_val = decode_jura_temperature(heater_ntc_raw)
+
+                if not tray_ok:
+                    ready_ok = False
+                    ready_status = "Not Ready (Drip Tray Missing)"
+                    ready_badge = "MISSING"
+                elif not water_ok:
+                    ready_ok = False
+                    ready_status = "Not Ready (Fill Water Tank)"
+                    ready_badge = "EMPTY"
+                elif is_busy:
+                    ready_ok = False
+                    ready_status = "Busy (Operation in Progress)"
+                    ready_badge = "BUSY"
+                elif temp_coffee_val is not None and temp_coffee_val < 80.0:
+                    ready_ok = False
+                    ready_status = f"Heating Up ({temp_coffee_val:.1f} °C)"
+                    ready_badge = "HEATING"
+                else:
+                    ready_ok = True
+                    ready_status = "Ready to Brew / Nominal"
+                    ready_badge = "READY"
 
             # Decode temperatures in Celsius (0.1 °C resolution)
             temp_ambient = decode_jura_temperature(ambient_ntc_raw)
@@ -315,9 +353,9 @@ def query_live_sensors(
                 {
                     "id": "machine_ready",
                     "name": "Appliance Operating State",
-                    "status": "Ready to Brew / Nominal" if ready_ok else "Heating Up / Busy",
+                    "status": ready_status,
                     "ok": ready_ok,
-                    "badge": "READY" if ready_ok else "BUSY",
+                    "badge": ready_badge,
                     "icon": "☕"
                 },
                 {
