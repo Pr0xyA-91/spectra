@@ -48,7 +48,7 @@ python3 gui.py
 
 ### A. Jura Modern Diag (`/home/a91/Projects/Jura Modern Diag`)
 * **Branch**: `main` | **Version**: `v0.3.4`
-* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/diag_sw-alpha_J.git`
+* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`
 * **Public Remote (`public`)**: `https://github.com/Pr0xyA-91/wrat-sniffer.git`
 * **Release Synchronization**:
   ```bash
@@ -58,7 +58,7 @@ python3 gui.py
 
 ### B. W.R.A.T. Windows Suite (`/home/a91/Projects/WRAT_win`)
 * **Branch**: `windows` | **Version**: `v0.1`
-* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/diag_sw-alpha_J.git`
+* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`
 * **Supported Brands**:
   - `jura`: Native TOP-tronic ASCII + Smart Connect `@`-protocol.
   - `nivona`: ASCII/NICR gateway protocol.
