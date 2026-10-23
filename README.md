@@ -1,6 +1,6 @@
 # Jura Modern Diagnostics & Statistics Suite
 
-[![Version: 0.3.2](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://github.com/Pr0xyA-91/diag_sw-alpha_J)
+[![Version: 0.3.2](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
