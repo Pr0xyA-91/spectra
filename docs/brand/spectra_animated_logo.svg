@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <style>
+      @keyframes laserPulse {
+        0%, 100% { opacity: 0.75; stroke-width: 4px; }
+        50% { opacity: 1.0; stroke-width: 6.5px; }
+      }
+      @keyframes causticGlow {
+        0%, 100% { r: 56px; opacity: 0.75; }
+        50% { r: 76px; opacity: 1.0; }
+      }
+      @keyframes coreGlint {
+        0%, 100% { opacity: 0.8; transform: scale(1); }
+        50% { opacity: 1.0; transform: scale(1.3); }
+      }
+      @keyframes traceFlow {
+        0% { stroke-dashoffset: 200; }
+        100% { stroke-dashoffset: 0; }
+      }
+      @keyframes nodeBeacon {
+        0%, 100% { r: 12px; opacity: 0.4; }
+        50% { r: 24px; opacity: 0.9; }
+      }
+      @keyframes rimCyan {
+        0%, 100% { stroke-opacity: 0.5; }
+        50% { stroke-opacity: 0.95; }
+      }
+      @keyframes rimRuby {
+        0%, 100% { stroke-opacity: 0.5; }
+        50% { stroke-opacity: 0.95; }
+      }
+
+      .anim-laser { animation: laserPulse 2.4s ease-in-out infinite; }
+      .anim-caustic { animation: causticGlow 3s ease-in-out infinite; transform-origin: 468px 512px; }
+      .anim-beacon { animation: nodeBeacon 2s ease-in-out infinite; }
+      .anim-rim-cyan { animation: rimCyan 3.5s ease-in-out infinite; }
+      .anim-rim-ruby { animation: rimRuby 3.5s ease-in-out infinite 0.7s; }
+      .anim-flow {
+        stroke-dasharray: 24 16;
+        animation: traceFlow 2s linear infinite;
+      }
+    </style>
+
+    <!-- Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1E2230" />
+      <stop offset="60%" stop-color="#161922" />
+      <stop offset="100%" stop-color="#0B0D13" />
+    </radialGradient>
+
+    <!-- Carbon Fiber Micro-Weave Pattern -->
+    <pattern id="carbonPattern" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#12151D" />
+      <path d="M0 0 L8 8 L4 12 L-4 4 Z" fill="#181C26" opacity="0.45" />
+      <path d="M8 8 L16 16 L12 20 L4 12 Z" fill="#181C26" opacity="0.45" />
+      <path d="M8 0 L16 8 L12 12 L4 4 Z" fill="#0C0E14" opacity="0.6" />
+      <path d="M0 8 L8 16 L4 20 L-4 12 Z" fill="#0C0E14" opacity="0.6" />
+    </pattern>
+
+    <!-- Glow Filters -->
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="intenseGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="16" result="blur1" />
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2" />
+      <feMerge>
+        <feMergeNode in="blur1" />
+        <feMergeNode in="blur2" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="prismShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.8" />
+    </filter>
+
+    <!-- Laser & Trace Gradients -->
+    <linearGradient id="laserGrad" class="anim-laser" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF003C" stop-opacity="0" />
+      <stop offset="25%" stop-color="#FF003C" stop-opacity="0.8" />
+      <stop offset="70%" stop-color="#FF1E56" />
+      <stop offset="100%" stop-color="#FFFFFF" />
+    </linearGradient>
+
+    <!-- Trace 1: Thermal (Ruby -> Orange) -->
+    <linearGradient id="traceThermal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="20%" stop-color="#FF1E56" />
+      <stop offset="100%" stop-color="#FF6B00" />
+    </linearGradient>
+
+    <!-- Trace 2: Safety & Alerts (Amber -> Gold) -->
+    <linearGradient id="traceSafety" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="20%" stop-color="#FF8A00" />
+      <stop offset="100%" stop-color="#FFD600" />
+    </linearGradient>
+
+    <!-- Trace 3: Lifecycle (Emerald -> Neon Green) -->
+    <linearGradient id="traceLifecycle" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="20%" stop-color="#00FF88" />
+      <stop offset="100%" stop-color="#50FA7B" />
+    </linearGradient>
+
+    <!-- Trace 4: Hydraulics (Sky -> Electric Cyan) -->
+    <linearGradient id="traceHydraulics" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="20%" stop-color="#00D2FF" />
+      <stop offset="100%" stop-color="#8BE9FD" />
+    </linearGradient>
+
+    <!-- Dual Rim Glow Gradients -->
+    <linearGradient id="leftRimGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#00F0FF" stop-opacity="0" />
+    </linearGradient>
+
+    <linearGradient id="rightRimGrad" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#FF1E56" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#FF1E56" stop-opacity="0" />
+    </linearGradient>
+
+    <!-- Obsidian Prism Glass Gradients -->
+    <linearGradient id="prismFacetLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3A4354" stop-opacity="0.6" />
+      <stop offset="60%" stop-color="#141824" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#0A0C12" stop-opacity="0.95" />
+    </linearGradient>
+
+    <linearGradient id="prismFacetRight" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2E3543" stop-opacity="0.5" />
+      <stop offset="50%" stop-color="#11151F" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#07080D" stop-opacity="0.95" />
+    </linearGradient>
+
+    <linearGradient id="prismFacetBottom" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#0E1118" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#222838" stop-opacity="0.4" />
+    </linearGradient>
+
+    <!-- Caustic Burst Radial Flare -->
+    <radialGradient id="causticBurst" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1" />
+      <stop offset="25%" stop-color="#FF94B8" stop-opacity="0.85" />
+      <stop offset="55%" stop-color="#FF1E56" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#FF1E56" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- ========================================== -->
+  <!-- 1. BADGE SUBSTRATE & HEXAGONAL FRAME       -->
+  <!-- ========================================== -->
+  <g id="hex_frame">
+    <!-- Outer Hexagon Outer Rim -->
+    <!-- Vertices: (512, 64), (886, 280), (886, 744), (512, 960), (138, 744), (138, 280) -->
+    <polygon points="512,64 886,280 886,744 512,960 138,744 138,280" fill="url(#bgGrad)" stroke="#2C3245" stroke-width="4" stroke-linejoin="round" />
+
+    <!-- Carbon Fiber Pattern Infill -->
+    <polygon points="512,74 876,286 876,738 512,950 148,738 148,286" fill="url(#carbonPattern)" opacity="0.75" />
+
+    <!-- Technical Alignment Guides / Calibration Marks -->
+    <line x1="512" y1="74" x2="512" y2="120" stroke="#2C3245" stroke-width="2" />
+    <line x1="512" y1="950" x2="512" y2="904" stroke="#2C3245" stroke-width="2" />
+    <circle cx="512" cy="512" r="410" fill="none" stroke="#2C3245" stroke-width="1" stroke-dasharray="4 8" opacity="0.3" />
+
+    <!-- Inner CNC-Milled Beveled Hexagon Rim -->
+    <polygon points="512,104 846,297 846,727 512,920 178,727 178,297" fill="none" stroke="#10131B" stroke-width="12" stroke-linejoin="round" />
+    <polygon points="512,104 846,297 846,727 512,920 178,727 178,297" fill="none" stroke="#2C3245" stroke-width="2" stroke-linejoin="round" opacity="0.6" />
+
+    <!-- Dual Rim Lighting: Cyan on Left Facets -->
+    <path d="M512,64 L138,280 L138,744 L512,960" fill="none" stroke="url(#leftRimGrad)" class="anim-rim-cyan" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)" />
+    <path d="M512,104 L178,297 L178,727 L512,920" fill="none" stroke="#00F0FF" stroke-width="1.5" stroke-linejoin="round" opacity="0.6" />
+
+    <!-- Dual Rim Lighting: Neon Ruby on Right Facets -->
+    <path d="M512,64 L886,280 L886,744 L512,960" fill="none" stroke="url(#rightRimGrad)" class="anim-rim-ruby" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)" />
+    <path d="M512,104 L846,297 L846,727 L512,920" fill="none" stroke="#FF1E56" stroke-width="1.5" stroke-linejoin="round" opacity="0.6" />
+  </g>
+
+  <!-- ========================================== -->
+  <!-- 2. INPUT COHERENT LASER (OPTICAL PROBE)   -->
+  <!-- ========================================== -->
+  <g id="input_beam">
+    <!-- Probe Entry Guide Terminal / Decal -->
+    <line x1="80" y1="512" x2="138" y2="512" stroke="#FF003C" stroke-width="1.5" opacity="0.5" />
+    <rect x="134" y="508" width="8" height="8" fill="#FF1E56" />
+
+    <!-- Soft Crimson Halo -->
+    <line x1="100" y1="512" x2="424" y2="512" stroke="#FF003C" stroke-width="14" stroke-linecap="round" opacity="0.25" filter="url(#softGlow)" />
+
+    <!-- Intense Neon Ruby Beam -->
+    <line x1="110" y1="512" x2="430" y2="512" stroke="url(#laserGrad)" class="anim-laser" stroke-width="4.5" stroke-linecap="round" filter="url(#softGlow)" />
+
+    <!-- Solid Coherent White Core -->
+    <line x1="160" y1="512" x2="432" y2="512" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" />
+  </g>
+
+  <!-- ========================================== -->
+  <!-- 3. SPECTRAL DATA CHANNELS (TELEMETRY RAYS) -->
+  <!-- Internal convergence point: (468, 512)     -->
+  <!-- ========================================== -->
+  <g id="spectral_traces">
+    <!-- Trace 1: Thermal (-24 deg) -> Target: X=901 (88%), Y=287 (28%) -->
+    <g id="trace_thermal">
+      <!-- Glow Underlay -->
+      <line x1="468" y1="512" x2="901" y2="287" stroke="#FF1E56" stroke-width="10" opacity="0.3" filter="url(#softGlow)" />
+      <!-- High-Intensity Trace -->
+      <line x1="468" y1="512" x2="901" y2="287" stroke="url(#traceThermal)" stroke-width="3.5" stroke-linecap="round" filter="url(#softGlow)" />
+      <!-- Specular Core -->
+      <line x1="500" y1="495" x2="901" y2="287" stroke="#FFF2EB" stroke-width="1" stroke-linecap="round" />
+    </g>
+
+    <!-- Trace 2: Safety & Alerts (-8 deg) -> Target: X=942 (92%), Y=451 (44%) -->
+    <g id="trace_safety">
+      <!-- Glow Underlay -->
+      <line x1="468" y1="512" x2="942" y2="451" stroke="#FF8A00" stroke-width="9" opacity="0.3" filter="url(#softGlow)" />
+      <!-- High-Intensity Trace -->
+      <line x1="468" y1="512" x2="942" y2="451" stroke="url(#traceSafety)" stroke-width="3" stroke-linecap="round" filter="url(#softGlow)" />
+      <!-- Specular Core -->
+      <line x1="510" y1="506" x2="942" y2="451" stroke="#FFFBE6" stroke-width="1" stroke-linecap="round" />
+    </g>
+
+    <!-- Trace 3: Lifecycle (+8 deg) -> Target: X=942 (92%), Y=573 (56%) -->
+    <g id="trace_lifecycle">
+      <!-- Glow Underlay -->
+      <line x1="468" y1="512" x2="942" y2="573" stroke="#00FF88" stroke-width="9" opacity="0.3" filter="url(#softGlow)" />
+      <!-- High-Intensity Trace -->
+      <line x1="468" y1="512" x2="942" y2="573" stroke="url(#traceLifecycle)" stroke-width="3" stroke-linecap="round" filter="url(#softGlow)" />
+      <!-- Specular Core -->
+      <line x1="510" y1="518" x2="942" y2="573" stroke="#EAFFF2" stroke-width="1" stroke-linecap="round" />
+    </g>
+
+    <!-- Trace 4: Hydraulics (+24 deg) -> Target: X=901 (88%), Y=737 (72%) -->
+    <g id="trace_hydraulics">
+      <!-- Glow Underlay -->
+      <line x1="468" y1="512" x2="901" y2="737" stroke="#00E5FF" stroke-width="10" opacity="0.3" filter="url(#softGlow)" />
+      <!-- High-Intensity Trace -->
+      <line x1="468" y1="512" x2="901" y2="737" stroke="url(#traceHydraulics)" stroke-width="3.5" stroke-linecap="round" filter="url(#softGlow)" />
+      <!-- Specular Core -->
+      <line x1="500" y1="529" x2="901" y2="737" stroke="#EBFBFF" stroke-width="1" stroke-linecap="round" />
+    </g>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- 4. OBSIDIAN PRISM (REFRACTIVE CORE)        -->
+  <!-- Triangle Apex: (500, 240)                  -->
+  <!-- Left Base: (340, 680), Right Base: (660, 680) -->
+  <!-- Center: (500, 533)                         -->
+  <!-- ========================================== -->
+  <g id="obsidian_prism" filter="url(#prismShadow)">
+    <!-- Base Translucent Body & Background Caustics -->
+    <polygon points="500,240 660,680 340,680" fill="#0E121B" fill-opacity="0.88" />
+
+    <!-- Facet: Left (Laser Incident Surface) -->
+    <polygon points="500,240 340,680 488,524" fill="url(#prismFacetLeft)" stroke="#4A5568" stroke-width="1" stroke-opacity="0.4" />
+
+    <!-- Facet: Right (Refraction Surface) -->
+    <polygon points="500,240 660,680 488,524" fill="url(#prismFacetRight)" stroke="#4A5568" stroke-width="1" stroke-opacity="0.4" />
+
+    <!-- Facet: Bottom (Chamfer Base) -->
+    <polygon points="340,680 660,680 488,524" fill="url(#prismFacetBottom)" stroke="#2D3748" stroke-width="1" stroke-opacity="0.4" />
+
+    <!-- Internal Caustic Dispersion Burst -->
+    <circle cx="468" cy="512" r="64" fill="url(#causticBurst)" class="anim-caustic" filter="url(#intenseGlow)" />
+    <circle cx="468" cy="512" r="12" fill="#FFFFFF" filter="url(#softGlow)" />
+
+    <!-- Specular Sharp Ridge Highlights -->
+    <line x1="500" y1="240" x2="488" y2="524" stroke="#FFFFFF" stroke-width="1.8" stroke-opacity="0.75" />
+    <line x1="340" y1="680" x2="488" y2="524" stroke="#8BE9FD" stroke-width="1" stroke-opacity="0.4" />
+    <line x1="660" y1="680" x2="488" y2="524" stroke="#FF1E56" stroke-width="1" stroke-opacity="0.4" />
+
+    <!-- Outer Perimeter Chamfer / Crisp Specular Glass Edge -->
+    <polygon points="500,240 660,680 340,680" fill="none" stroke="#687794" stroke-width="2" stroke-linejoin="round" stroke-opacity="0.5" />
+    <!-- Top-left Glint Edge -->
+    <line x1="500" y1="240" x2="420" y2="460" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.85" filter="url(#softGlow)" />
+  </g>
+
+  <!-- ========================================== -->
+  <!-- 5. TERMINATION NODES (CIRCUIT PADS)       -->
+  <!-- ========================================== -->
+  <g id="circuit_nodes">
+    <!-- Node 1: Thermal (88%, 28%) -> (901, 287) -->
+    <g transform="translate(901, 287)">
+      <circle cx="0" cy="0" r="22" fill="#FF6B00" fill-opacity="0.15" />
+      <circle cx="0" cy="0" r="14" fill="none" stroke="#FF6B00" stroke-width="1.8" stroke-dasharray="3 2" />
+      <circle cx="0" cy="0" r="7.5" fill="#FF1E56" filter="url(#softGlow)" />
+      <circle cx="0" cy="0" r="3.5" fill="#FFFFFF" />
+    </g>
+
+    <!-- Node 2: Safety & Alerts (92%, 44%) -> (942, 451) -->
+    <g transform="translate(942, 451)">
+      <circle cx="0" cy="0" r="20" fill="#FFD600" fill-opacity="0.15" />
+      <circle cx="0" cy="0" r="13" fill="none" stroke="#FFD600" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="7" fill="#FF8A00" filter="url(#softGlow)" />
+      <circle cx="0" cy="0" r="3" fill="#FFFFFF" />
+    </g>
+
+    <!-- Node 3: Lifecycle (92%, 56%) -> (942, 573) -->
+    <g transform="translate(942, 573)">
+      <circle cx="0" cy="0" r="20" fill="#50FA7B" fill-opacity="0.15" />
+      <circle cx="0" cy="0" r="13" fill="none" stroke="#50FA7B" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="7" fill="#00FF88" filter="url(#softGlow)" />
+      <circle cx="0" cy="0" r="3" fill="#FFFFFF" />
+    </g>
+
+    <!-- Node 4: Hydraulics (88%, 72%) -> (901, 737) -->
+    <g transform="translate(901, 737)">
+      <circle cx="0" cy="0" r="22" fill="#8BE9FD" fill-opacity="0.15" />
+      <circle cx="0" cy="0" r="14" fill="none" stroke="#8BE9FD" stroke-width="1.8" stroke-dasharray="3 2" />
+      <circle cx="0" cy="0" r="7.5" fill="#00E5FF" filter="url(#softGlow)" />
+      <circle cx="0" cy="0" r="3.5" fill="#FFFFFF" />
+    </g>
+  </g>
+</svg>

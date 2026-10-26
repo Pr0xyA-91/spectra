@@ -356,6 +356,12 @@ class JuraDiagApp(Gtk.Window):
         self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
 
+        # About Suite Button
+        self.btn_about = Gtk.Button(label="ℹ️")
+        self.btn_about.set_tooltip_text("About SPECTRA")
+        self.btn_about.set_valign(Gtk.Align.CENTER)
+        self.btn_about.connect("clicked", lambda w: self._on_about_clicked())
+
         self._update_header_layout(False)
         return self.header_grid
 
@@ -364,7 +370,7 @@ class JuraDiagApp(Gtk.Window):
             return
         self._header_compact = is_compact
 
-        for w in [self.brand_box, self.lbl_mfr, self.mfr_combo, self.lbl_port, self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read, self.btn_export]:
+        for w in [self.brand_box, self.lbl_mfr, self.mfr_combo, self.lbl_port, self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read, self.btn_export, self.btn_about]:
             if w.get_parent():
                 self.header_grid.remove(w)
 
@@ -379,6 +385,7 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.header_spacer, 6, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 7, 0, 1, 1)
             self.header_grid.attach(self.btn_export, 8, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 9, 0, 1, 1)
             self.sub_title.set_visible(True)
         else:
             # Compact 2-row layout: Row 0 has Title + Actions, Row 1 has Brand + Port + Refresh
@@ -386,6 +393,7 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.header_spacer, 1, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 2, 0, 1, 1)
             self.header_grid.attach(self.btn_export, 3, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 4, 0, 1, 1)
 
             # Row 1 connection controls
             self.header_grid.attach(self.lbl_mfr, 0, 1, 1, 1)
@@ -396,6 +404,25 @@ class JuraDiagApp(Gtk.Window):
             self.sub_title.set_visible(False)
 
         self.header_grid.show_all()
+
+    def _on_about_clicked(self):
+        about = Gtk.AboutDialog(transient_for=self, modal=True)
+        about.set_program_name("SPECTRA")
+        about.set_version(f"v{__version__}")
+        about.set_comments(
+            "Universal Hardware Telemetry & Logic Board Diagnostics\n"
+            "Multi-manufacturer interrogation (Jura, Nivona, Lamanti-Kalerm, Lamanti-Jetinno),\n"
+            "optical/serial bus protocols, and real-time sensor telemetry."
+        )
+        about.set_website("https://github.com/Pr0xyA-91/spectra")
+        about.set_website_label("SPECTRA Repository")
+        about.set_license_type(Gtk.License.MIT_X11)
+        about.set_copyright("© 2026 SPECTRA Hardware Diagnostics Contributors")
+        logo_pb = self._load_app_icon(size=96)
+        if logo_pb:
+            about.set_logo(logo_pb)
+        about.run()
+        about.destroy()
 
     def _create_kpi_cards(self) -> Gtk.Widget:
         self.kpi_grid = Gtk.Grid()

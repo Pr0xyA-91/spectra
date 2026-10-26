@@ -21,7 +21,7 @@ import stats_collector as sc
 from spectra_engine import SpectraSession, WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.2.2"
+__version__ = "0.4.2_mm"
 
 # Global state for background polling
 _poll_lock = threading.Lock()
@@ -38,6 +38,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SPECTRA — Universal Diagnostics Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <style>
     :root {
       --bg: #1e1e2e;
@@ -103,9 +104,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
   <header>
     <div class="brand-title">
-      <h1>SPECTRA</h1>
-      <span class="badge-ver">v__VERSION__ (WIN/WEB)</span>
-      <span style="font-size: 12px; color: var(--text-muted);">Multi-Manufacturer Telemetry Engine</span>
+      <img src="/logo.svg" width="38" height="38" alt="SPECTRA" style="border-radius: 6px; flex-shrink: 0;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <h1>SPECTRA</h1>
+          <span class="badge-ver">v__VERSION__ (WIN/WEB)</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted);">Multi-Manufacturer Telemetry Engine</div>
+      </div>
     </div>
     <div class="controls">
       <label style="font-size: 12px; color: var(--text-muted);">Brand:</label>
@@ -610,6 +616,20 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             html = HTML_TEMPLATE.replace("__VERSION__", __version__)
             self.wfile.write(html.encode("utf-8"))
+
+        elif url.path in ("/logo.svg", "/favicon.ico", "/favicon.svg", "/spectra_logo.svg"):
+            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spectra_logo.svg")
+            if os.path.isfile(logo_path):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self._send_security_headers()
+                self.end_headers()
+                with open(logo_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
 
         elif url.path == "/api/ports":
             ports = serial_io.list_serial_ports()
