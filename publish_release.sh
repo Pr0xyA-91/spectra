@@ -23,6 +23,13 @@ git checkout public-main
 # Sync all files from SOURCE_BRANCH
 git checkout "$SOURCE_BRANCH" -- .
 
+# Remove any tracked files on public-main that were deleted in SOURCE_BRANCH
+for f in $(git ls-files); do
+    if ! git cat-file -e "${SOURCE_BRANCH}:${f}" 2>/dev/null; then
+        git rm -f "$f" >/dev/null 2>&1 || true
+    fi
+done
+
 # Strictly ensure private notes and guidelines are removed
 if [ -f "GEMINI.md" ]; then
     git rm -f GEMINI.md
