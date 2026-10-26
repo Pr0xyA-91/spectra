@@ -1,4 +1,4 @@
-# W.R.A.T. — WhiteRat Asynchronous Telemetry
+# SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics
 
 [![Version: 0.2.1](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -8,7 +8,7 @@
 
 > [!NOTE]
 > **Project Status: v0.2.1 (Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
-> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) supports **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
+> **SPECTRA** is an extensible appliance hardware telemetry and diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
 > See **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)** for the complete Windows setup guide and **[DEPENDENCIES.md](DEPENDENCIES.md)** for platform dependency breakdowns.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.

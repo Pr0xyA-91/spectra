@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. — WhiteRat Asynchronous Telemetry — Web & Cross-Platform Dashboard
+SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics — Web Dashboard
 A zero-dependency browser-based diagnostic dashboard for Windows, Linux, and macOS.
 Provides identical functionality to the GTK interface using Python's built-in standard library.
 """
@@ -37,7 +37,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>W.R.A.T. — WhiteRat Asynchronous Telemetry</title>
+  <title>SPECTRA — Universal Diagnostics Dashboard</title>
   <style>
     :root {
       --bg: #1e1e2e;
@@ -103,7 +103,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
   <header>
     <div class="brand-title">
-      <h1>W.R.A.T.</h1>
+      <h1>SPECTRA</h1>
       <span class="badge-ver">v__VERSION__ (WIN/WEB)</span>
       <span style="font-size: 12px; color: var(--text-muted);">Multi-Manufacturer Telemetry Engine</span>
     </div>
@@ -519,7 +519,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       } else if (format === 'txt') {
         const lines = [];
         lines.push('==============================================================================');
-        lines.push(`W.R.A.T. DIAGNOSTIC REPORT: ${fullStatsCache.vendor || 'Appliance'} — ${fullStatsCache.machine_model || 'Unknown'}`);
+        lines.push(`SPECTRA DIAGNOSTIC REPORT: ${fullStatsCache.vendor || 'Appliance'} — ${fullStatsCache.machine_model || 'Unknown'}`);
         lines.push(`Serial Number: ${fullStatsCache.serial_number || 'N/A'} | Protocol: ${fullStatsCache.protocol_mode || 'N/A'}`);
         lines.push(`Total Dispensed: ${(fullStatsCache.total_cups || 0).toLocaleString()} cups (${(fullStatsCache.total_preparations || 0).toLocaleString()} preparations)`);
         lines.push('==============================================================================\n');
@@ -660,7 +660,7 @@ def main():
 
     url = f"http://127.0.0.1:{port}"
     print("=" * 78)
-    print(f"  W.R.A.T. (v{__version__}) Universal Diagnostics — Web Dashboard")
+    print(f"  SPECTRA (v{__version__}) Universal Diagnostics — Web Dashboard")
     print("=" * 78)
     print(f"[*] Server listening on: {url}")
     print("[*] Opening default web browser automatically...")
@@ -673,7 +673,7 @@ def main():
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[*] Shutting down W.R.A.T. Web Server...")
+        print("\n[*] Shutting down SPECTRA Web Server...")
         if _active_session is not None:
             try:
                 _active_session.close()

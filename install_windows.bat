@@ -1,8 +1,8 @@
 @echo off
 setlocal
-title W.R.A.T. Windows Setup
+title SPECTRA Windows Setup
 echo ===============================================================================
-echo   W.R.A.T. — WhiteRat Asynchronous Telemetry — Windows Setup
+echo   SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics — Windows Setup
 echo ===============================================================================
 echo.
 

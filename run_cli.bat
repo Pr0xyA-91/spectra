@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title W.R.A.T. CLI Diagnostics
+title SPECTRA CLI Diagnostics
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title W.R.A.T. Telemetry Suite
+title SPECTRA Telemetry Suite
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (
@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [*] Launching W.R.A.T. Telemetry Suite...
+echo [*] Launching SPECTRA Telemetry Suite...
 python gui.py %*
 if %errorlevel% neq 0 (
     echo.

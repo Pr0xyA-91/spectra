@@ -1,6 +1,6 @@
-# W.R.A.T. Windows Installation & Configuration Guide
+# SPECTRA Windows Installation & Configuration Guide
 
-A complete, step-by-step installation guide for running **WhiteRat Asynchronous Telemetry (W.R.A.T.)** on Microsoft Windows 10 and Windows 11.
+A complete, step-by-step installation guide for running **Universal Hardware Telemetry & Logic Board Diagnostics (SPECTRA)** on Microsoft Windows 10 and Windows 11.
 
 ---
 
@@ -85,9 +85,9 @@ This script automatically checks Python, upgrades `pip`, installs `pyserial`, sc
 
 ---
 
-## 4. Launching W.R.A.T.
+## 4. Launching SPECTRA
 
-W.R.A.T. provides multiple ways to run diagnostics on Windows:
+SPECTRA provides multiple ways to run diagnostics on Windows:
 
 ### A. Web Dashboard (Recommended GUI)
 The modern, zero-dependency browser interface.
@@ -114,7 +114,7 @@ The modern, zero-dependency browser interface.
   ```
 
 ### C. Offline Demo / Simulation
-To explore W.R.A.T. without physical hardware connected:
+To explore SPECTRA without physical hardware connected:
 * Double-click **`run_demo.bat`**, or run:
   ```cmd
   python cli.py --demo

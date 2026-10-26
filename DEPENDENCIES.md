@@ -1,6 +1,6 @@
-# W.R.A.T. — Software & Hardware Dependencies
+# SPECTRA — Software & Hardware Dependencies
 
-Comprehensive dependency specifications, runtime requirements, and driver compatibility for all editions of **WhiteRat Asynchronous Telemetry (W.R.A.T.)**.
+Comprehensive dependency specifications, runtime requirements, and driver compatibility for all editions of **Universal Hardware Telemetry & Logic Board Diagnostics (SPECTRA)**.
 
 ---
 
@@ -8,15 +8,15 @@ Comprehensive dependency specifications, runtime requirements, and driver compat
 
 | Edition | Primary Target | Python Requirement | Mandatory Dependencies | Optional Dependencies | Primary UI |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| **`wrat-sniffer`** | Linux (Jura Dedicated) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | CLI / GTK3 Desktop |
-| **`WRAT`** | Linux (Multi-Manufacturer) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | Browser Web Dashboard / GTK3 |
-| **`WRAT_win`** | Windows 10 / 11 (Multi-Manufacturer) | `Python >= 3.10` | `pyserial >= 3.5` | None *(Web dashboard is zero-dependency)* | Browser Web Dashboard / CLI |
+| **`spectra`** | Linux (Jura Dedicated) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | CLI / GTK3 Desktop |
+| **`spectra-mm`** | Linux (Multi-Manufacturer) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | Browser Web Dashboard / GTK3 |
+| **`spectra-win`** | Windows 10 / 11 (Multi-Manufacturer) | `Python >= 3.10` | `pyserial >= 3.5` | None *(Web dashboard is zero-dependency)* | Browser Web Dashboard / CLI |
 
 ---
 
 ## 2. Edition Details
 
-### A. Linux Jura Edition (`wrat-sniffer`)
+### A. Linux Jura Edition (`spectra`)
 Built from the ground up for zero-dependency reliability in Linux field environments and embedded single-board computers (Raspberry Pi, Orange Pi, industrial PCs).
 
 * **Core Diagnostics & Memory Dumper**:
@@ -35,7 +35,7 @@ Built from the ground up for zero-dependency reliability in Linux field environm
 
 ---
 
-### B. Linux Multi-Manufacturer Edition (`WRAT`)
+### B. Linux Multi-Manufacturer Edition (`spectra-mm`)
 Adds multi-vendor engine abstraction supporting Jura, Nivona, Lamanti-KL (Kalerm Modbus RTU), and Lamanti-JN (Colet binary protocol).
 
 * **CLI & Web Dashboard (`gui_web.py`)**:
@@ -49,7 +49,7 @@ Adds multi-vendor engine abstraction supporting Jura, Nivona, Lamanti-KL (Kalerm
 
 ---
 
-### C. Windows Edition (`WRAT_win`)
+### C. Windows Edition (`spectra-win`)
 Tailored for Windows 10 (1809+) and Windows 11 (64-bit) field laptops and workshop benches.
 
 * **Core Dependencies**:
@@ -69,7 +69,7 @@ Tailored for Windows 10 (1809+) and Windows 11 (64-bit) field laptops and worksh
 
 ## 3. Hardware & Serial Driver Dependencies
 
-W.R.A.T. interfaces with coffee machine logic boards through USB-to-UART optical diagnostic transceivers.
+SPECTRA interfaces with coffee machine logic boards through USB-to-UART optical diagnostic transceivers.
 
 ### Supported USB-UART Bridge Chips
 

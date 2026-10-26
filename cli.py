@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - WhiteRat Asynchronous Telemetry
-Universal Appliance Telemetry & Diagnostics Engine (Jura Module)
+SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics
+Universal Appliance Telemetry & Diagnostics Engine (Windows Edition)
 """
 
 import sys
@@ -18,23 +18,22 @@ __version__ = "0.2.1"
 
 def print_banner():
     banner = r"""
- __      __   __________     _____  ___________
-/  \    /  \  \______   \   /  _  \ \__    ___/
-\   \/\/   /   |       _/  /  /_\  \  |    |   
- \        /    |    |   \ /    |    \ |    |   
-  \__/\  /     |____|_  / \____|__  / |____|   
-       \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.2.1)
-         Universal Diagnostics Engine [Windows Edition]
+  ███████╗██████╗ ███████╗ ██████╗████████╗██████╗  █████╗ 
+  ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔══██╗
+  ███████╗██████╔╝█████╗  ██║        ██║   ██████╔╝███████║
+  ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══██║
+  ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║██║  ██║
+  ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝
+   — Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.1) —
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.2.1)"
+        description="SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.1)"
     )
-    parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
+    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (Hardware Telemetry & Logic Board Diagnostics)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")

@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Automated Windows Setup & Dependency Installer for W.R.A.T.
-    Part of WhiteRat Asynchronous Telemetry (W.R.A.T.) Windows Edition
+    Automated Windows Setup & Dependency Installer for SPECTRA
+    Part of Universal Hardware Telemetry & Logic Board Diagnostics (SPECTRA) Windows Edition
 
 .DESCRIPTION
     Checks Python 3 environment, upgrades pip, installs required dependencies (pyserial),
     verifies serial drivers, scans available hardware COM ports, and optionally creates
-    a Desktop shortcut for the W.R.A.T. Web Dashboard.
+    a Desktop shortcut for the SPECTRA Web Dashboard.
 
 .NOTES
-    Author: Google Antigravity (Agy / DeepMind) & W.R.A.T. Community
+    Author: Google Antigravity (Agy / DeepMind) & SPECTRA Community
     Requires: Windows 10/11, Python 3.10+
 #>
 
@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 function Write-Banner {
     Write-Host ""
     Write-Host "===============================================================================" -ForegroundColor Cyan
-    Write-Host "       W.R.A.T. — WhiteRat Asynchronous Telemetry — Windows Setup" -ForegroundColor Yellow
+    Write-Host "       SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics — Windows Setup" -ForegroundColor Yellow
     Write-Host "            Automated Diagnostic Suite & Hardware Installer" -ForegroundColor Cyan
     Write-Host "===============================================================================" -ForegroundColor Cyan
     Write-Host ""
@@ -76,7 +76,7 @@ Write-Host "    [✓] Found Python $pyVersionRaw ($pythonExe)" -ForegroundColor 
 # Check version threshold (>= 3.8 mandatory, >= 3.10 recommended)
 $pyMajor, $pyMinor, $pyMicro = $pyVersionRaw.Split(".") | ForEach-Object { [int]$_ }
 if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 8)) {
-    Write-Host "[!] WARNING: Python version is older than 3.8. W.R.A.T. recommends Python 3.10 or higher." -ForegroundColor Red
+    Write-Host "[!] WARNING: Python version is older than 3.8. SPECTRA recommends Python 3.10 or higher." -ForegroundColor Red
 }
 
 # --- 3. Upgrade pip and Install Dependencies ---
@@ -136,7 +136,7 @@ if (-not $SkipShortcut) {
     $createShortcut = $true
     if (-not $NonInteractive) {
         Write-Host ""
-        $answer = Read-Host "[?] Create a Desktop Shortcut for the W.R.A.T. Web Dashboard? [Y/n]"
+        $answer = Read-Host "[?] Create a Desktop Shortcut for the SPECTRA Web Dashboard? [Y/n]"
         if ($answer.Trim().ToLower() -eq "n") {
             $createShortcut = $false
         }
@@ -145,7 +145,7 @@ if (-not $SkipShortcut) {
     if ($createShortcut) {
         try {
             $desktopPath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Desktop)
-            $shortcutPath = Join-Path $desktopPath "W.R.A.T. Diagnostic Dashboard.lnk"
+            $shortcutPath = Join-Path $desktopPath "SPECTRA Diagnostic Dashboard.lnk"
             $targetBat = Join-Path $scriptDir "run_web.bat"
             $iconPath = Join-Path $scriptDir "icon.png"
 
@@ -153,7 +153,7 @@ if (-not $SkipShortcut) {
             $shortcut = $wscriptShell.CreateShortcut($shortcutPath)
             $shortcut.TargetPath = $targetBat
             $shortcut.WorkingDirectory = $scriptDir
-            $shortcut.Description = "Launch W.R.A.T. Coffee Machine Diagnostic Web Dashboard"
+            $shortcut.Description = "Launch SPECTRA Coffee Machine Diagnostic Web Dashboard"
             if (Test-Path $iconPath) {
                 $shortcut.IconLocation = $iconPath
             }
@@ -168,7 +168,7 @@ if (-not $SkipShortcut) {
 # --- 6. Success Summary & Next Steps ---
 Write-Host ""
 Write-Host "===============================================================================" -ForegroundColor Green
-Write-Host "[✓] SETUP COMPLETE: W.R.A.T. is ready to use!" -ForegroundColor Green
+Write-Host "[✓] SETUP COMPLETE: SPECTRA is ready to use!" -ForegroundColor Green
 Write-Host "===============================================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Quick Launch Commands (from this directory):" -ForegroundColor White

@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title W.R.A.T. Offline Simulation Demo
+title SPECTRA Offline Simulation Demo
 
 echo ===============================================================================
-echo   W.R.A.T. — Offline Simulation Mode (Jura S8 Demo Model)
+echo   SPECTRA — Offline Simulation Mode (Jura S8 Demo Model)
 echo ===============================================================================
 echo.
 echo [*] Testing simulated live microswitches and sensor contacts...
