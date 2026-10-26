@@ -1012,7 +1012,7 @@ class JuraDiagApp(Gtk.Window):
             return
 
         dialog = Gtk.FileChooserDialog(
-            title="Save Jura Diagnostic Report",
+            title="Save SPECTRA Diagnostic Report",
             parent=self,
             action=Gtk.FileChooserAction.SAVE
         )
@@ -1036,7 +1036,8 @@ class JuraDiagApp(Gtk.Window):
         filter_csv.add_pattern("*.csv")
         dialog.add_filter(filter_csv)
 
-        default_name = f"jura_diag_{self.session.model_family}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        safe_family = re.sub(r'[^\w\-_]', '_', str(self.session.model_family))
+        default_name = f"spectra_diag_{safe_family}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         dialog.set_current_name(default_name)
 
         resp = dialog.run()
@@ -1049,9 +1050,21 @@ class JuraDiagApp(Gtk.Window):
             else:
                 data = self.session.export_text_report()
 
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(data)
-            self.progress_bar.set_text(f"Report saved to {filename}")
+            try:
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(data)
+                self.progress_bar.set_text(f"Report saved to {filename}")
+            except Exception as e:
+                err_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    flags=0,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Failed to Save Report",
+                )
+                err_dialog.format_secondary_text(str(e))
+                err_dialog.run()
+                err_dialog.destroy()
 
         dialog.destroy()
 

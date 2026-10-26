@@ -53,6 +53,8 @@ DEFAULT_PROFILE = {
 
 _PROFILES_CACHE = None
 _MODEL_SPECS_CACHE = None
+_PROFILE_LOOKUP_CACHE = {}
+_MODEL_SPEC_LOOKUP_CACHE = {}
 
 def load_profiles() -> dict:
     global _PROFILES_CACHE
@@ -96,22 +98,37 @@ def load_model_specs() -> dict:
 
 def get_model_spec(ef_code_or_art: str) -> Optional[dict]:
     """Retrieve detailed model specification if available in docs/models/."""
-    specs = load_model_specs()
-    if not specs or not ef_code_or_art:
+    if not ef_code_or_art:
         return None
-    raw = str(ef_code_or_art).strip().upper()
+    cache_key = str(ef_code_or_art).strip().upper()
+    if cache_key in _MODEL_SPEC_LOOKUP_CACHE:
+        return _MODEL_SPEC_LOOKUP_CACHE[cache_key]
+
+    specs = load_model_specs()
+    if not specs:
+        _MODEL_SPEC_LOOKUP_CACHE[cache_key] = None
+        return None
+
+    raw = cache_key
+    spec = None
     if raw in specs:
-        return specs[raw]
-    m = re.search(r'(EF\w+)', raw)
-    if m and m.group(1) in specs:
-        return specs[m.group(1)]
-    simplified = re.sub(r'V\d+$', '', raw)
-    if simplified in specs:
-        return specs[simplified]
-    for k, v in specs.items():
-        if k in raw or raw in k:
-            return v
-    return None
+        spec = specs[raw]
+    else:
+        m = re.search(r'(EF\w+)', raw)
+        if m and m.group(1) in specs:
+            spec = specs[m.group(1)]
+        else:
+            simplified = re.sub(r'V\d+$', '', raw)
+            if simplified in specs:
+                spec = specs[simplified]
+            else:
+                for k, v in specs.items():
+                    if k in raw or raw in k:
+                        spec = v
+                        break
+
+    _MODEL_SPEC_LOOKUP_CACHE[cache_key] = spec
+    return spec
 
 def find_profile(raw_model_or_ef: str) -> dict:
     """
@@ -119,6 +136,10 @@ def find_profile(raw_model_or_ef: str) -> dict:
     to the best matching machine profile. Longest matching prefix wins.
     Automatically enriches matched profile with model specification from docs/models/ if present.
     """
+    cache_key = str(raw_model_or_ef).strip().upper()
+    if cache_key in _PROFILE_LOOKUP_CACHE:
+        return dict(_PROFILE_LOOKUP_CACHE[cache_key])
+
     profiles = load_profiles()
     matched_profile = None
 
@@ -168,7 +189,8 @@ def find_profile(raw_model_or_ef: str) -> dict:
             if k in spec and k not in matched_profile:
                 matched_profile[k] = spec[k]
 
-    return matched_profile
+    _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile
+    return dict(matched_profile)
 
 def get_product_name(profile: dict, code: int) -> str:
     """Find human-readable product name for a numeric product code."""

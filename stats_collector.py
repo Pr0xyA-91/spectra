@@ -1018,6 +1018,21 @@ class JuraStatsSession:
         self.live_sensors = res
         return res
 
+    def close(self):
+        """Close underlying serial connection if opened and held."""
+        if self.conn:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def log(self, text: str):
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         entry = f"[{ts}] {text}"

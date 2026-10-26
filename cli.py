@@ -166,9 +166,12 @@ def main():
         if args.export:
             out_path = os.path.abspath(args.export)
             import json
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(sensors_data, f, indent=2, ensure_ascii=False)
-            print(f"[+] Sensor telemetry saved to: {out_path}")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(sensors_data, f, indent=2, ensure_ascii=False)
+                print(f"[+] Sensor telemetry saved to: {out_path}")
+            except Exception as e:
+                print(f"[-] ERROR saving sensor telemetry to {out_path}: {e}")
 
         sys.exit(0)
 
@@ -198,9 +201,12 @@ def main():
 
         if args.export:
             out_path = os.path.abspath(args.export)
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(diff_report)
-            print(f"[+] Diff report saved to: {out_path}")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(diff_report)
+                print(f"[+] Diff report saved to: {out_path}")
+            except Exception as e:
+                print(f"[-] ERROR saving diff report to {out_path}: {e}")
         sys.exit(0)
 
     def log_handler(msg: str):
@@ -214,37 +220,40 @@ def main():
         sys.stdout.write(f"\r[*] Progress: [{bar}] {pct*100:3.0f}% - {status:<45}")
         sys.stdout.flush()
 
-    session = sc.JuraStatsSession(target_port, baudrate=args.baud, log_cb=log_handler)
-    print()
-    success = session.run_interrogation(progress_cb=prog_handler)
-    print("\n")
+    with sc.JuraStatsSession(target_port, baudrate=args.baud, log_cb=log_handler) as session:
+        print()
+        success = session.run_interrogation(progress_cb=prog_handler)
+        print("\n")
 
-    if not success:
-        print("[-] FAILED to read statistics from machine. Check connections, permissions, or port.")
-        sys.exit(1)
+        if not success:
+            print("[-] FAILED to read statistics from machine. Check connections, permissions, or port.")
+            sys.exit(1)
 
-    print("[+] Successfully interrogated machine!")
-    text_report = session.export_text_report()
-    print("\n" + text_report)
+        print("[+] Successfully interrogated machine!")
+        text_report = session.export_text_report()
+        print("\n" + text_report)
 
-    if args.export:
-        out_path = os.path.abspath(args.export)
-        fmt = args.format
-        if out_path.endswith(".json"):
-            fmt = "json"
-        elif out_path.endswith(".csv"):
-            fmt = "csv"
+        if args.export:
+            out_path = os.path.abspath(args.export)
+            fmt = args.format
+            if out_path.endswith(".json"):
+                fmt = "json"
+            elif out_path.endswith(".csv"):
+                fmt = "csv"
 
-        if fmt == "json":
-            content = session.export_json()
-        elif fmt == "csv":
-            content = session.export_csv()
-        else:
-            content = text_report
+            if fmt == "json":
+                content = session.export_json()
+            elif fmt == "csv":
+                content = session.export_csv()
+            else:
+                content = text_report
 
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"\n[+] Diagnostic report saved to: {out_path} ({len(content)} bytes)")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"\n[+] Diagnostic report saved to: {out_path} ({len(content)} bytes)")
+            except Exception as e:
+                print(f"\n[-] ERROR saving report to {out_path}: {e}")
 
 
 if __name__ == "__main__":
