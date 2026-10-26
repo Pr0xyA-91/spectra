@@ -17,7 +17,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession, format_text_summary, format_csv_summary
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.1"
+__version__ = "0.2.0"
 
 
 def print_banner():
@@ -167,7 +167,9 @@ def main():
             if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
                 raw_pos = telem.get("bu_encoder_pos", 0)
                 raw_ref = telem.get("bu_encoder_upper", 0)
-                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} (0x{raw_pos:04X} / 0x{raw_ref:04X})")
+                bu_st = telem.get("bu_position_state", "Home / Mill Position")
+                bu_pct = telem.get("bu_stroke_pct", 0)
+                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} [{bu_st} | {bu_pct}%] (0x{raw_pos:04X} / 0x{raw_ref:04X})")
             if "bu_mill_target" in telem:
                 print(f"  🎯 Brew Unit Mill Target (RE:0041) : {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
             if "bu_init_count" in telem:

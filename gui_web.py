@@ -21,7 +21,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.1"
+__version__ = "0.2.0"
 
 # Global state for background polling
 _poll_lock = threading.Lock()
@@ -140,9 +140,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <span id="kpiTraySub" class="kpi-sub">Microswitch</span>
     </div>
     <div class="kpi-card">
+      <span class="kpi-title">🫘 Bean Hopper</span>
+      <span id="kpiBeansVal" class="kpi-val">UNKNOWN</span>
+      <span id="kpiBeansSub" class="kpi-sub">Charge Sensor</span>
+    </div>
+    <div class="kpi-card">
       <span class="kpi-title">⚡ Machine State</span>
       <span id="kpiStateVal" class="kpi-val">UNKNOWN</span>
       <span id="kpiStateSub" class="kpi-sub">Operating Status</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">⚙️ Brew Unit</span>
+      <span id="kpiBuVal" class="kpi-val">UNKNOWN</span>
+      <span id="kpiBuSub" class="kpi-sub">Encoder Pos</span>
     </div>
     <div class="kpi-card">
       <span class="kpi-title">☕ Coffee TB1</span>
@@ -319,12 +329,35 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         document.getElementById('kpiTraySub').textContent = switches.drip_tray.ok ? 'Drawer Inserted' : 'Tray Removed';
       }
 
+      // Bean Hopper
+      if (switches.bean_hopper) {
+        document.getElementById('kpiBeansVal').textContent = switches.bean_hopper.ok ? 'BEANS OK' : 'FILL BEANS';
+        document.getElementById('kpiBeansVal').style.color = switches.bean_hopper.ok ? 'var(--green)' : 'var(--orange)';
+        document.getElementById('kpiBeansSub').textContent = switches.bean_hopper.ok ? 'Hopper Charged' : 'Refill Coffee Beans';
+      }
+
       // Machine State
       if (switches.machine_ready) {
         const s = switches.machine_ready;
-        document.getElementById('kpiStateVal').textContent = s.ok ? 'READY TO BREW' : s.badge;
-        document.getElementById('kpiStateVal').style.color = s.ok ? 'var(--green)' : (s.badge === 'HEATING' ? 'var(--yellow)' : 'var(--orange)');
+        const activeOps = ['BREWING', 'DISPENSING', 'MOVING', 'VALVE BUSY', 'BUSY'];
+        document.getElementById('kpiStateVal').textContent = s.ok ? 'READY TO BREW' : (activeOps.includes(s.badge) ? s.badge : 'NOT READY');
+        document.getElementById('kpiStateVal').style.color = s.ok ? 'var(--green)' : (activeOps.includes(s.badge) ? 'var(--accent)' : (s.badge === 'HEATING' ? 'var(--yellow)' : 'var(--orange)'));
         document.getElementById('kpiStateSub').textContent = s.status;
+      }
+
+      // Brew Unit Position
+      if (telem.bu_encoder_pos && telem.bu_encoder_pos > 0) {
+        const buOk = telem.bu_init_ok !== false;
+        const buShort = telem.bu_position_short || 'Home / Mill';
+        const buPct = telem.bu_stroke_pct !== undefined ? ` (${telem.bu_stroke_pct}%)` : '';
+        document.getElementById('kpiBuVal').textContent = `${telem.bu_encoder_pos} / ${telem.bu_encoder_upper || 0}`;
+        document.getElementById('kpiBuVal').style.color = buOk ? (Math.abs(telem.bu_delta_ticks || 0) >= 4 ? 'var(--accent)' : 'var(--green)') : 'var(--orange)';
+        document.getElementById('kpiBuSub').textContent = buOk ? `${buShort}${buPct}` : 'Position Fault';
+      } else if (switches.brew_unit_pos || switches.brew_unit) {
+        const sBu = switches.brew_unit_pos || switches.brew_unit;
+        document.getElementById('kpiBuVal').textContent = sBu.badge || 'OK';
+        document.getElementById('kpiBuVal').style.color = sBu.ok ? 'var(--green)' : 'var(--orange)';
+        document.getElementById('kpiBuSub').textContent = sBu.status || 'Brew Unit';
       }
 
       // Heaters

@@ -32,7 +32,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession, format_text_summary, format_csv_summary
 from drivers import DRIVER_DISPLAY_NAMES
 
-__version__ = "0.1"
+__version__ = "0.2.0"
 
 
 class JuraDiagApp(Gtk.Window):
@@ -384,7 +384,9 @@ class JuraDiagApp(Gtk.Window):
 
         card_tank, self.lbl_live_tank, self.lbl_sub_tank = make_sensor_card("💧 Water Tank", "UNKNOWN", "Level Float")
         card_tray, self.lbl_live_tray, self.lbl_sub_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN", "Microswitch")
+        card_beans, self.lbl_live_beans, self.lbl_sub_beans = make_sensor_card("🫘 Bean Hopper", "UNKNOWN", "Charge Sensor")
         card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
+        card_bu, self.lbl_live_bu, self.lbl_sub_bu = make_sensor_card("⚙️ Brew Unit", "UNKNOWN", "Encoder Pos")
         card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
         card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
         card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
@@ -392,7 +394,9 @@ class JuraDiagApp(Gtk.Window):
 
         badges_box.pack_start(card_tank, True, True, 0)
         badges_box.pack_start(card_tray, True, True, 0)
+        badges_box.pack_start(card_beans, True, True, 0)
         badges_box.pack_start(card_state, True, True, 0)
+        badges_box.pack_start(card_bu, True, True, 0)
         badges_box.pack_start(card_coffee, True, True, 0)
         badges_box.pack_start(card_steam, True, True, 0)
         badges_box.pack_start(card_flow, True, True, 0)
@@ -805,16 +809,42 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_live_tray.set_text("INSERTED")
             self.lbl_sub_tray.set_text("Tray OK")
 
+        # Bean Hopper
+        if "bean_hopper" in switches:
+            sw = switches["bean_hopper"]
+            if sw["ok"]:
+                self.lbl_live_beans.set_text("BEANS OK")
+                self.lbl_sub_beans.set_text("Hopper Charged")
+            else:
+                self.lbl_live_beans.set_markup("<span color='#fab387'>FILL BEANS</span>")
+                self.lbl_sub_beans.set_text("Refill Coffee Beans")
+        else:
+            self.lbl_live_beans.set_text("BEANS OK")
+            self.lbl_sub_beans.set_text("Hopper OK")
+
         # Machine State
         rdness = result.get("readiness")
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
             st = sw.get("status", "")
+            badge = sw.get("badge", "")
             if sw["ok"]:
                 self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY TO BREW</span>")
                 self.lbl_sub_state.set_text("Appliance Ready")
             else:
-                if "Press Maintenance" in st or "Maintenance" in st:
+                if badge == "BREWING" or "Brewing" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>BREWING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "DISPENSING" or "Dispensing" in st or "Rinsing" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>DISPENSING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "MOVING" or "Brew Unit Active" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>MOVING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "VALVE BUSY" or "Valve" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>VALVE BUSY</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif "Press Maintenance" in st or "Maintenance" in st:
                     self.lbl_live_state.set_markup("<span color='#fab387'>PRESS MAINTENANCE</span>")
                     if "Repeated No Flow" in st or "Filling Loop" in st:
                         self.lbl_sub_state.set_text("Filling Loop (Repeated No Flow)")
@@ -832,6 +862,9 @@ class JuraDiagApp(Gtk.Window):
                 elif "Grounds" in st:
                     self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Empty Grounds Container")
+                elif "Beans" in st or ("bean_hopper" in switches and not switches["bean_hopper"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
+                    self.lbl_sub_state.set_text("Fill Coffee Beans")
                 elif "Heating" in st:
                     self.lbl_live_state.set_markup("<span color='#f9e2af'>HEATING UP</span>")
                     self.lbl_sub_state.set_text("Heating Thermoblock")
@@ -864,6 +897,23 @@ class JuraDiagApp(Gtk.Window):
         # Thermoblock Heaters & Thermal Sensors
         telem = result.get("telemetry", {})
         sensor_dict = {s.get("id"): s for s in result.get("sensors", [])}
+
+        # Brew Unit Position (Encoder)
+        bu_pos = telem.get("bu_encoder_pos", 0)
+        bu_ref = telem.get("bu_encoder_upper", 0)
+        bu_short = telem.get("bu_position_short", "Home / Mill")
+        bu_pct = telem.get("bu_stroke_pct", 0)
+        bu_ok = telem.get("bu_init_ok", True)
+        if bu_pos > 0:
+            self.lbl_live_bu.set_text(f"{bu_pos} / {bu_ref}")
+            self.lbl_sub_bu.set_text(f"{bu_short} ({bu_pct}%)" if bu_ok else "Position Fault")
+        elif "brew_unit" in switches:
+            sw_bu = switches["brew_unit"]
+            self.lbl_live_bu.set_text(sw_bu.get("badge", "OK"))
+            self.lbl_sub_bu.set_text(sw_bu.get("status", "Brew Unit"))
+        else:
+            self.lbl_live_bu.set_text("NOMINAL" if bu_ok else "FAULT")
+            self.lbl_sub_bu.set_text("Home Position OK" if bu_ok else "Check Brew Unit")
 
         if "heater_coffee_str" in telem:
             self.lbl_live_coffee_tb.set_text(telem["heater_coffee_str"])

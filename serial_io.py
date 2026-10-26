@@ -319,6 +319,9 @@ class JuraSerialConnection:
                 else:
                     # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
                     return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
+            elif cmd_clean == "AS:":
+                # Optical Bean Hopper Sensor (Ambient ADC: 0x0645 = 1605, Reflected IR ADC: 0x061C = 1564 -> Beans OK)
+                return "as:077206450000,0772061C0001"
             elif cmd_clean == "RE:0028":
                 return "re:0000"
             elif cmd_clean == "RE:0029":
