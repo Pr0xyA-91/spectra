@@ -14,7 +14,7 @@ from datetime import datetime
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib, Pango
+from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf
 
 import serial_io
 import profiles_db
@@ -24,6 +24,25 @@ __version__ = "0.4.2"
 
 
 class JuraDiagApp(Gtk.Window):
+    @staticmethod
+    def _load_app_icon(size: int = 36) -> Optional[GdkPixbuf.Pixbuf]:
+        """
+        Load application logo at specified size with graceful fallback.
+        Prioritizes vector SVG, falls back to PNG.
+        """
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(base_dir, "spectra_logo.svg"),
+            os.path.join(base_dir, "icon.png"),
+        ]
+        for path in candidates:
+            if os.path.isfile(path):
+                try:
+                    return GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+                except Exception:
+                    continue
+        return None
+
     def __init__(self):
         super().__init__(title=f"SPECTRA — Hardware Telemetry & Diagnostics (v{__version__})")
 
@@ -43,6 +62,11 @@ class JuraDiagApp(Gtk.Window):
         self.set_default_size(default_w, default_h)
         self.set_size_request(640, 440)
         self.set_position(Gtk.WindowPosition.CENTER)
+
+        # Set system window & dock icon
+        icon_pb = self._load_app_icon(size=64)
+        if icon_pb:
+            self.set_icon(icon_pb)
 
         # Responsive layout tracking state
         self._header_compact = None
@@ -234,8 +258,20 @@ class JuraDiagApp(Gtk.Window):
         self.header_grid.set_column_spacing(8)
         self.header_grid.set_row_spacing(6)
 
-        # Title & Icon
+        # Title & Icon Branding Box
+        self.brand_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.brand_box.set_valign(Gtk.Align.CENTER)
+
+        logo_pb = self._load_app_icon(size=34)
+        if logo_pb:
+            self.logo_img = Gtk.Image.new_from_pixbuf(logo_pb)
+            self.logo_img.set_valign(Gtk.Align.CENTER)
+            self.brand_box.pack_start(self.logo_img, False, False, 0)
+        else:
+            self.logo_img = None
+
         self.title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.title_box.set_valign(Gtk.Align.CENTER)
         app_title = Gtk.Label()
         app_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
         app_title.set_xalign(0.0)
@@ -248,6 +284,7 @@ class JuraDiagApp(Gtk.Window):
         self.sub_title.set_no_show_all(True)
         self.title_box.pack_start(app_title, False, False, 0)
         self.title_box.pack_start(self.sub_title, False, False, 0)
+        self.brand_box.pack_start(self.title_box, False, False, 0)
 
         # Port Selector Label & ComboBox
         self.lbl_port = Gtk.Label(label="Port:")
@@ -289,13 +326,13 @@ class JuraDiagApp(Gtk.Window):
             return
         self._header_compact = is_compact
 
-        for w in [self.title_box, self.lbl_port, self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read, self.btn_export]:
+        for w in [self.brand_box, self.lbl_port, self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read, self.btn_export]:
             if w.get_parent():
                 self.header_grid.remove(w)
 
         if not is_compact:
             # Standard single-row desktop layout
-            self.header_grid.attach(self.title_box, 0, 0, 1, 1)
+            self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.lbl_port, 1, 0, 1, 1)
             self.header_grid.attach(self.port_combo, 2, 0, 1, 1)
             self.header_grid.attach(self.btn_refresh, 3, 0, 1, 1)
@@ -305,7 +342,7 @@ class JuraDiagApp(Gtk.Window):
             self.sub_title.set_visible(True)
         else:
             # Compact 2-row layout: Row 0 has Title + Actions, Row 1 has Port + Refresh
-            self.header_grid.attach(self.title_box, 0, 0, 1, 1)
+            self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 1, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 2, 0, 1, 1)
             self.header_grid.attach(self.btn_export, 3, 0, 1, 1)
@@ -694,6 +731,47 @@ class JuraDiagApp(Gtk.Window):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_border_width(8)
+
+        # Hero Brand Banner Card
+        hero_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        hero_card.get_style_context().add_class("card")
+        hero_card.set_margin_bottom(4)
+
+        hero_pb = self._load_app_icon(size=56)
+        if hero_pb:
+            hero_img = Gtk.Image.new_from_pixbuf(hero_pb)
+            hero_img.set_valign(Gtk.Align.CENTER)
+            hero_card.pack_start(hero_img, False, False, 4)
+
+        hero_text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        hero_text_box.set_valign(Gtk.Align.CENTER)
+
+        hero_title = Gtk.Label()
+        hero_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA Diagnostic Suite</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
+        hero_title.set_xalign(0.0)
+
+        hero_desc = Gtk.Label()
+        hero_desc.set_markup("<span size='small' color='#a6adc8'>Universal Hardware Telemetry &amp; Logic Board Diagnostics Platform</span>")
+        hero_desc.set_xalign(0.0)
+
+        hero_sub = Gtk.Label()
+        hero_sub.set_markup("<span size='small' color='#a6e3a1'>● Engine Ready</span>  <span size='small' color='#6c7086'>|</span>  <span size='small' color='#cdd6f4'>Optical / Serial Bus Protocol &amp; Multi-Point Telemetry</span>")
+        hero_sub.set_xalign(0.0)
+
+        hero_text_box.pack_start(hero_title, False, False, 0)
+        hero_text_box.pack_start(hero_desc, False, False, 0)
+        hero_text_box.pack_start(hero_sub, False, False, 0)
+        hero_card.pack_start(hero_text_box, True, True, 0)
+
+        box.pack_start(hero_card, False, False, 0)
+
+        # Specs TreeView in its own scrolled container
+        tree_scrolled = Gtk.ScrolledWindow()
+        tree_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        tree_scrolled.set_vexpand(True)
+
         self.info_store = Gtk.ListStore(str, str)
         self.info_tree = Gtk.TreeView(model=self.info_store)
 
@@ -708,7 +786,10 @@ class JuraDiagApp(Gtk.Window):
         col_val.set_expand(True)
         self.info_tree.append_column(col_val)
 
-        scrolled.add(self.info_tree)
+        tree_scrolled.add(self.info_tree)
+        box.pack_start(tree_scrolled, True, True, 0)
+
+        scrolled.add(box)
         return scrolled
 
     def _create_log_tab(self) -> Gtk.Widget:
