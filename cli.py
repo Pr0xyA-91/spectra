@@ -136,9 +136,10 @@ def main():
             else:
                 print(f"  💨 Steam Thermoblock (TB2)         : Not Installed (Single Heater Model)")
 
-            if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
-                raw_a = telem.get("ambient_temp_raw", 0)
-                print(f"  💧 Water Intake / Ambient Sensor   : {telem['ambient_temp_str']:<12} (ADC: 0x{raw_a:04X})")
+            if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
+                raw_pos = telem.get("bu_encoder_pos", 0)
+                raw_ref = telem.get("bu_encoder_upper", 0)
+                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} (0x{raw_pos:04X} / 0x{raw_ref:04X})")
 
             print("\n[SYSTEM SETTINGS & HYDRAULIC SENSORS]")
             if "water_hardness_dh" in telem:

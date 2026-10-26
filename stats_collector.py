@@ -207,7 +207,8 @@ def query_live_sensors(
             heater_ntc_raw = 0
             steam_ntc_raw = 0
             flow_pulses_raw = 0
-            ambient_ntc_raw = 0
+            bu_encoder_upper_raw = 0
+            bu_encoder_pos_raw = 0
             rotary_pos = "0"
             grounds_full = False
 
@@ -215,11 +216,16 @@ def query_live_sensors(
                 payload = hz_resp[3:].strip()
                 parts = payload.split(",")
 
+                if len(parts) > 1:
+                    try:
+                        bu_encoder_upper_raw = int(parts[1], 16)
+                    except ValueError:
+                        bu_encoder_upper_raw = 0
                 if len(parts) > 2:
                     try:
-                        ambient_ntc_raw = int(parts[2], 16)
+                        bu_encoder_pos_raw = int(parts[2], 16)
                     except ValueError:
-                        ambient_ntc_raw = 0
+                        bu_encoder_pos_raw = 0
                 if len(parts) > 3:
                     try:
                         flow_pulses_raw = int(parts[3], 16)
@@ -294,7 +300,6 @@ def query_live_sensors(
             cycle_volume_ml = round(flow_pulses_raw / 2.366, 1)
 
             # Decode temperatures in Celsius (0.1 °C resolution)
-            temp_ambient = decode_jura_temperature(ambient_ntc_raw)
             temp_coffee = decode_jura_temperature(heater_ntc_raw)
             temp_steam = decode_jura_temperature(steam_ntc_raw)
 
@@ -525,6 +530,18 @@ def query_live_sensors(
                     "unit": "ml/s"
                 }
             ]
+            if bu_encoder_pos_raw > 0:
+                sensor_list.append({
+                    "id": "bu_encoder",
+                    "name": "Live Brew Unit Encoder",
+                    "status": f"{bu_encoder_pos_raw} ticks",
+                    "ok": True,
+                    "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}",
+                    "details": f"Current position: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}) | Upper stop ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X})",
+                    "icon": "⚙️",
+                    "value": bu_encoder_pos_raw,
+                    "unit": "ticks"
+                })
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -600,9 +617,9 @@ def query_live_sensors(
                 "heater_steam_raw": steam_ntc_raw,
                 "heater_steam_status": steam_status,
                 "heater_steam_str": (f"{temp_steam:.1f} °C" if temp_steam is not None else "Installed (Standby)") if is_dual_heater else "Not Installed (Single Heater Model)",
-                "ambient_temp_c": temp_ambient,
-                "ambient_temp_raw": ambient_ntc_raw,
-                "ambient_temp_str": f"{temp_ambient:.1f} °C" if temp_ambient is not None else "N/A",
+                "bu_encoder_pos": bu_encoder_pos_raw,
+                "bu_encoder_upper": bu_encoder_upper_raw,
+                "bu_encoder_str": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks" if bu_encoder_pos_raw > 0 else "N/A",
                 "heater_ntc_raw": heater_ntc_raw,
                 "rotary_switch": rotary_pos,
                 "flow_pulses": flow_pulses_raw,
@@ -1374,8 +1391,8 @@ class JuraStatsSession:
                     out.append(f"   * Steam Thermoblock (TB2)       : {s_str:<12} [{s_stat}]")
                 else:
                     out.append(f"   * Steam Thermoblock (TB2)       : Not Installed (Single Heater Model)")
-                if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
-                    out.append(f"   * Water Intake / Ambient Sensor : {telem['ambient_temp_str']}")
+                if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
+                    out.append(f"   * Brew Unit Encoder (Pos / Ref) : {telem['bu_encoder_str']}")
                 out.append("")
 
             if ls.get("switches"):

@@ -124,6 +124,12 @@ conn.close()
 * Accumulated cycle volume:
   $$\text{Volume (ml)} = \frac{P_{\text{cycle}}}{2.366}$$
 
+### 5. `HZ:` Fields `parts[1]` and `parts[2]` are Brew Unit Encoder Positions (NOT Ambient NTC)
+* In the Jura `HZ:` frame (`hz:010001100000,0287,00E3,0078,03DE,0802,3,000000,0000,00`):
+  - `parts[1]` (`0x0287` = `647` ticks) is the **Brew Unit Upper / Reference Encoder Position** (`Copy(hz_payload, 14, 4)` in Jura's `WaterControl`).
+  - `parts[2]` (`0x00E3` = `227` ticks) is the **Brew Unit Current / Lower (Mill) Encoder Position** (`Copy(hz_payload, 19, 4)` in Jura's `WaterControl`, calibrated against `RE:0041 = 0x00E6` = `230` ticks).
+* **RULE**: Never decode `parts[2]` as an ambient/water-intake temperature (`227 / 10 = 22.7 °C`). Single-heater Jura machines (`EF518M` etc.) have only one NTC sensor (`parts[4]` Coffee Thermoblock); dual-heater machines add `parts[5]` (Steam Thermoblock).
+
 ---
 
 ## 5. Security & Privacy Guardrails

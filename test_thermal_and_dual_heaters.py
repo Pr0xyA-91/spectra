@@ -16,7 +16,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
     def test_temperature_decoding_precision(self):
         """Test exact 0.1°C resolution decoding across realistic Jura operating ranges."""
-        # 1. Cold water / ambient room temperature
+        # 1. Cold / standby thermoblock temperature
         self.assertEqual(sc.decode_jura_temperature("00E2"), 22.6)
         self.assertEqual(sc.decode_jura_temperature(226), 22.6)
         self.assertEqual(sc.decode_jura_temperature("0x00E4"), 22.8)
@@ -67,6 +67,9 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(res["telemetry"]["heater_coffee_status"], "Ready to Brew")
         self.assertEqual(res["telemetry"]["heater_steam_str"], "Not Installed (Single Heater Model)")
         self.assertEqual(res["telemetry"]["heater_steam_status"], "Not Installed")
+        self.assertNotIn("ambient_temp_c", res["telemetry"])
+        self.assertIn("bu_encoder_pos", res["telemetry"])
+        self.assertIn("bu_encoder_upper", res["telemetry"])
 
         # Verify single-heater fault definitions map to Main Relay and Thermal Overheat
         sensor_names = [s["name"] for s in res["sensors"]]
