@@ -1,5 +1,5 @@
 # SPECTRA — Comprehensive Context & Session Notes for Agy
-**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.2)
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.5.0)
 
 > **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/spectra_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/spectra.git`).
 
@@ -11,9 +11,9 @@ When cloning or resuming work on a new machine, the private repository `spectra_
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.4.2` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.2_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.2.2` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.5.0` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.5.0_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.5.0_win` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
@@ -268,3 +268,27 @@ conn.close()
   - Added strict input validation for serial port parameters (`is_valid_port()`) in Web API.
   - Resolved GTK export dialog `import re` NameError and permitted `blob: data:` in Web CSP for reliable report saving.
   - Bumped version to `v0.4.2` (`spectra`), `v0.4.2_mm` (`spectra-mm`), and `v0.2.2` (`spectra-win`).
+
+
+---
+
+## 9. Next-Generation UI/UX Redesign & v0.5.0 Release (Session 2026-10-26)
+* **Interactive Hydraulic & Sensor "Digital Twin"**:
+  - Native Cairo vector rendering of the internal hydraulic and electrical circuit (`gui_widgets.py:DigitalTwinWidget`).
+  - Real-time color-coded component state glowing based on live telemetry.
+  - Interactive clickable component telemetry inspector card (Thermoblock 1/2, Flowmeter, Pump, Brew Unit, Reservoir, Tray, Beans, MCU).
+* **Real-Time Oscilloscope & Strip Chart**:
+  - Continuous 60-sample rolling time-series graph for Thermoblock 1 (°C), Thermoblock 2 (°C), and Flowmeter (ml/s) (`gui_widgets.py:OscilloscopeWidget`).
+  - Real-time bus event stream log with Pause, Clear, and Export controls.
+* **Executive Health Scorecard & AI Maintenance Advisor**:
+  - Vector circular radial health gauge (`gui_widgets.py:RadialGaugeWidget`) calculating overall machine health ($0\text{--}100\%$).
+  - Progress countdown bars for rated lifespan ($80{,}000$ cups), descaling cycle, and Claris water filter.
+  - Heuristic diagnostic alert cards detecting calcification latency, microswitch contact chatter/bounce, and brew unit torque variations.
+  - Technician field inspection verification checklist.
+* **Specialty Beverage Analytics**:
+  - Proportional bar charts with beverage preparation counts and percentage share (`gui_widgets.py:BeverageAnalyticsWidget`).
+  - Category filtering (`All`, `Black Coffee`, `Milk Specialties`, `Hot Water / Steam`).
+* **Customer Service PDF/HTML Inspection Certificate Generator**:
+  - Branded customer inspection certificate generated via 1-click `🖨️ Service Receipt` button (`gui_widgets.py:generate_service_report_html`).
+* **Version Standardization**:
+  - Upgraded to `v0.5.0` (`spectra`), `v0.5.0_mm` (`spectra-mm`), and `v0.5.0_win` (`spectra-win`).

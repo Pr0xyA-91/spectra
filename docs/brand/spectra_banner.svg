@@ -333,7 +333,7 @@
 
     <!-- Version Badge -->
     <rect x="395" y="116" width="75" height="26" rx="6" fill="#f9e2af" />
-    <text x="403" y="134" font-family="monospace, sans-serif" font-size="13" font-weight="bold" fill="#11111b">v0.4.2</text>
+    <text x="403" y="134" font-family="monospace, sans-serif" font-size="13" font-weight="bold" fill="#11111b">v0.5.0</text>
 
     <!-- Subtitle -->
     <text x="0" y="206" font-family="sans-serif" font-size="17" font-weight="600" fill="#cdd6f4" letter-spacing="0.5">Universal Hardware Telemetry &amp; Logic Board Diagnostics</text>
