@@ -21,7 +21,7 @@ Orchestrates:
 Credits & Attribution:
 Built upon reverse-engineering research and protocol contributions by CM-P,
 Hajo Noerenberg (hn), Jutta-Proto, Ryan Alden, tinaught, makefu, AlexxIT,
-and the open-source coffee telemetry and home automation communities.
+Google Antigravity (Agy / DeepMind), and the open-source coffee telemetry and home automation communities.
 """
 
 import time
@@ -35,7 +35,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.3.4"
+__version__ = "0.4.0"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -142,6 +142,59 @@ def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False)
 
 
 _last_flowmeter_samples: Dict[str, Tuple[int, float, float]] = {}
+_last_bu_samples: Dict[str, Tuple[int, float, int]] = {}
+
+
+def evaluate_brew_unit_position(
+    pos: int,
+    upper_ref: int,
+    mill_target: int = 0,
+    init_ok: bool = True,
+    delta_ticks: int = 0
+) -> Tuple[str, str, int]:
+    """
+    Dynamically evaluate the mechanical zone, short card subtitle, and stroke
+    percentage (0-100%) of the Brew Unit from live encoder ticks:
+    - Lower / Mill (Home) Target: RE:0041 (~226-230 ticks) -> 0% stroke
+    - Pre-Brew / Tamping Travel: RE:0042 (~250-450 ticks)
+    - Brewing / Compression Chamber: RE:0043/RE:0044 (~460-610 ticks)
+    - Upper Reference / Eject & Rinse: HZ[1] (~647-648 ticks) -> 100% stroke
+    """
+    if not init_ok:
+        return "Init / Position Fault", "Position Fault", 0
+    if pos <= 0:
+        return "Standby / Unknown", "Standby", 0
+
+    eff_target = mill_target if mill_target > 0 else 230
+    eff_upper = upper_ref if upper_ref > eff_target else 648
+    span = max(1, eff_upper - eff_target)
+    stroke_pct = max(0, min(100, round(((pos - eff_target) / span) * 100)))
+
+    if abs(pos - eff_target) <= 16:
+        zone_full = "Home / Mill Position"
+        zone_short = "Home / Mill"
+        stroke_pct = 0
+    elif pos < eff_target - 16:
+        zone_full = "Lower Limit / Bottom"
+        zone_short = "Lower Limit"
+    elif pos >= eff_upper - 24:
+        zone_full = "Upper / Eject & Rinse"
+        zone_short = "Upper / Eject"
+        if abs(pos - eff_upper) <= 12:
+            stroke_pct = 100
+    elif pos >= eff_target + int(0.55 * span):
+        zone_full = "Brewing / Compression"
+        zone_short = "Brewing / Compress"
+    else:
+        zone_full = "Tamping / Pre-Brew Travel"
+        zone_short = "Tamping / Travel"
+
+    if abs(delta_ticks) >= 4:
+        arrow = "▲" if delta_ticks > 0 else "▼"
+        zone_full = f"Moving {arrow} ({zone_full})"
+        zone_short = f"Moving {arrow} {zone_short}"
+
+    return zone_full, zone_short, stroke_pct
 
 
 def query_live_sensors(
@@ -211,12 +264,15 @@ def query_live_sensors(
             bu_encoder_pos_raw = 0
             rotary_pos = "0"
             grounds_full = False
+            beans_empty = False
+            beans_ok = True
             bu_init_ok = True
             mv_init_ok = True
             mv_busy = False
             heater_ready_flag = True
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
+            cake_thickness_ticks = 0
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
@@ -258,6 +314,10 @@ def query_live_sensors(
                     aux_inputs_bits = parts[7][4:6]
                 if len(parts) > 8 and parts[8]:
                     button_matrix_hex = parts[8]
+                    try:
+                        cake_thickness_ticks = int(parts[8], 16)
+                    except ValueError:
+                        cake_thickness_ticks = 0
 
                 # Physical Microswitches & Cuts:
                 # In Jura telemetry, parts[7] and parts[9] convey live microswitch cuts:
@@ -382,6 +442,25 @@ def query_live_sensors(
                 if ty_disp_resp and ty_disp_resp.startswith("ty$:"):
                     display_firmware = ty_disp_resp[4:].strip()
 
+                # Optical Bean Hopper Sensor (AS: Check Sensor)
+                as_resp = conn.query_ascii("AS:")
+                if as_resp and as_resp.startswith("as:"):
+                    results["raw_as"] = as_resp
+                    as_parts = as_resp[3:].split(",")
+                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
+                        try:
+                            off_adc = int(as_parts[0][4:8], 16)
+                            on_adc = int(as_parts[1][4:8], 16)
+                            # On Jura optical sensor:
+                            # Reflected IR when empty > 1680 ADC
+                            # Absorbed IR when beans present <= 1660 ADC
+                            beans_empty = (on_adc > 1680)
+                            beans_ok = not beans_empty
+                            setattr(conn, "_cached_beans_ok", beans_ok)
+                            setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
+                        except ValueError:
+                            pass
+
                 # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
                 if r1b4 and r1b4.startswith("re:"):
@@ -393,8 +472,27 @@ def query_live_sensors(
                         pass
                 total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
             else:
+                cached_beans = getattr(conn, "_cached_beans_ok", None)
+                if cached_beans is not None:
+                    beans_ok = cached_beans
+                    beans_empty = not beans_ok
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
+
+            # Evaluate dynamic Brew Unit mechanical position & movement delta
+            prev_bu = _last_bu_samples.get(port_key)
+            bu_delta_ticks = 0
+            if prev_bu is not None:
+                prev_bu_pos, prev_bu_ts, prev_bu_target = prev_bu
+                if not bu_mill_target and prev_bu_target:
+                    bu_mill_target = prev_bu_target
+                if (now_ts - prev_bu_ts) < 10.0 and prev_bu_pos > 0 and bu_encoder_pos_raw > 0:
+                    bu_delta_ticks = bu_encoder_pos_raw - prev_bu_pos
+            _last_bu_samples[port_key] = (bu_encoder_pos_raw, now_ts, bu_mill_target)
+
+            bu_zone_full, bu_zone_short, bu_stroke_pct = evaluate_brew_unit_position(
+                bu_encoder_pos_raw, bu_encoder_upper_raw, bu_mill_target, bu_init_ok, bu_delta_ticks
+            )
 
             # 3. Comprehensive Machine Operational State & Physical Evaluation
             # Priority detection: Microswitches, Safety Trips, Temperatures, Idle
@@ -405,7 +503,37 @@ def query_live_sensors(
             is_busy = (len(parts) > 0 and len(parts[0]) > 0 and parts[0][0] != "0")
             temp_coffee_val = temp_coffee
 
-            if not tray_ok:
+            if flow_ml_s > 0.0 and bu_stroke_pct >= 45:
+                ready_ok = False
+                ready_status = f"Brewing / Extracting ({flow_ml_s:.1f} ml/s)"
+                ready_badge = "BREWING"
+                ready_icon = "☕"
+            elif bu_stroke_pct >= 45:
+                ready_ok = False
+                ready_status = f"Brewing / Compressing ({bu_stroke_pct}% stroke)"
+                ready_badge = "BREWING"
+                ready_icon = "☕"
+            elif flow_ml_s > 0.0:
+                ready_ok = False
+                ready_status = f"Dispensing / Rinsing ({flow_ml_s:.1f} ml/s)"
+                ready_badge = "DISPENSING"
+                ready_icon = "🌊"
+            elif abs(bu_delta_ticks) >= 4 or bu_stroke_pct >= 15:
+                ready_ok = False
+                ready_status = f"Brew Unit Active ({bu_zone_short})"
+                ready_badge = "MOVING"
+                ready_icon = "⚙️"
+            elif mv_busy:
+                ready_ok = False
+                ready_status = "Positioning Multiway Valve"
+                ready_badge = "VALVE BUSY"
+                ready_icon = "🔀"
+            elif is_busy:
+                ready_ok = False
+                ready_status = "Busy (Operation in Progress)"
+                ready_badge = "BUSY"
+                ready_icon = "⏳"
+            elif not tray_ok:
                 ready_ok = False
                 ready_status = "Not Ready (Drip Tray Missing)"
                 ready_badge = "MISSING"
@@ -420,11 +548,11 @@ def query_live_sensors(
                 ready_status = "Not Ready (Empty Grounds Container)"
                 ready_badge = "FULL"
                 ready_icon = "🗑️"
-            elif is_busy:
+            elif not beans_ok:
                 ready_ok = False
-                ready_status = "Busy (Operation in Progress)"
-                ready_badge = "BUSY"
-                ready_icon = "⏳"
+                ready_status = "Not Ready (Fill Beans)"
+                ready_badge = "FILL BEANS"
+                ready_icon = "🫘"
             elif temp_coffee_val is not None and temp_coffee_val < 80.0:
                 ready_ok = False
                 ready_status = f"Heating Up ({temp_coffee_val:.1f} °C)"
@@ -497,6 +625,14 @@ def query_live_sensors(
                     "icon": "📥"
                 },
                 {
+                    "id": "bean_hopper",
+                    "name": "Bean Hopper / Charge Sensor",
+                    "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
+                    "ok": beans_ok,
+                    "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "icon": "🫘"
+                },
+                {
                     "id": "hydraulic_system",
                     "name": "Hydraulic System & Flowmeter",
                     "status": hyd_status,
@@ -511,6 +647,14 @@ def query_live_sensors(
                     "ok": ready_ok,
                     "badge": ready_badge,
                     "icon": ready_icon
+                },
+                {
+                    "id": "brew_unit_pos",
+                    "name": "Brew Unit Position (Encoder)",
+                    "status": f"{bu_zone_full} ({bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks, {bu_stroke_pct}% stroke{f', Target: {bu_mill_target}' if bu_mill_target else ''})",
+                    "ok": bu_init_ok,
+                    "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}" if bu_encoder_pos_raw > 0 else ("OK" if bu_init_ok else "FAULT"),
+                    "icon": "⚙️"
                 },
                 {
                     "id": "claris_filter",
@@ -578,10 +722,10 @@ def query_live_sensors(
                 sensor_list.append({
                     "id": "bu_encoder",
                     "name": "Live Brew Unit Encoder",
-                    "status": f"{bu_encoder_pos_raw} ticks",
+                    "status": f"{bu_zone_short} ({bu_encoder_pos_raw} ticks)",
                     "ok": bu_init_ok,
                     "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}",
-                    "details": f"Current: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}){mill_str} | Upper Ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X}) | Init Flag: {'OK' if bu_init_ok else 'Fault'}",
+                    "details": f"Zone: {bu_zone_full} ({bu_stroke_pct}% stroke) | Current: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}){mill_str} | Upper Ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X}) | Init Flag: {'OK' if bu_init_ok else 'Fault'}",
                     "icon": "⚙️",
                     "value": bu_encoder_pos_raw,
                     "unit": "ticks"
@@ -598,12 +742,26 @@ def query_live_sensors(
             sensor_list.append({
                 "id": "panel_inputs",
                 "name": "Live Front Panel & Aux Inputs",
-                "status": f"Rotary: {rotary_pos} | Keys: 0x{button_matrix_hex}",
+                "status": f"Rotary: {rotary_pos} | Keys: 0x{button_matrix_hex} | Puck: {cake_thickness_ticks} ticks",
                 "ok": True,
                 "badge": "IDLE" if button_matrix_hex == "0000" else f"KEY {button_matrix_hex}",
-                "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
+                "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Puck measurement: {cake_thickness_ticks} ticks | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
                 "icon": "🎛️"
             })
+            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            if cached_adcs:
+                off_adc, on_adc = cached_adcs
+                sensor_list.append({
+                    "id": "optical_bean_sensor",
+                    "name": "Optical Bean Hopper Sensor",
+                    "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
+                    "ok": beans_ok,
+                    "badge": "NOMINAL" if beans_ok else "EMPTY",
+                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {on_adc - off_adc} counts | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
+                    "icon": "🫘",
+                    "value": on_adc,
+                    "unit": "ADC"
+                })
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -683,10 +841,19 @@ def query_live_sensors(
                 "bu_encoder_upper": bu_encoder_upper_raw,
                 "bu_mill_target": bu_mill_target,
                 "bu_encoder_str": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks" if bu_encoder_pos_raw > 0 else "N/A",
+                "bu_position_state": bu_zone_full,
+                "bu_position_short": bu_zone_short,
+                "bu_stroke_pct": bu_stroke_pct,
+                "bu_delta_ticks": bu_delta_ticks,
                 "bu_init_ok": bu_init_ok,
+                "beans_ok": beans_ok,
                 "mv_init_ok": mv_init_ok,
                 "mv_busy": mv_busy,
                 "heater_ready_flag": heater_ready_flag,
+                "machine_state_badge": ready_badge,
+                "machine_state_status": ready_status,
+                "cake_thickness_ticks": cake_thickness_ticks,
+                "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
                 "button_matrix": button_matrix_hex,
                 "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
@@ -715,6 +882,8 @@ def query_live_sensors(
                 results["alerts"].append({"name": "Water Tank Low / Empty", "details": "Refill water tank", "blocking": True})
             if grounds_full:
                 results["alerts"].append({"name": "Grounds Container Full", "details": "Empty coffee grounds container", "blocking": True})
+            if not beans_ok:
+                results["alerts"].append({"name": "Fill Beans", "details": "Refill coffee bean hopper", "blocking": True})
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"

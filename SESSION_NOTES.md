@@ -11,9 +11,9 @@ When cloning or resuming work on a new machine, the private repository `wrat-sni
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/wrat-sniffer` | `main` | `v0.3.4` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
-| `~/Projects/WRAT` | `multi-manufacturer` | `v0.3.4_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
-| `~/Projects/WRAT_win` | `windows` | `v0.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/wrat-sniffer` | `main` | `v0.4.0` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
+| `~/Projects/WRAT` | `multi-manufacturer` | `v0.4.0_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/WRAT_win` | `windows` | `v0.2.0` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
@@ -99,16 +99,40 @@ conn.close()
 ### 1. Separation of Live Readiness vs. Historical EEPROM Faults
 * **Non-volatile EEPROM registers** (`RE:0028` last fault latch, `RE:01B4` lifetime flowmeter timeouts) store historical events that do **NOT** clear when the machine enters ready state.
 * **RULE**: Never gate live operational readiness (`machine_ready`) on `RE:0028` or `RE:01B4`.
-* Live operational readiness is determined strictly from real-time physical inputs:
+* Live operational readiness is determined strictly from real-time physical inputs and active mechanical states:
   - Drip Tray inserted (`tray_ok`)
   - Water Tank present (`water_ok`)
   - Grounds Container not full (`not grounds_full`)
+  - Bean Hopper charged (`beans_ok`, evaluated via optical sensor `AS:` reading and `cake_thickness_ticks`)
   - Coffee Thermoblock at brewing temperature ($\ge 80.0$ °C)
-  - Appliance idle (`not is_busy`, `parts[0][0] == '0'`)
-* When all 5 physical conditions are met, the appliance is **Ready to Brew / Nominal (READY)**.
+  - Appliance idle (`not is_busy`, `parts[0][0] == '0'`, `flow_ml_s == 0.0`, Brew Unit at Home `bu_stroke_pct < 15`, `not mv_busy`)
+* When all physical conditions are met, the appliance is **Ready to Brew / Nominal (READY)**; during active cycles it dynamically reports **Brewing / Extracting**, **Brewing / Compressing**, **Dispensing / Rinsing**, **Brew Unit Active**, or **Positioning Multiway Valve**.
 * Historical faults remain displayed where they belong: in the **Hardware Diagnostics** tree view.
 
-### 2. Periodic MCU Heartbeat Bit vs. Alarm Prompts
+### 2. Optical Infrared Bean Hopper Sensor (`AS:`) & Puck Measurement (`HZ[8]`)
+* **Optical IR Hopper Sensor (`AS:`)**:
+  - Interrogated via the analog sensor command `AS:` (`Check Sensor` at `0x4e6fb8` in `P518Ani.exe`).
+  - Response format: `as:VREF, OFF_ADC, 0000, VREF, ON_ADC, 0001` (e.g. `as:077106320000,077106810001`).
+  - `Group 0` (`0000`): Ambient light reading with IR LED off (`~1360–1600` ADC counts).
+  - `Group 1` (`0001`): Reflected infrared light reading with IR LED pulsed on.
+  - **Empty Hopper**: When the hopper is empty, IR reflects back off the clear funnel prism into the photodiode $\rightarrow$ `ON_ADC` rises to `0x06FD`–`0x0700` (`1789`–`1792` counts, delta $\Delta \ge 95$ counts).
+  - **Hopper Charged (Beans Present)**: Dark coffee beans absorb and scatter the IR pulse $\rightarrow$ `ON_ADC` drops by $> 150-220$ counts down to `1445`–`1665` counts (delta $\Delta < 85$ counts).
+  - Threshold: `on_adc < 1680` indicates beans are present; `on_adc > 1710` indicates empty hopper.
+* **Puck Thickness / Cake Measurement (`HZ[8]`)**:
+  - `HZ[8]` (historically labeled key matrix) reports the live compressed cake thickness in encoder ticks:
+  - `0x000E` (`14` dec ticks): Grinder ran empty / puck too thin threshold (triggers machine "Fill Beans" prompt).
+  - `0x001D` (`29` dec ticks): Valid single espresso compressed puck.
+* **Note on `HZ[0][3]`**: In older documentation, `HZ[0][3] == "1"` was hypothesized to indicate an empty hopper. Live brewing verification proved that `HZ[0][3]` remains `1` before, during, and after completely successful espresso brewing while the front screen displays "Ready to brew". Real-time optical hopper status must be read from `AS:`.
+
+### 3. Brew Unit Mechanical Position & Stroke Zones
+* Evaluated dynamically from live encoder ticks (`HZ[2]` current, `HZ[1]` upper reference, `RE:0041` mill target):
+  - **Home / Mill Position**: `~226–230` ticks (`0%` stroke).
+  - **Tamping / Pre-Brew Travel**: `~250–450` ticks (`15%–55%` stroke).
+  - **Brewing / Compression**: `~460–610` ticks (`55%–90%` stroke).
+  - **Upper / Eject & Rinse**: `~647–650` ticks (`100%` stroke).
+  - Dynamic movement arrow (`Moving ▲` / `Moving ▼`) indicates active mechanical transit ($\ge 4$ ticks/sec delta).
+
+### 4. Periodic MCU Heartbeat Bit vs. Alarm Prompts
 * In the Jura `HZ:` frame, `parts[7][3]` alternates between `0` and `1` every ~1 second (`000000` $\leftrightarrow$ `000100`).
 * **RULE**: `parts[7][3]` is an internal MCU clock/timer tick, **NOT** an alarm or "Press Maintenance" indicator.
 * Never apply a debounce or decay window to periodic oscillator bits.
@@ -143,6 +167,7 @@ conn.close()
   - `parts[0][0]` (`cut="1,1"`): Busy / Operation active (`0` = Idle/Ready, `1` = Busy/Steam-out)
   - `parts[0][1]` (`cut="2,1"`): Brew Unit Initialized & Positioned OK (`1` = OK, `0` = Fault 248)
   - `parts[0][2]` (`cut="3,1"`): Multiway Valve Moving / Busy (`0` = Idle, `1` = Moving)
+  - `parts[0][3]` (`cut="4,1"`): **Bean Charge / Fill Beans Sensor** (`0` = Beans OK / Hopper Charged, `1` = Fill Beans / Hopper Empty; mirrored in EEPROM `RE:0029` bit `0x0040`: `0x004C` when OK vs `0x000C` when empty)
   - `parts[0][5]` (`cut="6,1"`): Coffee Thermoblock Temperature Ready (`1` = Ready, `0` = Heating/Fault 708)
   - `parts[0][6]` (`cut="7,1"`): Multiway Valve Initialized OK (`1` = OK)
   - `parts[1]` (`cut="14,4"`): Brew Unit Upper / Reference Encoder Position (`0x0287` = `647` ticks)
@@ -170,4 +195,4 @@ conn.close()
 1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`wrat-sniffer.git`).
 2. Only `wrat-sniffer` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `wrat-sniffer.git` repository. `WRAT` (`multi-manufacturer`) and `WRAT_win` (`windows`) are strictly private.
 3. On any new device where `wrat-sniffer` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
-4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.3.4.tar.gz`, `WRAT-v0.3.4_mm.tar.gz`, `WRAT_win-v0.1.tar.gz`).
+4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.4.0.tar.gz`, `WRAT-v0.4.0_mm.tar.gz`, `WRAT_win-v0.2.0.tar.gz`).

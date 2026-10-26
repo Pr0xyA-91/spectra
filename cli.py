@@ -13,7 +13,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.4"
+__version__ = "0.4.0"
 
 
 def print_banner():
@@ -139,7 +139,9 @@ def main():
             if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
                 raw_pos = telem.get("bu_encoder_pos", 0)
                 raw_ref = telem.get("bu_encoder_upper", 0)
-                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} (0x{raw_pos:04X} / 0x{raw_ref:04X})")
+                bu_st = telem.get("bu_position_state", "Home / Mill Position")
+                bu_pct = telem.get("bu_stroke_pct", 0)
+                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} [{bu_st} | {bu_pct}%] (0x{raw_pos:04X} / 0x{raw_ref:04X})")
             if "bu_mill_target" in telem:
                 print(f"  🎯 Brew Unit Mill Target (RE:0041) : {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
             if "bu_init_count" in telem:
