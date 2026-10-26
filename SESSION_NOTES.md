@@ -11,9 +11,9 @@ When cloning or resuming work on a new machine, the private repository `wrat-sni
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/wrat-sniffer` | `main` | `v0.4.0` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
-| `~/Projects/WRAT` | `multi-manufacturer` | `v0.4.0_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
-| `~/Projects/WRAT_win` | `windows` | `v0.2.0` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/wrat-sniffer` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
+| `~/Projects/WRAT` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/WRAT_win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
@@ -75,6 +75,8 @@ conn.close()
   - `stats_collector.py`: High-level interrogation, `RT:`/`RE:` counter mapping, `HZ:`/`CS:`/`IC:` live telemetry parser, text/CSV report formatting.
   - `gui.py`: GTK3 dark-themed desktop application.
   - `cli.py`: Interactive/non-interactive CLI tool with `--export-txt`, `--export-csv`, `--export-json`.
+  - `docs/JURA_MEMORY_MAP.md`: Master cross-platform universal EEPROM and telemetry register map with scope tags (`[UNIVERSAL]`, `[FAMILY-SHARED]`, `[MODEL-SPECIFIC]`).
+  - `docs/models/`: Dedicated model-specific specifications directory (`README.md` template/index, `EF518_IMPRESSA_XJ5.md`).
   - `publish_release.sh`: Synchronizes `main` $\rightarrow$ `public-main`, strips `GEMINI.md` and `SESSION_NOTES.md`, scrubs `/home/<user>` paths from `.desktop` files, and pushes `public-main:main` to `public`.
 
 ### B. `WRAT` (`~/Projects/WRAT` — `multi-manufacturer` branch, `v0.3.4_mm`)
@@ -195,4 +197,25 @@ conn.close()
 1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`wrat-sniffer.git`).
 2. Only `wrat-sniffer` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `wrat-sniffer.git` repository. `WRAT` (`multi-manufacturer`) and `WRAT_win` (`windows`) are strictly private.
 3. On any new device where `wrat-sniffer` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
-4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.4.0.tar.gz`, `WRAT-v0.4.0_mm.tar.gz`, `WRAT_win-v0.2.0.tar.gz`).
+4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.4.1.tar.gz`, `WRAT-v0.4.1_mm.tar.gz`, `WRAT_win-v0.2.1.tar.gz`).
+
+---
+
+## 6. Community Auto-Dumping, Dependencies & Windows Installer Implementation (Session 2026-10-26)
+* **Community Auto-Dumping Script (`contrib/dump_machine_spec.py`)**:
+  - Automatically queries all 8 ASCII gateways (`TY:`, `TL:`, `TY$:`, `TL$:`, `CS$:`, `IC:`, `HZ:`, `AS:`).
+  - Dumps complete 512-word EEPROM memory space (`0x0000`–`0x01FF`) using 32 blocks of 16 words (`RT:0000`–`RT:01F0`), with automatic per-word fallback (`RE:xxxx`) for protected or unreturned blocks (e.g. `0x0000` on EF518).
+  - Classifies platform universal registers vs model-specific/unmapped registers.
+  - Generates both machine-readable JSON (`docs/models/<EF>_<MODEL>.json`) and human-readable Markdown (`docs/models/<EF>_<MODEL>.md`) ready for GitHub pull requests.
+  - Tested live against connected Jura IMPRESSA XJ5 (`EF518M V02.20`): read 512 words in 41 seconds, generated `docs/models/EF518M_IMPRESSA_XJ5_Professional_GII.json` and `.md`.
+* **Universal Dependency Specifications (`DEPENDENCIES.md`)**:
+  - Detailed matrix across Linux Jura (`wrat-sniffer`), Linux Multi-Manufacturer (`WRAT`), and Windows (`WRAT_win`).
+  - Outlined zero-pip design of CLI, telemetry engine, and Web Dashboard.
+  - Documented kernel drivers (`ftdi_sio`, `ch341`, `cp210x`, `cdc_acm`), serial permissions (`dialout`/`uucp`), and Windows COM port verification.
+* **Windows Installation Guide & Automated PowerShell Setup**:
+  - `WRAT_win/INSTALL_WINDOWS.md`: Complete guide covering Python install (PATH checkbox requirement), FTDI/CH340 drivers, Device Manager COM verification, and running scripts.
+  - `WRAT_win/install_windows.ps1`: Automated PowerShell installer handling execution policy bypass, python/pip check, installing `pyserial`, testing COM ports, and optional desktop shortcut creation.
+* **Version Alignment & Synchronization**:
+  - Updated versions and banners: `v0.4.1` (`wrat-sniffer`), `v0.4.1_mm` (`WRAT`), `v0.2.1` (`WRAT_win`).
+  - Mirrored all tools, documentation, model specs, and test enhancements across all three repositories.
+  - All 46 unit tests passing across all test suites (`10/10` in `wrat-sniffer`, `18/18` in `WRAT`, `18/18` in `WRAT_win`).

@@ -13,7 +13,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 
 def print_banner():
@@ -24,7 +24,7 @@ def print_banner():
  \        /    |    |   \ /    |    \ |    |   
   \__/\  /     |____|_  / \____|__  / |____|   
        \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)
+      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.4.1)
          Universal Diagnostics Engine [Jura Module]
     """
     print(banner)
@@ -32,7 +32,7 @@ def print_banner():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.4)"
+        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.4.1)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--demo", action="store_true", help="Run with simulated demo machine (Jura S8)")
     parser.add_argument("--demo-model", choices=["S8", "E8", "Z10", "S8-SC"], default="S8", help="Model to simulate in demo mode")
     parser.add_argument("-s", "--sensors", "--live-sensors", action="store_true", help="Read and display live sensors, switches, and fault telemetry")
+    parser.add_argument("--diff", metavar="BASELINE", help="Compare machine memory against baseline specification (e.g. EF518) or a previous JSON dump")
     parser.add_argument("-o", "--export", help="Output file path to save diagnostic report (.txt, .json, .csv)")
     parser.add_argument("-f", "--format", choices=["text", "json", "csv"], default="text", help="Report format (default: text)")
     parser.add_argument("--list-ports", action="store_true", help="List detected serial ports and exit")
@@ -170,6 +171,37 @@ def main():
                 json.dump(sensors_data, f, indent=2, ensure_ascii=False)
             print(f"[+] Sensor telemetry saved to: {out_path}")
 
+        sys.exit(0)
+
+    # Automated EEPROM Baseline Diff Mode
+    if args.diff:
+        print(f"[*] Auditing and diffing machine against baseline: {args.diff}...")
+        conn = serial_io.JuraSerialConnection(target_port, baudrate=args.baud)
+        live_dump = {}
+        try:
+            # Read gateways
+            for gw in ["TY:", "TL:", "TY$:", "TL$:", "CS$:", "IC:", "HZ:", "AS:"]:
+                live_dump[gw] = conn.query_ascii(gw, timeout=0.8)
+            # Read EEPROM blocks
+            live_eeprom = {}
+            for addr in range(0x0000, 0x0200, 0x0010):
+                r = conn.query_ascii(f"RT:{addr:04X}", timeout=1.0)
+                if r and r.startswith("rt:"):
+                    payload = r[3:].strip()
+                    for w_idx in range(len(payload) // 4):
+                        live_eeprom[f"{addr + w_idx:04X}"] = payload[w_idx*4 : (w_idx+1)*4]
+            live_dump["eeprom"] = live_eeprom
+        finally:
+            conn.close()
+
+        diff_report = sc.generate_eeprom_diff_report(live_dump, args.diff, label=target_port)
+        print("\n" + diff_report)
+
+        if args.export:
+            out_path = os.path.abspath(args.export)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(diff_report)
+            print(f"[+] Diff report saved to: {out_path}")
         sys.exit(0)
 
     def log_handler(msg: str):

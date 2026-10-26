@@ -19,7 +19,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 
 class JuraDiagApp(Gtk.Window):

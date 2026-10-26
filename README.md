@@ -1,14 +1,14 @@
 # W.R.A.T. — WhiteRat Asynchronous Telemetry
 
-[![Version: 0.3.4](https://img.shields.io/badge/version-0.3.4-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
+[![Version: 0.4.1](https://img.shields.io/badge/version-0.4.1-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Alpha (v0.3.4)** — Active reverse-engineering and protocol integration.
-> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) is an extensible multi-manufacturer appliance telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines. Support for additional manufacturers is planned for future releases.
+> **Project Status: v0.4.1 (Jura Linux Edition)** — Active reverse-engineering and protocol integration.
+> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) is an extensible appliance telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines with dynamic model profiling, EEPROM baseline diffing, and optical sensor interrogation.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -160,9 +160,31 @@ sudo usermod -aG dialout $USER
 ├── serial_io.py            # Native POSIX termios serial driver & port discovery
 ├── profiles_db.py          # Machine profile resolver & database lookup engine
 ├── profiles_data.json      # Database of 170+ Jura machine profiles & memory maps
+├── contrib/                # Community tools & specification dumper
+│   └── dump_machine_spec.py # Automated EEPROM dump & model spec generator
+├── docs/                   # Reverse-engineering protocol & memory documentation
+│   ├── JURA_MEMORY_MAP.md  # Universal EEPROM & telemetry register map
+│   └── models/             # Verified model-specific hardware specifications
+│       ├── README.md       # Model index & contribution template
+│       ├── EF518_IMPRESSA_XJ5.json # Structured machine specification
+│       └── EF518_IMPRESSA_XJ5.md   # IMPRESSA XJ5 hardware & memory profile
+├── DEPENDENCIES.md         # Runtime requirements & serial driver reference
 ├── LICENSE                 # MIT License
 └── README.md               # Documentation & hardware guide
 ```
+
+---
+
+## 📚 Protocol & Memory Documentation
+
+Detailed, verified technical specifications are maintained in the [`docs/`](docs/) directory for researchers and open-source contributors:
+
+* **[Universal Memory & Telemetry Map (`docs/JURA_MEMORY_MAP.md`)](docs/JURA_MEMORY_MAP.md)**: Master cross-platform reference documenting platform invariants (`[UNIVERSAL]`), generation variants (`[FAMILY-SHARED]`), and model-specific markers across 55+ Jura families.
+* **[Model-Specific Specifications (`docs/models/`)](docs/models/)**: Directory of detailed hardware profiles, optical sensor calibrations (`AS:`), external commercial plumbing registers, and custom recipe matrices:
+  * **[IMPRESSA XJ5 Professional GII (`docs/models/EF518_IMPRESSA_XJ5.md`)](docs/models/EF518_IMPRESSA_XJ5.md)** (`EF518M` / `EF518D` / Art. `13705`).
+  * See [`docs/models/README.md`](docs/models/README.md) for contribution guidelines and templates to document additional Jura models.
+* **[Community Auto-Dumper Tool (`contrib/dump_machine_spec.py`)](contrib/dump_machine_spec.py)**: Automated utility to dump EEPROM memory, interrogate gateways, and generate ready-to-commit specification `.json` and `.md` files.
+* **[Software & Hardware Dependencies (`DEPENDENCIES.md`)](DEPENDENCIES.md)**: Comprehensive breakdown of runtime requirements, Python versions, serial drivers, and hardware adapters across all editions.
 
 ---
 
