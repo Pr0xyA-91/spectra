@@ -1,5 +1,5 @@
 # SPECTRA — Comprehensive Context & Session Notes for Agy
-**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.1)
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.2)
 
 > **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/spectra_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/spectra.git`).
 
@@ -11,9 +11,9 @@ When cloning or resuming work on a new machine, the private repository `spectra_
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.4.2` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.2_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.2.2` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
@@ -254,3 +254,16 @@ conn.close()
      - Added Pango ellipsizing to `port_combo` to prevent simulation entries from stretching the header.
      - Added `:active` and `:disabled` CSS states to `button.primary-btn`.
   4. Mirrored across all 3 editions (`spectra`, `spectra-mm`, `spectra-win`) and verified with all 46 unit tests passing.
+
+---
+
+## 8. Performance Optimization, Security Hardening & v0.4.2 Release (Session 2026-10-26)
+* **Performance Enhancements**:
+  - In-memory profile resolution and model specification caching (`_PROFILE_LOOKUP_CACHE`, `_MODEL_SPEC_LOOKUP_CACHE`) in `profiles_db.py` reducing live auto-polling query resolution to O(1).
+  - Optimized `query_ascii` frame reassembly in `serial_io.py` by removing redundant loop sleeping, relying on kernel `select.select()` yielding.
+* **Security & Resource Management**:
+  - Implemented `__enter__` and `__exit__` context managers on `JuraSerialConnection` and `JuraStatsSession` for deterministic serial port cleanup.
+  - Injected defense-in-depth HTTP security headers (`nosniff`, `DENY`, `no-referrer`, `CSP`) in `gui_web.py`.
+  - Added strict input validation for serial port parameters (`is_valid_port()`) in Web API.
+  - Resolved GTK export dialog `import re` NameError and permitted `blob: data:` in Web CSP for reliable report saving.
+  - Bumped version to `v0.4.2` (`spectra`), `v0.4.2_mm` (`spectra-mm`), and `v0.2.2` (`spectra-win`).
