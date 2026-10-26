@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Base Appliance Driver & Data Contract
-Universal Appliance Telemetry & Diagnostics Engine
+SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics
+Base Appliance Driver & Data Contract
 """
 
 from abc import ABC, abstractmethod

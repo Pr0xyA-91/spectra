@@ -378,7 +378,6 @@ class JuraSerialConnection:
                         # Give machine UART 40ms to settle before next command
                         time.sleep(0.04)
                         return replies[0]
-            time.sleep(0.01)
 
         return None
 
@@ -397,6 +396,12 @@ class JuraSerialConnection:
                 pass
             self.py_serial = None
         self.is_open = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 # Universal Alias for multi-vendor abstraction

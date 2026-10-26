@@ -549,7 +549,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const blob = new Blob([content], { type: mime });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `wrat_export_${new Date().toISOString().slice(0,10)}.${ext}`;
+      a.download = `spectra_export_${new Date().toISOString().slice(0,10)}.${ext}`;
       a.click();
     }
 
@@ -567,10 +567,34 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 """
 
 
-class WRATWebHandler(BaseHTTPRequestHandler):
+def is_valid_port(port: str) -> bool:
+    """Validate port descriptor to prevent shell escapes, arbitrary device opening, or path traversal."""
+    if not port or not isinstance(port, str):
+        return False
+    p = port.strip()
+    if not p or len(p) > 256:
+        return False
+    # Safe patterns: /dev/tty*, /dev/pts/*, COM1..COM256, DEMO / SIMULATION, or mock
+    if p.startswith("/dev/tty") or p.startswith("/dev/pts/"):
+        return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00"])
+    if p.upper().startswith("COM"):
+        return True
+    if "DEMO" in p.upper() or p.lower() in ("mock", "demo"):
+        return True
+    return False
+
+
+class SpectraWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Silence routine HTTP access logging in terminal
         pass
+
+    def _send_security_headers(self):
+        """Inject defense-in-depth HTTP security headers."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self' 'unsafe-inline';")
 
     def do_GET(self):
         url = urlparse(self.path)
@@ -579,6 +603,7 @@ class WRATWebHandler(BaseHTTPRequestHandler):
         if url.path == "/" or url.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._send_security_headers()
             self.end_headers()
             html = HTML_TEMPLATE.replace("__VERSION__", __version__)
             self.wfile.write(html.encode("utf-8"))
@@ -588,9 +613,16 @@ class WRATWebHandler(BaseHTTPRequestHandler):
             self._send_json(ports)
 
         elif url.path == "/api/sensors":
-            port = params.get("port", [""])[0]
-            mfr = params.get("mfr", ["auto"])[0]
+            port = params.get("port", [""])[0].strip()
+            mfr = params.get("mfr", ["auto"])[0].strip()
             fast_poll = (params.get("fast", ["0"])[0] == "1")
+
+            if not port:
+                self._send_json({"error": "No serial port specified", "switches": [], "sensors": []})
+                return
+            if not is_valid_port(port):
+                self._send_json({"error": "Disallowed or invalid serial port format", "switches": [], "sensors": []})
+                return
 
             global _active_session, _current_port, _current_mfr
             with _poll_lock:
@@ -612,8 +644,15 @@ class WRATWebHandler(BaseHTTPRequestHandler):
             self._send_json(data)
 
         elif url.path == "/api/stats":
-            port = params.get("port", [""])[0]
-            mfr = params.get("mfr", ["auto"])[0]
+            port = params.get("port", [""])[0].strip()
+            mfr = params.get("mfr", ["auto"])[0].strip()
+
+            if not port:
+                self._send_json({"error": "No serial port specified"})
+                return
+            if not is_valid_port(port):
+                self._send_json({"error": "Disallowed or invalid serial port format"})
+                return
 
             with _poll_lock:
                 if _active_session is not None:
@@ -641,8 +680,12 @@ class WRATWebHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(payload)
+
+
+WRATWebHandler = SpectraWebHandler
 
 
 def find_free_port(start_port: int = 8080) -> int:

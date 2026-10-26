@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - WhiteRat Asynchronous Telemetry
+SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics
 Universal Multi-Manufacturer Appliance Engine
 Coordinates device probing, live sensor polling, and telemetry extraction.
 """
@@ -25,7 +25,7 @@ import serial_io
 
 class WRATSession:
     """
-    Unified telemetry interrogation and diagnostic session for W.R.A.T.
+    Unified telemetry interrogation and diagnostic session for SPECTRA.
     Supports auto-detection across Jura, Nivona, Lamanti-KL, and Lamanti-JN.
     """
 
@@ -181,7 +181,7 @@ def format_text_summary(summary: Dict[str, Any]) -> str:
     lines.append("=" * 78)
     vendor = summary.get("vendor", "Appliance")
     model = summary.get("machine_model", "Unknown")
-    lines.append(f"W.R.A.T. DIAGNOSTIC REPORT: {vendor} — {model}")
+    lines.append(f"SPECTRA DIAGNOSTIC REPORT: {vendor} — {model}")
     serial = summary.get("serial_number", "N/A")
     proto = summary.get("protocol_mode", "N/A")
     lines.append(f"Serial Number: {serial} | Protocol: {proto}")
@@ -232,3 +232,7 @@ def format_csv_summary(summary: Dict[str, Any]) -> str:
     for m in summary.get("maintenance", []):
         writer.writerow(["Maintenance", m.get("name") or m.get("label", "Maintenance"), m.get("count", 0)])
     return output.getvalue()
+
+
+# Universal Alias
+SpectraSession = WRATSession

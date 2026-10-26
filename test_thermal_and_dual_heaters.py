@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unit and integration tests for temperature decoding, operational thermal evaluation,
-and dual-heater thermoblock accommodation in W.R.A.T. (Jura Module).
+and dual-heater thermoblock accommodation in SPECTRA (Jura Module).
 """
 
 import sys

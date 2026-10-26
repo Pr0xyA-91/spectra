@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit and Integration Tests for W.R.A.T. Multi-Manufacturer Architecture
+Unit and Integration Tests for SPECTRA Multi-Manufacturer Architecture
 Validates Jura, Nivona, Lamanti-KL (Kalerm), and Lamanti-JN (Jetinno) drivers.
 """
 

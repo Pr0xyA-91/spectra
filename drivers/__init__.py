@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Appliance Driver Registry & Auto-Detection Engine
+SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics
+Appliance Driver Registry & Auto-Detection Engine
 """
 
 from typing import Dict, List, Type, Optional, Tuple, Any

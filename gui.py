@@ -1076,7 +1076,7 @@ class JuraDiagApp(Gtk.Window):
             return
 
         dialog = Gtk.FileChooserDialog(
-            title="Save W.R.A.T. Diagnostic Report",
+            title="Save SPECTRA Diagnostic Report",
             parent=self,
             action=Gtk.FileChooserAction.SAVE
         )
@@ -1101,8 +1101,9 @@ class JuraDiagApp(Gtk.Window):
         dialog.add_filter(filter_csv)
 
         summary = active_sess.get_structured_summary()
-        m_name = summary.get("machine_model", "appliance").replace(" ", "_").replace("/", "_")
-        default_name = f"wrat_diag_{m_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        raw_m_name = summary.get("machine_model", "appliance")
+        m_name = re.sub(r'[^\w\-_]', '_', str(raw_m_name))
+        default_name = f"spectra_diag_{m_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         dialog.set_current_name(default_name)
 
         resp = dialog.run()
@@ -1116,9 +1117,21 @@ class JuraDiagApp(Gtk.Window):
             else:
                 data = format_text_summary(summary)
 
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(data)
-            self.progress_bar.set_text(f"Report saved to {filename}")
+            try:
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(data)
+                self.progress_bar.set_text(f"Report saved to {filename}")
+            except Exception as e:
+                err_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    flags=0,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Failed to Save Report",
+                )
+                err_dialog.format_secondary_text(str(e))
+                err_dialog.run()
+                err_dialog.destroy()
 
         dialog.destroy()
 
@@ -1126,12 +1139,12 @@ class JuraDiagApp(Gtk.Window):
 def main():
     if not HAS_GTK:
         print("=" * 78)
-        print("  W.R.A.T. — WhiteRat Asynchronous Telemetry")
+        print("  SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics")
         print("=" * 78)
         print("[!] PyGObject (GTK 3) is not installed in this Python environment.")
         if GTK_IMPORT_ERROR:
             print(f"    Notice: {GTK_IMPORT_ERROR}")
-        print("[*] Automatically launching the native W.R.A.T. Web Dashboard...")
+        print("[*] Automatically launching the native SPECTRA Web Dashboard...")
         print("=" * 78)
         try:
             import gui_web
