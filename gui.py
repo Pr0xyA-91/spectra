@@ -123,6 +123,10 @@ class JuraDiagApp(Gtk.Window):
             font-size: 11px;
             color: #a6adc8;
         }
+        button {
+            border-radius: 6px;
+            min-height: 28px;
+        }
         button.primary-btn {
             background: linear-gradient(to bottom, #89b4fa, #74c7ec);
             color: #11111b;
@@ -130,9 +134,43 @@ class JuraDiagApp(Gtk.Window):
             border-radius: 6px;
             padding: 6px 16px;
             border: none;
+            min-height: 28px;
         }
         button.primary-btn:hover {
             background: #b4befe;
+        }
+        button.primary-btn:active {
+            background: #74c7ec;
+        }
+        button.primary-btn:disabled {
+            background: #313244;
+            color: #585b70;
+            border: 1px solid #45475a;
+        }
+        button.toggle-btn {
+            background-color: #24273a;
+            background-image: none;
+            color: #cdd6f4;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: 1px solid #45475a;
+            min-height: 28px;
+            font-weight: 500;
+        }
+        button.toggle-btn:hover {
+            background-color: #313244;
+            border-color: #585b70;
+        }
+        button.toggle-btn:checked {
+            background-color: #a6e3a1;
+            background-image: linear-gradient(to bottom, #a6e3a1, #94e2d5);
+            color: #11111b;
+            font-weight: bold;
+            border: 1px solid #a6e3a1;
+        }
+        button.toggle-btn:checked:hover {
+            background-color: #b4befe;
+            background-image: none;
         }
         progressbar progress {
             background-color: #a6e3a1;
@@ -183,15 +221,22 @@ class JuraDiagApp(Gtk.Window):
 
         # Port Selector Label
         lbl_port = Gtk.Label(label="Serial Port:")
+        lbl_port.set_valign(Gtk.Align.CENTER)
         header_box.pack_start(lbl_port, False, False, 0)
 
         # Port ComboBox
         self.port_combo = Gtk.ComboBoxText()
-        self.port_combo.set_size_request(260, -1)
+        self.port_combo.set_size_request(240, -1)
+        self.port_combo.set_valign(Gtk.Align.CENTER)
+        for cell in self.port_combo.get_cells():
+            cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+            cell.set_property("width-chars", 16)
+            cell.set_property("max-width-chars", 24)
         header_box.pack_start(self.port_combo, False, False, 0)
 
         # Refresh Ports Button
         btn_refresh = Gtk.Button(label="🔄 Refresh")
+        btn_refresh.set_valign(Gtk.Align.CENTER)
         btn_refresh.connect("clicked", lambda w: self._refresh_ports())
         header_box.pack_start(btn_refresh, False, False, 0)
 
@@ -202,11 +247,13 @@ class JuraDiagApp(Gtk.Window):
         # Read Statistics Button
         self.btn_read = Gtk.Button(label="⚡ Read Statistics")
         self.btn_read.get_style_context().add_class("primary-btn")
+        self.btn_read.set_valign(Gtk.Align.CENTER)
         self.btn_read.connect("clicked", lambda w: self._on_read_clicked())
         header_box.pack_start(self.btn_read, False, False, 0)
 
         # Export Report Button
         self.btn_export = Gtk.Button(label="💾 Export Report")
+        self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
         header_box.pack_start(self.btn_export, False, False, 0)
 
@@ -314,26 +361,33 @@ class JuraDiagApp(Gtk.Window):
         ctrl_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self.btn_refresh_sensors = Gtk.Button(label="🔄 Refresh Live Sensors")
         self.btn_refresh_sensors.get_style_context().add_class("primary-btn")
+        self.btn_refresh_sensors.set_valign(Gtk.Align.CENTER)
         self.btn_refresh_sensors.connect("clicked", self._on_refresh_sensors_clicked)
         ctrl_bar.pack_start(self.btn_refresh_sensors, False, False, 0)
 
         self.spinner_sensors = Gtk.Spinner()
+        self.spinner_sensors.set_valign(Gtk.Align.CENTER)
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
         # Continuous Live Polling Toggle
-        self.chk_auto_poll = Gtk.CheckButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll = Gtk.ToggleButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll.get_style_context().add_class("toggle-btn")
+        self.chk_auto_poll.set_valign(Gtk.Align.CENTER)
         self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
-        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 4)
+        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 0)
 
         self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
+        self.lbl_sensors_status.set_valign(Gtk.Align.CENTER)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
         main_box.pack_start(ctrl_bar, False, False, 4)
 
-        # Live Status Summary Badges
-        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        badges_box.set_homogeneous(True)
+        # Live Status Summary Badges Grid (2-row responsive layout)
+        badges_grid = Gtk.Grid()
+        badges_grid.set_column_homogeneous(True)
+        badges_grid.set_row_spacing(6)
+        badges_grid.set_column_spacing(6)
 
         def make_sensor_card(title: str, default_val: str, default_sub: str = ""):
             c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -365,17 +419,20 @@ class JuraDiagApp(Gtk.Window):
         card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
         card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
-        badges_box.pack_start(card_tank, True, True, 0)
-        badges_box.pack_start(card_tray, True, True, 0)
-        badges_box.pack_start(card_beans, True, True, 0)
-        badges_box.pack_start(card_state, True, True, 0)
-        badges_box.pack_start(card_bu, True, True, 0)
-        badges_box.pack_start(card_coffee, True, True, 0)
-        badges_box.pack_start(card_steam, True, True, 0)
-        badges_box.pack_start(card_flow, True, True, 0)
-        badges_box.pack_start(card_filter, True, True, 0)
+        # Row 0: Operational state & core mechanical sensors (5 columns)
+        badges_grid.attach(card_state, 0, 0, 1, 1)
+        badges_grid.attach(card_bu, 1, 0, 1, 1)
+        badges_grid.attach(card_tank, 2, 0, 1, 1)
+        badges_grid.attach(card_tray, 3, 0, 1, 1)
+        badges_grid.attach(card_beans, 4, 0, 1, 1)
 
-        main_box.pack_start(badges_box, False, False, 4)
+        # Row 1: Thermal & fluidics telemetry (4 columns, filter spans 2 columns)
+        badges_grid.attach(card_coffee, 0, 1, 1, 1)
+        badges_grid.attach(card_steam, 1, 1, 1, 1)
+        badges_grid.attach(card_flow, 2, 1, 1, 1)
+        badges_grid.attach(card_filter, 3, 1, 2, 1)
+
+        main_box.pack_start(badges_grid, False, False, 4)
 
         # Paned view for Diagnostics and Counters
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
