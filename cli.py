@@ -140,14 +140,24 @@ def main():
                 raw_pos = telem.get("bu_encoder_pos", 0)
                 raw_ref = telem.get("bu_encoder_upper", 0)
                 print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} (0x{raw_pos:04X} / 0x{raw_ref:04X})")
+            if "bu_mill_target" in telem:
+                print(f"  🎯 Brew Unit Mill Target (RE:0041) : {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
+            if "bu_init_count" in telem:
+                print(f"  🔄 Brew Unit Init Counter (RE:0056): {telem['bu_init_count']} cycles")
 
-            print("\n[SYSTEM SETTINGS & HYDRAULIC SENSORS]")
+            print("\n[SYSTEM SETTINGS, SUBSYSTEMS & HYDRAULIC SENSORS]")
+            if "loader_version" in telem:
+                print(f"  * Main Board Bootloader (TL:)      : {telem['loader_version']}")
+            if "display_firmware" in telem:
+                print(f"  * Display / Sub-MCU Firmware (TY$:): {telem['display_firmware']}")
             if "water_hardness_dh" in telem:
                 print(f"  * Configured Water Hardness        : {telem['water_hardness_dh']} °dH")
             if "filter_volume_liters" in telem:
                 print(f"  * Water Volume Through Filter      : {telem['filter_volume_liters']} Liters")
             if "rotary_switch" in telem:
                 print(f"  * Selection / Rotary Switch Position: {telem['rotary_switch']}")
+            if "button_matrix" in telem:
+                print(f"  * Front Panel Key Matrix / Aux Bits: 0x{telem['button_matrix']} / {telem.get('aux_inputs', '00')}")
 
         print("=" * 78 + "\n")
 
