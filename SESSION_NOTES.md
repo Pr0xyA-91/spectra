@@ -1,17 +1,43 @@
-# W.R.A.T. & Jura Modern Diag — Comprehensive Context & Session Notes
-**Generated**: October 23, 2026 | **Current Status**: Production / Verified Working
+# W.R.A.T. & wrat-sniffer — Comprehensive Context & Session Notes for Agy
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working
+
+> **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/wrat-sniffer.git`).
 
 ---
 
-## 1. Quick Resume Guide
-To resume development or testing in a new agent session or terminal:
+## 1. Multi-Device Onboarding & Setup for Agy
 
+When cloning or resuming work on a new machine, the private repository `wrat-sniffer_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
+
+| Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
+| :--- | :--- | :--- | :--- | :--- |
+| `~/Projects/wrat-sniffer` | `main` | `v0.3.4` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
+| `~/Projects/WRAT` | `multi-manufacturer` | `v0.3.4_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/WRAT_win` | `windows` | `v0.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+
+### Cloning on a New Device
 ```bash
-# 1. Run unit test suite (7/7 tests must pass):
-cd "/home/a91/Projects/Jura Modern Diag"
-python3 -m unittest test_thermal_and_dual_heaters.py
+mkdir -p ~/Projects && cd ~/Projects
 
-# 2. Run live telemetry diagnostic against connected physical machine:
+# 1. Main Linux Jura-only edition:
+git clone -b main https://github.com/Pr0xyA-91/wrat-sniffer_dev.git wrat-sniffer
+
+# 2. Linux Multi-Manufacturer edition:
+git clone -b multi-manufacturer https://github.com/Pr0xyA-91/wrat-sniffer_dev.git WRAT
+
+# 3. Windows Cross-Platform edition:
+git clone -b windows https://github.com/Pr0xyA-91/wrat-sniffer_dev.git WRAT_win
+```
+
+### Quick Verification Commands
+```bash
+# Run unit tests in wrat-sniffer (8/8 tests must pass):
+cd ~/Projects/wrat-sniffer && python3 -m unittest discover -s .
+
+# Run unit tests in WRAT / WRAT_win (16/16 tests must pass):
+cd ~/Projects/WRAT && python3 -m unittest discover -s .
+
+# Run live telemetry diagnostic against connected physical Jura machine:
 python3 -c '
 import serial_io, stats_collector
 conn = serial_io.JuraSerialConnection("/dev/ttyUSB0")
@@ -21,11 +47,6 @@ for sw in res["switches"]:
 print("Hardness:", res["telemetry"].get("water_hardness_dh"), "°dH | Temp:", res["telemetry"].get("heater_coffee_str"))
 conn.close()
 '
-
-# 3. Launch GTK3 GUI diagnostic application:
-./run.sh
-# or:
-python3 gui.py
 ```
 
 ---
@@ -44,31 +65,32 @@ python3 gui.py
 
 ---
 
-## 3. Project Architecture & Repositories
+## 3. Project Architecture & Codebase Map
 
-### A. Jura Modern Diag (`/home/a91/Projects/Jura Modern Diag`)
-* **Branch**: `main` | **Version**: `v0.3.4`
-* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`
-* **Public Remote (`public`)**: `https://github.com/Pr0xyA-91/wrat-sniffer.git`
-* **Release Synchronization**:
-  ```bash
-  ./publish_release.sh main "release: Sync v0.3.4 release to public distribution"
-  ```
-  - Automatically checks out `public-main`, syncs from `main`, strictly purges `GEMINI.md`, sanitizes `.desktop` launchers to portable invocation (`bash -c '"$(dirname "%k")"/run.sh'`), and pushes to `public:main`.
+### A. `wrat-sniffer` (`~/Projects/wrat-sniffer` — `main` branch, `v0.3.4`)
+* **Files**:
+  - `serial_io.py`: 4-byte UART bit-banging encoder/decoder (`8ms` inter-bit, `16ms` inter-char pacing), optical loopback echo stripping, Smart Connect `@`-protocol cipher, and mock devices (`DEMO:S8`, `DEMO:E8`, `DEMO:Z10`, `DEMO:S8_SC`).
+  - `jura_protocol.py`: EEPROM layout decoder, 16-bit/32-bit word extraction, alert bitmasks.
+  - `profiles_db.py` & `profiles_data.json`: Database of 170+ Jura machine profiles (`EF518M`, `S8`, `E8`, `Z10`, `GIGA`, etc.).
+  - `stats_collector.py`: High-level interrogation, `RT:`/`RE:` counter mapping, `HZ:`/`CS:`/`IC:` live telemetry parser, text/CSV report formatting.
+  - `gui.py`: GTK3 dark-themed desktop application.
+  - `cli.py`: Interactive/non-interactive CLI tool with `--export-txt`, `--export-csv`, `--export-json`.
+  - `publish_release.sh`: Synchronizes `main` $\rightarrow$ `public-main`, strips `GEMINI.md` and `SESSION_NOTES.md`, scrubs `/home/<user>` paths from `.desktop` files, and pushes `public-main:main` to `public`.
 
-### B. W.R.A.T. Multi-Manufacturer Suite (`/home/a91/Projects/WRAT`)
-* **Branch**: `multi-manufacturer` | **Version**: `v0.3.4_mm`
-* **Private Remote (`origin`)**: `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`
-* **Supported Brands**:
-  - `jura`: Native TOP-tronic ASCII + Smart Connect `@`-protocol.
-  - `nivona`: ASCII/NICR gateway protocol.
-  - `lamanti-kl`: Kalerm commercial protocol (`0xAA/0x55` framing).
-  - `lamanti-jn`: Jetinno Vending MDB/CC2 protocol (`0x02` STX framing).
-* **Test Suite (16/16 tests pass)**:
-  ```bash
-  cd "/home/a91/Projects/WRAT"
-  python3 -m unittest discover -s .
-  ```
+### B. `WRAT` (`~/Projects/WRAT` — `multi-manufacturer` branch, `v0.3.4_mm`)
+* Adds multi-vendor architecture on top of the core telemetry engine:
+  - `wrat_engine.py`: Unified `WRATSession` dispatcher and report formatter (`format_text_summary`, `format_csv_summary`).
+  - `drivers/base_driver.py`: Abstract driver interface & normalized diagnostic schema.
+  - `drivers/jura_driver.py`: Wraps Jura ASCII & Smart Connect `@`-protocol.
+  - `drivers/nivona_driver.py`: Eugster/Frismag ASCII/NICR protocol (`DEMO:NICR768`).
+  - `drivers/kalerm_driver.py`: Lamanti-KL / Kalerm commercial `0xAA`/`0x55` framed binary protocol (`DEMO:X680C`).
+  - `drivers/jetinno_driver.py`: Lamanti-JN / Jetinno Vending MDB/CC2 `0x02` STX framed protocol (`DEMO:JL300`).
+  - `gui_web.py`: Zero-dependency responsive dark-mode HTTP Web Dashboard (`./run.sh --web`, `http://127.0.0.1:8080`) with live polling, brand filter, and `.txt`/`.csv`/`.json` report export.
+
+### C. `WRAT_win` (`~/Projects/WRAT_win` — `windows` branch, `v0.1`)
+* Cross-platform Windows adaptation of `WRAT`:
+  - Windows `COM*` port auto-discovery via `serial.tools.list_ports.comports()` without POSIX `termios` dependencies.
+  - Windows batch launchers: `install_windows.bat`, `run.bat` (auto-detects GTK3 or falls back to Web UI), `run_web.bat`, `run_cli.bat`, `run_demo.bat`.
 
 ---
 
@@ -105,7 +127,7 @@ python3 gui.py
 ---
 
 ## 5. Security & Privacy Guardrails
-1. `GEMINI.md` contains internal project guidelines and must **NEVER** be pushed to public repositories.
-2. The pre-push hook (`.git/hooks/pre-push`) automatically blocks pushes to `public` if `GEMINI.md` is present in any outgoing commit.
-3. Public release tags must always point to commits on the sanitized `public-main` branch.
-4. Launcher `.desktop` files must never contain hardcoded `/home/<user>/` paths in public distributions.
+1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`wrat-sniffer.git`).
+2. Only `wrat-sniffer` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `wrat-sniffer.git` repository. `WRAT` (`multi-manufacturer`) and `WRAT_win` (`windows`) are strictly private.
+3. On any new device where `wrat-sniffer` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
+4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.3.4.tar.gz`, `WRAT-v0.3.4_mm.tar.gz`, `WRAT_win-v0.1.tar.gz`).
