@@ -34,8 +34,9 @@ git clone -b windows https://github.com/Pr0xyA-91/spectra_dev.git spectra-win
 # Run unit tests in spectra (10/10 tests must pass):
 cd ~/Projects/spectra && python3 -m unittest discover -s .
 
-# Run unit tests in WRAT / WRAT_win (16/16 tests must pass):
-cd ~/Projects/WRAT && python3 -m unittest discover -s .
+# Run unit tests in spectra-mm / spectra-win (18/18 tests must pass):
+cd ~/Projects/spectra-mm && python3 -m unittest discover -s .
+cd ~/Projects/spectra-win && python3 -m unittest discover -s .
 
 # Run live telemetry diagnostic against connected physical Jura machine:
 python3 -c '
@@ -67,7 +68,7 @@ conn.close()
 
 ## 3. Project Architecture & Codebase Map
 
-### A. `wrat-sniffer` (`~/Projects/wrat-sniffer` — `main` branch, `v0.3.4`)
+### A. `spectra` (`~/Projects/spectra` — `main` branch, `v0.4.2`)
 * **Files**:
   - `serial_io.py`: 4-byte UART bit-banging encoder/decoder (`8ms` inter-bit, `16ms` inter-char pacing), optical loopback echo stripping, Smart Connect `@`-protocol cipher, and mock devices (`DEMO:S8`, `DEMO:E8`, `DEMO:Z10`, `DEMO:S8_SC`).
   - `jura_protocol.py`: EEPROM layout decoder, 16-bit/32-bit word extraction, alert bitmasks.
@@ -79,18 +80,18 @@ conn.close()
   - `docs/models/`: Dedicated model-specific specifications directory (`README.md` template/index, `EF518_IMPRESSA_XJ5.md`).
   - `publish_release.sh`: Synchronizes `main` $\rightarrow$ `public-main`, strips `GEMINI.md` and `SESSION_NOTES.md`, scrubs `/home/<user>` paths from `.desktop` files, and pushes `public-main:main` to `public`.
 
-### B. `WRAT` (`~/Projects/WRAT` — `multi-manufacturer` branch, `v0.3.4_mm`)
+### B. `spectra-mm` (`~/Projects/spectra-mm` — `multi-manufacturer` branch, `v0.4.2_mm`)
 * Adds multi-vendor architecture on top of the core telemetry engine:
-  - `wrat_engine.py`: Unified `WRATSession` dispatcher and report formatter (`format_text_summary`, `format_csv_summary`).
-  - `drivers/base_driver.py`: Abstract driver interface & normalized diagnostic schema.
-  - `drivers/jura_driver.py`: Wraps Jura ASCII & Smart Connect `@`-protocol.
-  - `drivers/nivona_driver.py`: Eugster/Frismag ASCII/NICR protocol (`DEMO:NICR768`).
-  - `drivers/kalerm_driver.py`: Lamanti-KL / Kalerm commercial `0xAA`/`0x55` framed binary protocol (`DEMO:X680C`).
-  - `drivers/jetinno_driver.py`: Lamanti-JN / Jetinno Vending MDB/CC2 `0x02` STX framed protocol (`DEMO:JL300`).
+  - `spectra_engine.py`: Unified `SpectraSession` dispatcher and report formatter (`format_text_summary`, `format_csv_summary`). Includes `wrat_engine.py` compatibility shim.
+  - `drivers/base.py`: Abstract driver interface & normalized diagnostic schema.
+  - `drivers/jura/`: Wraps Jura ASCII & Smart Connect `@`-protocol.
+  - `drivers/nivona/`: Eugster/Frismag ASCII/NICR protocol (`DEMO:NICR768`).
+  - `drivers/lamanti_kl/`: Lamanti-KL / Kalerm commercial `0xAA`/`0x55` framed binary protocol (`DEMO:X680C`).
+  - `drivers/lamanti_jn/`: Lamanti-JN / Jetinno Vending MDB/CC2 `0x02` STX framed protocol (`DEMO:JL300`).
   - `gui_web.py`: Zero-dependency responsive dark-mode HTTP Web Dashboard (`./run.sh --web`, `http://127.0.0.1:8080`) with live polling, brand filter, and `.txt`/`.csv`/`.json` report export.
 
-### C. `WRAT_win` (`~/Projects/WRAT_win` — `windows` branch, `v0.1`)
-* Cross-platform Windows adaptation of `WRAT`:
+### C. `spectra-win` (`~/Projects/spectra-win` — `windows` branch, `v0.2.2`)
+* Cross-platform Windows adaptation of `spectra-mm`:
   - Windows `COM*` port auto-discovery via `serial.tools.list_ports.comports()` without POSIX `termios` dependencies.
   - Windows batch launchers: `install_windows.bat`, `run.bat` (auto-detects GTK3 or falls back to Web UI), `run_web.bat`, `run_cli.bat`, `run_demo.bat`.
 
