@@ -26,8 +26,28 @@ __version__ = "0.4.2"
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
         super().__init__(title=f"SPECTRA — Hardware Telemetry & Diagnostics (v{__version__})")
-        self.set_default_size(1020, 700)
+
+        # Dynamic monitor-aware initial sizing
+        display = Gdk.Display.get_default()
+        mon = display.get_primary_monitor() if display else None
+        if display and not mon and display.get_n_monitors() > 0:
+            mon = display.get_monitor(0)
+
+        if mon:
+            workarea = mon.get_workarea()
+            default_w = max(760, min(1040, int(workarea.width * 0.85)))
+            default_h = max(500, min(700, int(workarea.height * 0.85)))
+        else:
+            default_w, default_h = 980, 660
+
+        self.set_default_size(default_w, default_h)
+        self.set_size_request(640, 440)
         self.set_position(Gtk.WindowPosition.CENTER)
+
+        # Responsive layout tracking state
+        self._header_compact = None
+        self._kpi_compact = None
+        self._sensor_compact = None
 
         # Apply dark modern CSS styling
         self._apply_styling()
@@ -61,6 +81,7 @@ class JuraDiagApp(Gtk.Window):
         # Main Notebook (Tabs)
         self.notebook = Gtk.Notebook()
         self.notebook.set_tab_pos(Gtk.PositionType.TOP)
+        self.notebook.set_scrollable(True)
         main_box.pack_start(self.notebook, True, True, 4)
 
         # Tab 1: Beverage Counters
@@ -86,6 +107,9 @@ class JuraDiagApp(Gtk.Window):
         # Tab 5: Protocol Log
         self.log_tab = self._create_log_tab()
         self.notebook.append_page(self.log_tab, Gtk.Label(label="📜 Communication Console"))
+
+        # Connect top-level window size allocation for responsive reflow
+        self.connect("size-allocate", self._on_window_size_allocate)
 
         # Refresh initial ports
         self._refresh_ports()
@@ -205,78 +229,114 @@ class JuraDiagApp(Gtk.Window):
             )
 
     def _create_header_bar(self) -> Gtk.Widget:
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        header_box.get_style_context().add_class("header-panel")
+        self.header_grid = Gtk.Grid()
+        self.header_grid.get_style_context().add_class("header-panel")
+        self.header_grid.set_column_spacing(8)
+        self.header_grid.set_row_spacing(6)
 
         # Title & Icon
-        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
         app_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
-        app_title.set_alignment(0, 0.5)
-        sub_title = Gtk.Label(label="Universal Hardware Telemetry & Logic Board Diagnostics")
-        sub_title.get_style_context().add_class("card-label")
-        sub_title.set_alignment(0, 0.5)
-        title_box.pack_start(app_title, False, False, 0)
-        title_box.pack_start(sub_title, False, False, 0)
-        header_box.pack_start(title_box, False, False, 10)
+        app_title.set_xalign(0.0)
+        app_title.set_yalign(0.5)
+        self.sub_title = Gtk.Label(label="Universal Hardware Telemetry & Logic Board Diagnostics")
+        self.sub_title.get_style_context().add_class("card-label")
+        self.sub_title.set_xalign(0.0)
+        self.sub_title.set_yalign(0.5)
+        self.sub_title.set_ellipsize(Pango.EllipsizeMode.END)
+        self.sub_title.set_no_show_all(True)
+        self.title_box.pack_start(app_title, False, False, 0)
+        self.title_box.pack_start(self.sub_title, False, False, 0)
 
-        # Port Selector Label
-        lbl_port = Gtk.Label(label="Serial Port:")
-        lbl_port.set_valign(Gtk.Align.CENTER)
-        header_box.pack_start(lbl_port, False, False, 0)
+        # Port Selector Label & ComboBox
+        self.lbl_port = Gtk.Label(label="Port:")
+        self.lbl_port.set_valign(Gtk.Align.CENTER)
 
-        # Port ComboBox
         self.port_combo = Gtk.ComboBoxText()
-        self.port_combo.set_size_request(240, -1)
+        self.port_combo.set_size_request(140, -1)
         self.port_combo.set_valign(Gtk.Align.CENTER)
         for cell in self.port_combo.get_cells():
             cell.set_property("ellipsize", Pango.EllipsizeMode.END)
-            cell.set_property("width-chars", 16)
-            cell.set_property("max-width-chars", 24)
-        header_box.pack_start(self.port_combo, False, False, 0)
+            cell.set_property("width-chars", 14)
+            cell.set_property("max-width-chars", 22)
 
         # Refresh Ports Button
-        btn_refresh = Gtk.Button(label="🔄 Refresh")
-        btn_refresh.set_valign(Gtk.Align.CENTER)
-        btn_refresh.connect("clicked", lambda w: self._refresh_ports())
-        header_box.pack_start(btn_refresh, False, False, 0)
+        self.btn_refresh = Gtk.Button(label="🔄 Refresh")
+        self.btn_refresh.set_valign(Gtk.Align.CENTER)
+        self.btn_refresh.connect("clicked", lambda w: self._refresh_ports())
 
         # Spacer
-        spacer = Gtk.Box()
-        header_box.pack_start(spacer, True, True, 0)
+        self.header_spacer = Gtk.Box()
+        self.header_spacer.set_hexpand(True)
 
         # Read Statistics Button
         self.btn_read = Gtk.Button(label="⚡ Read Statistics")
         self.btn_read.get_style_context().add_class("primary-btn")
         self.btn_read.set_valign(Gtk.Align.CENTER)
         self.btn_read.connect("clicked", lambda w: self._on_read_clicked())
-        header_box.pack_start(self.btn_read, False, False, 0)
 
         # Export Report Button
         self.btn_export = Gtk.Button(label="💾 Export Report")
         self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
-        header_box.pack_start(self.btn_export, False, False, 0)
 
-        return header_box
+        self._update_header_layout(False)
+        return self.header_grid
+
+    def _update_header_layout(self, is_compact: bool):
+        if self._header_compact == is_compact:
+            return
+        self._header_compact = is_compact
+
+        for w in [self.title_box, self.lbl_port, self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read, self.btn_export]:
+            if w.get_parent():
+                self.header_grid.remove(w)
+
+        if not is_compact:
+            # Standard single-row desktop layout
+            self.header_grid.attach(self.title_box, 0, 0, 1, 1)
+            self.header_grid.attach(self.lbl_port, 1, 0, 1, 1)
+            self.header_grid.attach(self.port_combo, 2, 0, 1, 1)
+            self.header_grid.attach(self.btn_refresh, 3, 0, 1, 1)
+            self.header_grid.attach(self.header_spacer, 4, 0, 1, 1)
+            self.header_grid.attach(self.btn_read, 5, 0, 1, 1)
+            self.header_grid.attach(self.btn_export, 6, 0, 1, 1)
+            self.sub_title.set_visible(True)
+        else:
+            # Compact 2-row layout: Row 0 has Title + Actions, Row 1 has Port + Refresh
+            self.header_grid.attach(self.title_box, 0, 0, 1, 1)
+            self.header_grid.attach(self.header_spacer, 1, 0, 1, 1)
+            self.header_grid.attach(self.btn_read, 2, 0, 1, 1)
+            self.header_grid.attach(self.btn_export, 3, 0, 1, 1)
+
+            # Row 1 connection controls
+            self.header_grid.attach(self.lbl_port, 0, 1, 1, 1)
+            self.header_grid.attach(self.port_combo, 1, 1, 1, 1)
+            self.header_grid.attach(self.btn_refresh, 2, 1, 1, 1)
+            self.sub_title.set_visible(False)
+
+        self.header_grid.show_all()
 
     def _create_kpi_cards(self) -> Gtk.Widget:
-        grid = Gtk.Grid()
-        grid.set_column_homogeneous(True)
-        grid.set_row_spacing(6)
-        grid.set_column_spacing(10)
-        grid.set_margin_start(10)
-        grid.set_margin_end(10)
+        self.kpi_grid = Gtk.Grid()
+        self.kpi_grid.set_column_homogeneous(True)
+        self.kpi_grid.set_row_spacing(6)
+        self.kpi_grid.set_column_spacing(10)
+        self.kpi_grid.set_margin_start(10)
+        self.kpi_grid.set_margin_end(10)
 
         def make_card(label_text, default_val):
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             card.get_style_context().add_class("card")
             val_lbl = Gtk.Label(label=default_val)
             val_lbl.get_style_context().add_class("card-value")
-            val_lbl.set_alignment(0, 0.5)
+            val_lbl.set_xalign(0.0)
+            val_lbl.set_yalign(0.5)
             lbl = Gtk.Label(label=label_text)
             lbl.get_style_context().add_class("card-label")
-            lbl.set_alignment(0, 0.5)
+            lbl.set_xalign(0.0)
+            lbl.set_yalign(0.5)
             card.pack_start(val_lbl, False, False, 0)
             card.pack_start(lbl, False, False, 0)
             return card, val_lbl
@@ -286,12 +346,34 @@ class JuraDiagApp(Gtk.Window):
         self.kpi_clean_card, self.lbl_kpi_clean = make_card("Cleanings Performed", "---")
         self.kpi_decalc_card, self.lbl_kpi_decalc = make_card("Descalings Performed", "---")
 
-        grid.attach(self.kpi_model_card, 0, 0, 1, 1)
-        grid.attach(self.kpi_total_card, 1, 0, 1, 1)
-        grid.attach(self.kpi_clean_card, 2, 0, 1, 1)
-        grid.attach(self.kpi_decalc_card, 3, 0, 1, 1)
+        self._kpi_cards_list = [self.kpi_model_card, self.kpi_total_card, self.kpi_clean_card, self.kpi_decalc_card]
 
-        return grid
+        self._update_kpi_layout(False)
+        return self.kpi_grid
+
+    def _update_kpi_layout(self, is_compact: bool):
+        if self._kpi_compact == is_compact:
+            return
+        self._kpi_compact = is_compact
+
+        for c in self._kpi_cards_list:
+            if c.get_parent():
+                self.kpi_grid.remove(c)
+
+        if not is_compact:
+            # 4 columns x 1 row
+            self.kpi_grid.attach(self.kpi_model_card, 0, 0, 1, 1)
+            self.kpi_grid.attach(self.kpi_total_card, 1, 0, 1, 1)
+            self.kpi_grid.attach(self.kpi_clean_card, 2, 0, 1, 1)
+            self.kpi_grid.attach(self.kpi_decalc_card, 3, 0, 1, 1)
+        else:
+            # 2 columns x 2 rows
+            self.kpi_grid.attach(self.kpi_model_card, 0, 0, 1, 1)
+            self.kpi_grid.attach(self.kpi_total_card, 1, 0, 1, 1)
+            self.kpi_grid.attach(self.kpi_clean_card, 0, 1, 1, 1)
+            self.kpi_grid.attach(self.kpi_decalc_card, 1, 1, 1, 1)
+
+        self.kpi_grid.show_all()
 
     def _create_beverages_tab(self) -> Gtk.Widget:
         scrolled = Gtk.ScrolledWindow()
@@ -304,26 +386,33 @@ class JuraDiagApp(Gtk.Window):
         # Columns
         col_name = Gtk.TreeViewColumn("Beverage Specialty", Gtk.CellRendererText(), text=1)
         col_name.set_sort_column_id(1)
-        col_name.set_min_width(260)
+        col_name.set_min_width(160)
+        col_name.set_resizable(True)
+        col_name.set_expand(True)
         self.bev_tree.append_column(col_name)
 
         col_count = Gtk.TreeViewColumn("Quantity Prepared", Gtk.CellRendererText(), text=2)
         col_count.set_sort_column_id(2)
-        col_count.set_min_width(150)
+        col_count.set_min_width(110)
+        col_count.set_resizable(True)
         self.bev_tree.append_column(col_count)
 
         col_share = Gtk.TreeViewColumn("Share of Total", Gtk.CellRendererText(), text=3)
         col_share.set_sort_column_id(3)
-        col_share.set_min_width(130)
+        col_share.set_min_width(90)
+        col_share.set_resizable(True)
         self.bev_tree.append_column(col_share)
 
         col_type = Gtk.TreeViewColumn("Category / Serving", Gtk.CellRendererText(), text=4)
         col_type.set_sort_column_id(4)
-        col_type.set_min_width(150)
+        col_type.set_min_width(110)
+        col_type.set_resizable(True)
         self.bev_tree.append_column(col_type)
 
         col_code = Gtk.TreeViewColumn("Product Code", Gtk.CellRendererText(), text=0)
         col_code.set_sort_column_id(0)
+        col_code.set_min_width(80)
+        col_code.set_resizable(True)
         self.bev_tree.append_column(col_code)
 
         scrolled.add(self.bev_tree)
@@ -338,25 +427,35 @@ class JuraDiagApp(Gtk.Window):
         self.maint_tree = Gtk.TreeView(model=self.maint_store)
 
         col_lbl = Gtk.TreeViewColumn("Maintenance Item / Cycle", Gtk.CellRendererText(), text=0)
-        col_lbl.set_min_width(240)
+        col_lbl.set_min_width(180)
+        col_lbl.set_resizable(True)
+        col_lbl.set_expand(True)
         self.maint_tree.append_column(col_lbl)
 
         col_cnt = Gtk.TreeViewColumn("Execution Count", Gtk.CellRendererText(), text=1)
-        col_cnt.set_min_width(140)
+        col_cnt.set_min_width(110)
+        col_cnt.set_resizable(True)
         self.maint_tree.append_column(col_cnt)
 
         # Progress bar cell renderer for remaining life
         cell_prog = Gtk.CellRendererProgress()
         col_prog = Gtk.TreeViewColumn("Cycle Life Progress", cell_prog, value=3, text=2)
-        col_prog.set_min_width(250)
+        col_prog.set_min_width(160)
+        col_prog.set_resizable(True)
+        col_prog.set_expand(True)
         self.maint_tree.append_column(col_prog)
 
         scrolled.add(self.maint_tree)
         return scrolled
 
     def _create_sensors_tab(self) -> Gtk.Widget:
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         main_box.set_border_width(8)
+        main_box.set_hexpand(True)
+        main_box.set_vexpand(True)
 
         # Control Bar
         ctrl_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -380,15 +479,16 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
         self.lbl_sensors_status.set_valign(Gtk.Align.CENTER)
+        self.lbl_sensors_status.set_ellipsize(Pango.EllipsizeMode.END)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
         main_box.pack_start(ctrl_bar, False, False, 4)
 
-        # Live Status Summary Badges Grid (2-row responsive layout)
-        badges_grid = Gtk.Grid()
-        badges_grid.set_column_homogeneous(True)
-        badges_grid.set_row_spacing(6)
-        badges_grid.set_column_spacing(6)
+        # Live Status Summary Badges Grid
+        self.sensor_badges_grid = Gtk.Grid()
+        self.sensor_badges_grid.set_column_homogeneous(True)
+        self.sensor_badges_grid.set_row_spacing(6)
+        self.sensor_badges_grid.set_column_spacing(6)
 
         def make_sensor_card(title: str, default_val: str, default_sub: str = ""):
             c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -404,40 +504,37 @@ class JuraDiagApp(Gtk.Window):
             title_lbl = Gtk.Label(label=title)
             title_lbl.get_style_context().add_class("card-label")
             title_lbl.set_xalign(0.5)
+            title_lbl.set_ellipsize(Pango.EllipsizeMode.END)
 
             c.pack_start(val_lbl, False, False, 1)
             c.pack_start(sub_lbl, False, False, 1)
             c.pack_start(title_lbl, False, False, 1)
             return c, val_lbl, sub_lbl
 
-        card_tank, self.lbl_live_tank, self.lbl_sub_tank = make_sensor_card("💧 Water Tank", "UNKNOWN", "Level Float")
-        card_tray, self.lbl_live_tray, self.lbl_sub_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN", "Microswitch")
-        card_beans, self.lbl_live_beans, self.lbl_sub_beans = make_sensor_card("🫘 Bean Hopper", "UNKNOWN", "Charge Sensor")
-        card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
-        card_bu, self.lbl_live_bu, self.lbl_sub_bu = make_sensor_card("⚙️ Brew Unit", "UNKNOWN", "Encoder Pos")
-        card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
-        card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
-        card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
-        card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
+        self.card_tank, self.lbl_live_tank, self.lbl_sub_tank = make_sensor_card("💧 Water Tank", "UNKNOWN", "Level Float")
+        self.card_tray, self.lbl_live_tray, self.lbl_sub_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN", "Microswitch")
+        self.card_beans, self.lbl_live_beans, self.lbl_sub_beans = make_sensor_card("🫘 Bean Hopper", "UNKNOWN", "Charge Sensor")
+        self.card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
+        self.card_bu, self.lbl_live_bu, self.lbl_sub_bu = make_sensor_card("⚙️ Brew Unit", "UNKNOWN", "Encoder Pos")
+        self.card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
+        self.card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
+        self.card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
+        self.card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
-        # Row 0: Operational state & core mechanical sensors (5 columns)
-        badges_grid.attach(card_state, 0, 0, 1, 1)
-        badges_grid.attach(card_bu, 1, 0, 1, 1)
-        badges_grid.attach(card_tank, 2, 0, 1, 1)
-        badges_grid.attach(card_tray, 3, 0, 1, 1)
-        badges_grid.attach(card_beans, 4, 0, 1, 1)
+        self._sensor_cards_list = [
+            self.card_state, self.card_bu, self.card_tank, self.card_tray, self.card_beans,
+            self.card_coffee, self.card_steam, self.card_flow, self.card_filter
+        ]
 
-        # Row 1: Thermal & fluidics telemetry (4 columns, filter spans 2 columns)
-        badges_grid.attach(card_coffee, 0, 1, 1, 1)
-        badges_grid.attach(card_steam, 1, 1, 1, 1)
-        badges_grid.attach(card_flow, 2, 1, 1, 1)
-        badges_grid.attach(card_filter, 3, 1, 2, 1)
-
-        main_box.pack_start(badges_grid, False, False, 4)
+        self._update_sensor_badges_layout(False)
+        main_box.pack_start(self.sensor_badges_grid, False, False, 4)
 
         # Paned view for Diagnostics and Counters
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(580)
+        self.sensors_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self.sensors_paned.set_size_request(-1, 260)
+        self.sensors_paned.set_vexpand(True)
+        self.sensors_paned.set_hexpand(True)
+        self.sensors_paned.connect("size-allocate", self._on_paned_size_allocate)
 
         # Left: Hardware Health & Safety Diagnostics
         left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -448,26 +545,31 @@ class JuraDiagApp(Gtk.Window):
 
         scrolled_left = Gtk.ScrolledWindow()
         scrolled_left.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_left.set_vexpand(True)
 
-        # Model: StatusIcon(str), SensorName(str), Badge(str), Details(str)
         self.live_sensors_store = Gtk.ListStore(str, str, str, str)
         self.live_sensors_tree = Gtk.TreeView(model=self.live_sensors_store)
 
         col_st = Gtk.TreeViewColumn("Status", Gtk.CellRendererText(), text=0)
-        col_st.set_min_width(100)
+        col_st.set_min_width(80)
+        col_st.set_resizable(True)
         self.live_sensors_tree.append_column(col_st)
 
         col_sname = Gtk.TreeViewColumn("Diagnostic Sensor / Component", Gtk.CellRendererText(), text=1)
-        col_sname.set_min_width(220)
+        col_sname.set_min_width(170)
+        col_sname.set_resizable(True)
+        col_sname.set_expand(True)
         self.live_sensors_tree.append_column(col_sname)
 
         col_sdet = Gtk.TreeViewColumn("Verification Details", Gtk.CellRendererText(), text=3)
-        col_sdet.set_min_width(260)
+        col_sdet.set_min_width(170)
+        col_sdet.set_resizable(True)
+        col_sdet.set_expand(True)
         self.live_sensors_tree.append_column(col_sdet)
 
         scrolled_left.add(self.live_sensors_tree)
         left_box.pack_start(scrolled_left, True, True, 0)
-        paned.pack1(left_box, True, False)
+        self.sensors_paned.pack1(left_box, True, False)
 
         # Right: Historical Sensor Trip & Fault Frequency Counters
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -478,29 +580,88 @@ class JuraDiagApp(Gtk.Window):
 
         scrolled_right = Gtk.ScrolledWindow()
         scrolled_right.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_right.set_vexpand(True)
 
-        # Model: CounterName(str), Count(int), Assessment(str)
         self.live_counters_store = Gtk.ListStore(str, int, str)
         self.live_counters_tree = Gtk.TreeView(model=self.live_counters_store)
 
         col_cname = Gtk.TreeViewColumn("Fault / Event Category", Gtk.CellRendererText(), text=0)
-        col_cname.set_min_width(220)
+        col_cname.set_min_width(170)
+        col_cname.set_resizable(True)
+        col_cname.set_expand(True)
         self.live_counters_tree.append_column(col_cname)
 
         col_cnt = Gtk.TreeViewColumn("Trip Count", Gtk.CellRendererText(), text=1)
-        col_cnt.set_min_width(90)
+        col_cnt.set_min_width(80)
+        col_cnt.set_resizable(True)
         self.live_counters_tree.append_column(col_cnt)
 
         col_cass = Gtk.TreeViewColumn("Evaluation", Gtk.CellRendererText(), text=2)
-        col_cass.set_min_width(160)
+        col_cass.set_min_width(110)
+        col_cass.set_resizable(True)
+        col_cass.set_expand(True)
         self.live_counters_tree.append_column(col_cass)
 
         scrolled_right.add(self.live_counters_tree)
         right_box.pack_start(scrolled_right, True, True, 0)
-        paned.pack2(right_box, True, False)
+        self.sensors_paned.pack2(right_box, True, False)
 
-        main_box.pack_start(paned, True, True, 4)
-        return main_box
+        main_box.pack_start(self.sensors_paned, True, True, 4)
+        scrolled.add(main_box)
+        return scrolled
+
+    def _on_paned_size_allocate(self, paned, allocation):
+        target_orient = Gtk.Orientation.VERTICAL if allocation.width < 760 else Gtk.Orientation.HORIZONTAL
+        if paned.get_orientation() != target_orient:
+            paned.set_orientation(target_orient)
+        if target_orient == Gtk.Orientation.HORIZONTAL:
+            # Dynamically maintain proportional 55%/45% split
+            target_pos = int(allocation.width * 0.55)
+            current_pos = paned.get_position()
+            if abs(current_pos - target_pos) > 25:
+                paned.set_position(target_pos)
+
+    def _update_sensor_badges_layout(self, is_compact: bool):
+        if self._sensor_compact == is_compact:
+            return
+        self._sensor_compact = is_compact
+
+        for c in self._sensor_cards_list:
+            if c.get_parent():
+                self.sensor_badges_grid.remove(c)
+
+        if not is_compact:
+            # 5 columns across
+            # Row 0: State, BU, Tank, Tray, Beans
+            self.sensor_badges_grid.attach(self.card_state, 0, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_bu, 1, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_tank, 2, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_tray, 3, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_beans, 4, 0, 1, 1)
+
+            # Row 1: Coffee, Steam, Flow, Filter (spans 2)
+            self.sensor_badges_grid.attach(self.card_coffee, 0, 1, 1, 1)
+            self.sensor_badges_grid.attach(self.card_steam, 1, 1, 1, 1)
+            self.sensor_badges_grid.attach(self.card_flow, 2, 1, 1, 1)
+            self.sensor_badges_grid.attach(self.card_filter, 3, 1, 2, 1)
+        else:
+            # 3 columns across x 3 rows
+            # Row 0: State, BU, Tank
+            self.sensor_badges_grid.attach(self.card_state, 0, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_bu, 1, 0, 1, 1)
+            self.sensor_badges_grid.attach(self.card_tank, 2, 0, 1, 1)
+
+            # Row 1: Tray, Beans, Flow
+            self.sensor_badges_grid.attach(self.card_tray, 0, 1, 1, 1)
+            self.sensor_badges_grid.attach(self.card_beans, 1, 1, 1, 1)
+            self.sensor_badges_grid.attach(self.card_flow, 2, 1, 1, 1)
+
+            # Row 2: Coffee, Steam, Filter
+            self.sensor_badges_grid.attach(self.card_coffee, 0, 2, 1, 1)
+            self.sensor_badges_grid.attach(self.card_steam, 1, 2, 1, 1)
+            self.sensor_badges_grid.attach(self.card_filter, 2, 2, 1, 1)
+
+        self.sensor_badges_grid.show_all()
 
     def _create_alerts_tab(self) -> Gtk.Widget:
         scrolled = Gtk.ScrolledWindow()
@@ -511,14 +672,19 @@ class JuraDiagApp(Gtk.Window):
         self.alerts_tree = Gtk.TreeView(model=self.alerts_store)
 
         col_sev = Gtk.TreeViewColumn("Status / Severity", Gtk.CellRendererText(), text=0)
-        col_sev.set_min_width(180)
+        col_sev.set_min_width(120)
+        col_sev.set_resizable(True)
         self.alerts_tree.append_column(col_sev)
 
         col_name = Gtk.TreeViewColumn("System Notification / Alert Message", Gtk.CellRendererText(), text=1)
-        col_name.set_min_width(380)
+        col_name.set_min_width(200)
+        col_name.set_resizable(True)
+        col_name.set_expand(True)
         self.alerts_tree.append_column(col_name)
 
         col_bit = Gtk.TreeViewColumn("Bit Index", Gtk.CellRendererText(), text=2)
+        col_bit.set_min_width(70)
+        col_bit.set_resizable(True)
         self.alerts_tree.append_column(col_bit)
 
         scrolled.add(self.alerts_tree)
@@ -532,11 +698,14 @@ class JuraDiagApp(Gtk.Window):
         self.info_tree = Gtk.TreeView(model=self.info_store)
 
         col_prop = Gtk.TreeViewColumn("Property", Gtk.CellRendererText(), text=0)
-        col_prop.set_min_width(240)
+        col_prop.set_min_width(160)
+        col_prop.set_resizable(True)
         self.info_tree.append_column(col_prop)
 
         col_val = Gtk.TreeViewColumn("Value / Diagnostic Telemetry", Gtk.CellRendererText(), text=1)
-        col_val.set_min_width(450)
+        col_val.set_min_width(220)
+        col_val.set_resizable(True)
+        col_val.set_expand(True)
         self.info_tree.append_column(col_val)
 
         scrolled.add(self.info_tree)
@@ -550,10 +719,45 @@ class JuraDiagApp(Gtk.Window):
         self.log_view = Gtk.TextView()
         self.log_view.set_editable(False)
         self.log_view.set_cursor_visible(False)
+        self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self.log_buffer = self.log_view.get_buffer()
 
         scrolled.add(self.log_view)
         box.pack_start(scrolled, True, True, 0)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_clear = Gtk.Button(label="Clear Log")
+        btn_clear.connect("clicked", lambda w: self.log_buffer.set_text(""))
+        btn_box.pack_start(btn_clear, False, False, 4)
+        box.pack_start(btn_box, False, False, 4)
+
+        return box
+
+    def _on_window_size_allocate(self, widget, allocation):
+        header_compact = allocation.width < 860
+        kpi_compact = allocation.width < 800
+        sensor_compact = allocation.width < 860
+
+        needs_reflow = (
+            self._header_compact != header_compact or
+            self._kpi_compact != kpi_compact or
+            self._sensor_compact != sensor_compact
+        )
+        if needs_reflow:
+            self._pending_reflow = (header_compact, kpi_compact, sensor_compact)
+            if not getattr(self, "_reflow_scheduled", False):
+                self._reflow_scheduled = True
+                GLib.idle_add(self._do_pending_reflow)
+
+    def _do_pending_reflow(self):
+        self._reflow_scheduled = False
+        if hasattr(self, "_pending_reflow") and self._pending_reflow:
+            h_comp, k_comp, s_comp = self._pending_reflow
+            self._update_header_layout(h_comp)
+            self._update_kpi_layout(k_comp)
+            self._update_sensor_badges_layout(s_comp)
+            self._pending_reflow = None
+        return False
 
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         btn_clear = Gtk.Button(label="Clear Log")
