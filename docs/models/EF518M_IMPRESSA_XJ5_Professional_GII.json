@@ -1,0 +1,1616 @@
+{
+  "model_family": "IMPRESSA XJ5 Professional GII",
+  "ef_code": "EF518M",
+  "display_ef": "EF518D",
+  "series": "IMPRESSA Professional X-Line",
+  "article_numbers": [
+    "18016"
+  ],
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": true,
+    "has_external_plumbing": true,
+    "has_milk_system": false,
+    "flowmeter_pulses_per_ml": 2.366,
+    "bu_calibration": {
+      "upper_limit_ticks": 1292,
+      "mill_target_ticks": 230,
+      "prebrew_1_ticks": 266,
+      "compression_ticks": 520,
+      "prebrew_2_ticks": 546,
+      "registers": {
+        "upper_limit": "0040",
+        "mill_target": "0041",
+        "prebrew_1": "0042",
+        "compression": "0043",
+        "prebrew_2": "0044"
+      }
+    },
+    "optical_hopper": {
+      "command": "AS:",
+      "empty_adc_threshold": 1710,
+      "nominal_adc_threshold": 1907,
+      "nominal_delta_max": 85,
+      "empty_delta_min": 95
+    }
+  },
+  "custom_registers": {
+    "000D": {
+      "name": "Unmapped_0x000D",
+      "description": "Model-specific register (Value: 0x0004 / 4)",
+      "current_hex": "0x0004",
+      "current_dec": 4
+    },
+    "000E": {
+      "name": "Unmapped_0x000E",
+      "description": "Model-specific register (Value: 0x0002 / 2)",
+      "current_hex": "0x0002",
+      "current_dec": 2
+    },
+    "000F": {
+      "name": "Unmapped_0x000F",
+      "description": "Model-specific register (Value: 0x0002 / 2)",
+      "current_hex": "0x0002",
+      "current_dec": 2
+    },
+    "0010": {
+      "name": "Unmapped_0x0010",
+      "description": "Model-specific register (Value: 0xB098 / 45208)",
+      "current_hex": "0xB098",
+      "current_dec": 45208
+    },
+    "0011": {
+      "name": "Unmapped_0x0011",
+      "description": "Model-specific register (Value: 0x0002 / 2)",
+      "current_hex": "0x0002",
+      "current_dec": 2
+    },
+    "0012": {
+      "name": "Unmapped_0x0012",
+      "description": "Model-specific register (Value: 0x0187 / 391)",
+      "current_hex": "0x0187",
+      "current_dec": 391
+    },
+    "0014": {
+      "name": "Unmapped_0x0014",
+      "description": "Model-specific register (Value: 0x0002 / 2)",
+      "current_hex": "0x0002",
+      "current_dec": 2
+    },
+    "001F": {
+      "name": "Unmapped_0x001F",
+      "description": "Model-specific register (Value: 0x01FB / 507)",
+      "current_hex": "0x01FB",
+      "current_dec": 507
+    },
+    "0020": {
+      "name": "Unmapped_0x0020",
+      "description": "Model-specific register (Value: 0x0034 / 52)",
+      "current_hex": "0x0034",
+      "current_dec": 52
+    },
+    "0021": {
+      "name": "Unmapped_0x0021",
+      "description": "Model-specific register (Value: 0x0640 / 1600)",
+      "current_hex": "0x0640",
+      "current_dec": 1600
+    },
+    "0022": {
+      "name": "Unmapped_0x0022",
+      "description": "Model-specific register (Value: 0x0001 / 1)",
+      "current_hex": "0x0001",
+      "current_dec": 1
+    },
+    "0023": {
+      "name": "Unmapped_0x0023",
+      "description": "Model-specific register (Value: 0x0004 / 4)",
+      "current_hex": "0x0004",
+      "current_dec": 4
+    },
+    "0024": {
+      "name": "Unmapped_0x0024",
+      "description": "Model-specific register (Value: 0x0414 / 1044)",
+      "current_hex": "0x0414",
+      "current_dec": 1044
+    },
+    "0025": {
+      "name": "Unmapped_0x0025",
+      "description": "Model-specific register (Value: 0x780A / 30730)",
+      "current_hex": "0x780A",
+      "current_dec": 30730
+    },
+    "0026": {
+      "name": "Unmapped_0x0026",
+      "description": "Model-specific register (Value: 0x1E04 / 7684)",
+      "current_hex": "0x1E04",
+      "current_dec": 7684
+    },
+    "0027": {
+      "name": "Unmapped_0x0027",
+      "description": "Model-specific register (Value: 0xA028 / 41000)",
+      "current_hex": "0xA028",
+      "current_dec": 41000
+    },
+    "002A": {
+      "name": "Unmapped_0x002A",
+      "description": "Model-specific register (Value: 0x0C0E / 3086)",
+      "current_hex": "0x0C0E",
+      "current_dec": 3086
+    },
+    "002B": {
+      "name": "Unmapped_0x002B",
+      "description": "Model-specific register (Value: 0x1E02 / 7682)",
+      "current_hex": "0x1E02",
+      "current_dec": 7682
+    },
+    "002C": {
+      "name": "Unmapped_0x002C",
+      "description": "Model-specific register (Value: 0x0A06 / 2566)",
+      "current_hex": "0x0A06",
+      "current_dec": 2566
+    },
+    "002D": {
+      "name": "Unmapped_0x002D",
+      "description": "Model-specific register (Value: 0x0708 / 1800)",
+      "current_hex": "0x0708",
+      "current_dec": 1800
+    },
+    "002E": {
+      "name": "Unmapped_0x002E",
+      "description": "Model-specific register (Value: 0x2D64 / 11620)",
+      "current_hex": "0x2D64",
+      "current_dec": 11620
+    },
+    "002F": {
+      "name": "Unmapped_0x002F",
+      "description": "Model-specific register (Value: 0x141E / 5150)",
+      "current_hex": "0x141E",
+      "current_dec": 5150
+    },
+    "0033": {
+      "name": "Unmapped_0x0033",
+      "description": "Model-specific register (Value: 0x2996 / 10646)",
+      "current_hex": "0x2996",
+      "current_dec": 10646
+    },
+    "0039": {
+      "name": "Unmapped_0x0039",
+      "description": "Model-specific register (Value: 0x1E6F / 7791)",
+      "current_hex": "0x1E6F",
+      "current_dec": 7791
+    },
+    "003A": {
+      "name": "Unmapped_0x003A",
+      "description": "Model-specific register (Value: 0x046E / 1134)",
+      "current_hex": "0x046E",
+      "current_dec": 1134
+    },
+    "003B": {
+      "name": "Unmapped_0x003B",
+      "description": "Model-specific register (Value: 0x5028 / 20520)",
+      "current_hex": "0x5028",
+      "current_dec": 20520
+    },
+    "003C": {
+      "name": "Unmapped_0x003C",
+      "description": "Model-specific register (Value: 0x180F / 6159)",
+      "current_hex": "0x180F",
+      "current_dec": 6159
+    },
+    "003D": {
+      "name": "Unmapped_0x003D",
+      "description": "Model-specific register (Value: 0x0014 / 20)",
+      "current_hex": "0x0014",
+      "current_dec": 20
+    },
+    "003E": {
+      "name": "Unmapped_0x003E",
+      "description": "Model-specific register (Value: 0x0104 / 260)",
+      "current_hex": "0x0104",
+      "current_dec": 260
+    },
+    "003F": {
+      "name": "Unmapped_0x003F",
+      "description": "Model-specific register (Value: 0x0276 / 630)",
+      "current_hex": "0x0276",
+      "current_dec": 630
+    },
+    "0046": {
+      "name": "Unmapped_0x0046",
+      "description": "Model-specific register (Value: 0x01D1 / 465)",
+      "current_hex": "0x01D1",
+      "current_dec": 465
+    },
+    "0047": {
+      "name": "Unmapped_0x0047",
+      "description": "Model-specific register (Value: 0x0510 / 1296)",
+      "current_hex": "0x0510",
+      "current_dec": 1296
+    },
+    "0048": {
+      "name": "Unmapped_0x0048",
+      "description": "Model-specific register (Value: 0x7803 / 30723)",
+      "current_hex": "0x7803",
+      "current_dec": 30723
+    },
+    "0049": {
+      "name": "Unmapped_0x0049",
+      "description": "Model-specific register (Value: 0x400A / 16394)",
+      "current_hex": "0x400A",
+      "current_dec": 16394
+    },
+    "004A": {
+      "name": "Unmapped_0x004A",
+      "description": "Model-specific register (Value: 0xDD78 / 56696)",
+      "current_hex": "0xDD78",
+      "current_dec": 56696
+    },
+    "004B": {
+      "name": "Unmapped_0x004B",
+      "description": "Model-specific register (Value: 0x050F / 1295)",
+      "current_hex": "0x050F",
+      "current_dec": 1295
+    },
+    "004C": {
+      "name": "Unmapped_0x004C",
+      "description": "Model-specific register (Value: 0x0A12 / 2578)",
+      "current_hex": "0x0A12",
+      "current_dec": 2578
+    },
+    "004D": {
+      "name": "Unmapped_0x004D",
+      "description": "Model-specific register (Value: 0x00C8 / 200)",
+      "current_hex": "0x00C8",
+      "current_dec": 200
+    },
+    "004E": {
+      "name": "Unmapped_0x004E",
+      "description": "Model-specific register (Value: 0x1455 / 5205)",
+      "current_hex": "0x1455",
+      "current_dec": 5205
+    },
+    "004F": {
+      "name": "Unmapped_0x004F",
+      "description": "Model-specific register (Value: 0x145C / 5212)",
+      "current_hex": "0x145C",
+      "current_dec": 5212
+    },
+    "0050": {
+      "name": "Unmapped_0x0050",
+      "description": "Model-specific register (Value: 0x6B6B / 27499)",
+      "current_hex": "0x6B6B",
+      "current_dec": 27499
+    },
+    "0051": {
+      "name": "Unmapped_0x0051",
+      "description": "Model-specific register (Value: 0x015A / 346)",
+      "current_hex": "0x015A",
+      "current_dec": 346
+    },
+    "0053": {
+      "name": "Unmapped_0x0053",
+      "description": "Model-specific register (Value: 0x0F3C / 3900)",
+      "current_hex": "0x0F3C",
+      "current_dec": 3900
+    },
+    "0054": {
+      "name": "Unmapped_0x0054",
+      "description": "Model-specific register (Value: 0x1606 / 5638)",
+      "current_hex": "0x1606",
+      "current_dec": 5638
+    },
+    "0056": {
+      "name": "Unmapped_0x0056",
+      "description": "Model-specific register (Value: 0x00B1 / 177)",
+      "current_hex": "0x00B1",
+      "current_dec": 177
+    },
+    "0057": {
+      "name": "Unmapped_0x0057",
+      "description": "Model-specific register (Value: 0x0050 / 80)",
+      "current_hex": "0x0050",
+      "current_dec": 80
+    },
+    "0058": {
+      "name": "Unmapped_0x0058",
+      "description": "Model-specific register (Value: 0x0204 / 516)",
+      "current_hex": "0x0204",
+      "current_dec": 516
+    },
+    "0059": {
+      "name": "Unmapped_0x0059",
+      "description": "Model-specific register (Value: 0x0101 / 257)",
+      "current_hex": "0x0101",
+      "current_dec": 257
+    },
+    "005A": {
+      "name": "Unmapped_0x005A",
+      "description": "Model-specific register (Value: 0x0F00 / 3840)",
+      "current_hex": "0x0F00",
+      "current_dec": 3840
+    },
+    "005B": {
+      "name": "Unmapped_0x005B",
+      "description": "Model-specific register (Value: 0x2C0C / 11276)",
+      "current_hex": "0x2C0C",
+      "current_dec": 11276
+    },
+    "005C": {
+      "name": "Unmapped_0x005C",
+      "description": "Model-specific register (Value: 0x2D80 / 11648)",
+      "current_hex": "0x2D80",
+      "current_dec": 11648
+    },
+    "005D": {
+      "name": "Unmapped_0x005D",
+      "description": "Model-specific register (Value: 0x463C / 17980)",
+      "current_hex": "0x463C",
+      "current_dec": 17980
+    },
+    "005E": {
+      "name": "Unmapped_0x005E",
+      "description": "Model-specific register (Value: 0x4603 / 17923)",
+      "current_hex": "0x4603",
+      "current_dec": 17923
+    },
+    "005F": {
+      "name": "Unmapped_0x005F",
+      "description": "Model-specific register (Value: 0x2F7B / 12155)",
+      "current_hex": "0x2F7B",
+      "current_dec": 12155
+    },
+    "0060": {
+      "name": "Unmapped_0x0060",
+      "description": "Model-specific register (Value: 0x0604 / 1540)",
+      "current_hex": "0x0604",
+      "current_dec": 1540
+    },
+    "0061": {
+      "name": "Unmapped_0x0061",
+      "description": "Model-specific register (Value: 0xFE20 / 65056)",
+      "current_hex": "0xFE20",
+      "current_dec": 65056
+    },
+    "0065": {
+      "name": "Unmapped_0x0065",
+      "description": "Model-specific register (Value: 0x2F7B / 12155)",
+      "current_hex": "0x2F7B",
+      "current_dec": 12155
+    },
+    "0066": {
+      "name": "Unmapped_0x0066",
+      "description": "Model-specific register (Value: 0x0604 / 1540)",
+      "current_hex": "0x0604",
+      "current_dec": 1540
+    },
+    "0067": {
+      "name": "Unmapped_0x0067",
+      "description": "Model-specific register (Value: 0x0020 / 32)",
+      "current_hex": "0x0020",
+      "current_dec": 32
+    },
+    "0068": {
+      "name": "Unmapped_0x0068",
+      "description": "Model-specific register (Value: 0x0001 / 1)",
+      "current_hex": "0x0001",
+      "current_dec": 1
+    },
+    "0069": {
+      "name": "Unmapped_0x0069",
+      "description": "Model-specific register (Value: 0xA12F / 41263)",
+      "current_hex": "0xA12F",
+      "current_dec": 41263
+    },
+    "006A": {
+      "name": "Unmapped_0x006A",
+      "description": "Model-specific register (Value: 0xD297 / 53911)",
+      "current_hex": "0xD297",
+      "current_dec": 53911
+    },
+    "006B": {
+      "name": "Unmapped_0x006B",
+      "description": "Model-specific register (Value: 0x2C7F / 11391)",
+      "current_hex": "0x2C7F",
+      "current_dec": 11391
+    },
+    "006C": {
+      "name": "Unmapped_0x006C",
+      "description": "Model-specific register (Value: 0x1414 / 5140)",
+      "current_hex": "0x1414",
+      "current_dec": 5140
+    },
+    "006D": {
+      "name": "Unmapped_0x006D",
+      "description": "Model-specific register (Value: 0x2828 / 10280)",
+      "current_hex": "0x2828",
+      "current_dec": 10280
+    },
+    "006E": {
+      "name": "Unmapped_0x006E",
+      "description": "Model-specific register (Value: 0x0602 / 1538)",
+      "current_hex": "0x0602",
+      "current_dec": 1538
+    },
+    "006F": {
+      "name": "Unmapped_0x006F",
+      "description": "Model-specific register (Value: 0x040A / 1034)",
+      "current_hex": "0x040A",
+      "current_dec": 1034
+    },
+    "0071": {
+      "name": "Filter_Ext_Limit_Rinsing",
+      "description": "External filter maximum rinse limit threshold (dl)",
+      "current_hex": "0x09C4",
+      "current_dec": 2500
+    },
+    "0072": {
+      "name": "Unmapped_0x0072",
+      "description": "Model-specific register (Value: 0x0F0F / 3855)",
+      "current_hex": "0x0F0F",
+      "current_dec": 3855
+    },
+    "0074": {
+      "name": "Unmapped_0x0074",
+      "description": "Model-specific register (Value: 0x140E / 5134)",
+      "current_hex": "0x140E",
+      "current_dec": 5134
+    },
+    "0075": {
+      "name": "Unmapped_0x0075",
+      "description": "Model-specific register (Value: 0x60EA / 24810)",
+      "current_hex": "0x60EA",
+      "current_dec": 24810
+    },
+    "0077": {
+      "name": "Unmapped_0x0077",
+      "description": "Model-specific register (Value: 0x1210 / 4624)",
+      "current_hex": "0x1210",
+      "current_dec": 4624
+    },
+    "0078": {
+      "name": "Unmapped_0x0078",
+      "description": "Model-specific register (Value: 0x0C12 / 3090)",
+      "current_hex": "0x0C12",
+      "current_dec": 3090
+    },
+    "0079": {
+      "name": "Unmapped_0x0079",
+      "description": "Model-specific register (Value: 0x3C07 / 15367)",
+      "current_hex": "0x3C07",
+      "current_dec": 15367
+    },
+    "007A": {
+      "name": "Unmapped_0x007A",
+      "description": "Model-specific register (Value: 0x0200 / 512)",
+      "current_hex": "0x0200",
+      "current_dec": 512
+    },
+    "007B": {
+      "name": "Unmapped_0x007B",
+      "description": "Model-specific register (Value: 0x0200 / 512)",
+      "current_hex": "0x0200",
+      "current_dec": 512
+    },
+    "007C": {
+      "name": "Unmapped_0x007C",
+      "description": "Model-specific register (Value: 0xC733 / 50995)",
+      "current_hex": "0xC733",
+      "current_dec": 50995
+    },
+    "007D": {
+      "name": "Unmapped_0x007D",
+      "description": "Model-specific register (Value: 0x0928 / 2344)",
+      "current_hex": "0x0928",
+      "current_dec": 2344
+    },
+    "007E": {
+      "name": "Unmapped_0x007E",
+      "description": "Model-specific register (Value: 0x3550 / 13648)",
+      "current_hex": "0x3550",
+      "current_dec": 13648
+    },
+    "007F": {
+      "name": "Unmapped_0x007F",
+      "description": "Model-specific register (Value: 0x891E / 35102)",
+      "current_hex": "0x891E",
+      "current_dec": 35102
+    },
+    "0081": {
+      "name": "Unmapped_0x0081",
+      "description": "Model-specific register (Value: 0x0028 / 40)",
+      "current_hex": "0x0028",
+      "current_dec": 40
+    },
+    "0082": {
+      "name": "Unmapped_0x0082",
+      "description": "Model-specific register (Value: 0x0014 / 20)",
+      "current_hex": "0x0014",
+      "current_dec": 20
+    },
+    "0083": {
+      "name": "Unmapped_0x0083",
+      "description": "Model-specific register (Value: 0x1606 / 5638)",
+      "current_hex": "0x1606",
+      "current_dec": 5638
+    },
+    "0084": {
+      "name": "Unmapped_0x0084",
+      "description": "Model-specific register (Value: 0x3F14 / 16148)",
+      "current_hex": "0x3F14",
+      "current_dec": 16148
+    },
+    "0085": {
+      "name": "Unmapped_0x0085",
+      "description": "Model-specific register (Value: 0x00B4 / 180)",
+      "current_hex": "0x00B4",
+      "current_dec": 180
+    },
+    "0086": {
+      "name": "Unmapped_0x0086",
+      "description": "Model-specific register (Value: 0x0102 / 258)",
+      "current_hex": "0x0102",
+      "current_dec": 258
+    },
+    "0087": {
+      "name": "Unmapped_0x0087",
+      "description": "Model-specific register (Value: 0x0307 / 775)",
+      "current_hex": "0x0307",
+      "current_dec": 775
+    },
+    "0088": {
+      "name": "Unmapped_0x0088",
+      "description": "Model-specific register (Value: 0x0A01 / 2561)",
+      "current_hex": "0x0A01",
+      "current_dec": 2561
+    },
+    "0089": {
+      "name": "Unmapped_0x0089",
+      "description": "Model-specific register (Value: 0x000A / 10)",
+      "current_hex": "0x000A",
+      "current_dec": 10
+    },
+    "008A": {
+      "name": "Unmapped_0x008A",
+      "description": "Model-specific register (Value: 0x1106 / 4358)",
+      "current_hex": "0x1106",
+      "current_dec": 4358
+    },
+    "008B": {
+      "name": "Filter_Ext_Limit_Water",
+      "description": "Warning threshold for external filter cartridge replacement (dl)",
+      "current_hex": "0x01F4",
+      "current_dec": 500
+    },
+    "008C": {
+      "name": "Unmapped_0x008C",
+      "description": "Model-specific register (Value: 0x0C00 / 3072)",
+      "current_hex": "0x0C00",
+      "current_dec": 3072
+    },
+    "008D": {
+      "name": "Unmapped_0x008D",
+      "description": "Model-specific register (Value: 0x1E14 / 7700)",
+      "current_hex": "0x1E14",
+      "current_dec": 7700
+    },
+    "008E": {
+      "name": "Unmapped_0x008E",
+      "description": "Model-specific register (Value: 0x4632 / 17970)",
+      "current_hex": "0x4632",
+      "current_dec": 17970
+    },
+    "008F": {
+      "name": "Unmapped_0x008F",
+      "description": "Model-specific register (Value: 0x3E2A / 15914)",
+      "current_hex": "0x3E2A",
+      "current_dec": 15914
+    },
+    "0090": {
+      "name": "Unmapped_0x0090",
+      "description": "Model-specific register (Value: 0x5060 / 20576)",
+      "current_hex": "0x5060",
+      "current_dec": 20576
+    },
+    "0091": {
+      "name": "Unmapped_0x0091",
+      "description": "Model-specific register (Value: 0x1E28 / 7720)",
+      "current_hex": "0x1E28",
+      "current_dec": 7720
+    },
+    "0092": {
+      "name": "Unmapped_0x0092",
+      "description": "Model-specific register (Value: 0x1A32 / 6706)",
+      "current_hex": "0x1A32",
+      "current_dec": 6706
+    },
+    "0093": {
+      "name": "Unmapped_0x0093",
+      "description": "Model-specific register (Value: 0x0E46 / 3654)",
+      "current_hex": "0x0E46",
+      "current_dec": 3654
+    },
+    "0094": {
+      "name": "Unmapped_0x0094",
+      "description": "Model-specific register (Value: 0x6C68 / 27752)",
+      "current_hex": "0x6C68",
+      "current_dec": 27752
+    },
+    "0095": {
+      "name": "Unmapped_0x0095",
+      "description": "Model-specific register (Value: 0x3C28 / 15400)",
+      "current_hex": "0x3C28",
+      "current_dec": 15400
+    },
+    "0096": {
+      "name": "Unmapped_0x0096",
+      "description": "Model-specific register (Value: 0x685E / 26718)",
+      "current_hex": "0x685E",
+      "current_dec": 26718
+    },
+    "0097": {
+      "name": "Unmapped_0x0097",
+      "description": "Model-specific register (Value: 0x5F5D / 24413)",
+      "current_hex": "0x5F5D",
+      "current_dec": 24413
+    },
+    "0098": {
+      "name": "Unmapped_0x0098",
+      "description": "Model-specific register (Value: 0x0B07 / 2823)",
+      "current_hex": "0x0B07",
+      "current_dec": 2823
+    },
+    "0099": {
+      "name": "Unmapped_0x0099",
+      "description": "Model-specific register (Value: 0x6E69 / 28265)",
+      "current_hex": "0x6E69",
+      "current_dec": 28265
+    },
+    "009A": {
+      "name": "Unmapped_0x009A",
+      "description": "Model-specific register (Value: 0x1214 / 4628)",
+      "current_hex": "0x1214",
+      "current_dec": 4628
+    },
+    "009C": {
+      "name": "Unmapped_0x009C",
+      "description": "Model-specific register (Value: 0x6F00 / 28416)",
+      "current_hex": "0x6F00",
+      "current_dec": 28416
+    },
+    "009D": {
+      "name": "Unmapped_0x009D",
+      "description": "Model-specific register (Value: 0x8776 / 34678)",
+      "current_hex": "0x8776",
+      "current_dec": 34678
+    },
+    "009E": {
+      "name": "Unmapped_0x009E",
+      "description": "Model-specific register (Value: 0x28AA / 10410)",
+      "current_hex": "0x28AA",
+      "current_dec": 10410
+    },
+    "009F": {
+      "name": "Unmapped_0x009F",
+      "description": "Model-specific register (Value: 0x1406 / 5126)",
+      "current_hex": "0x1406",
+      "current_dec": 5126
+    },
+    "00A0": {
+      "name": "Unmapped_0x00A0",
+      "description": "Model-specific register (Value: 0x3228 / 12840)",
+      "current_hex": "0x3228",
+      "current_dec": 12840
+    },
+    "00A1": {
+      "name": "Unmapped_0x00A1",
+      "description": "Model-specific register (Value: 0x7066 / 28774)",
+      "current_hex": "0x7066",
+      "current_dec": 28774
+    },
+    "00A2": {
+      "name": "Unmapped_0x00A2",
+      "description": "Model-specific register (Value: 0x847E / 33918)",
+      "current_hex": "0x847E",
+      "current_dec": 33918
+    },
+    "00A5": {
+      "name": "Unmapped_0x00A5",
+      "description": "Model-specific register (Value: 0x3728 / 14120)",
+      "current_hex": "0x3728",
+      "current_dec": 14120
+    },
+    "00A6": {
+      "name": "Unmapped_0x00A6",
+      "description": "Model-specific register (Value: 0x374B / 14155)",
+      "current_hex": "0x374B",
+      "current_dec": 14155
+    },
+    "00A7": {
+      "name": "Unmapped_0x00A7",
+      "description": "Model-specific register (Value: 0x326C / 12908)",
+      "current_hex": "0x326C",
+      "current_dec": 12908
+    },
+    "00A9": {
+      "name": "Hotwater_Settings",
+      "description": "Hot water dispense temperature and bypass valve setting",
+      "current_hex": "0x0100",
+      "current_dec": 256
+    },
+    "00AB": {
+      "name": "Unmapped_0x00AB",
+      "description": "Model-specific register (Value: 0x5A05 / 23045)",
+      "current_hex": "0x5A05",
+      "current_dec": 23045
+    },
+    "00AC": {
+      "name": "Unmapped_0x00AC",
+      "description": "Model-specific register (Value: 0x0A1E / 2590)",
+      "current_hex": "0x0A1E",
+      "current_dec": 2590
+    },
+    "00AD": {
+      "name": "Unmapped_0x00AD",
+      "description": "Model-specific register (Value: 0x0500 / 1280)",
+      "current_hex": "0x0500",
+      "current_dec": 1280
+    },
+    "00B0": {
+      "name": "Unmapped_0x00B0",
+      "description": "Model-specific register (Value: 0x0600 / 1536)",
+      "current_hex": "0x0600",
+      "current_dec": 1536
+    },
+    "00B1": {
+      "name": "Unmapped_0x00B1",
+      "description": "Model-specific register (Value: 0x1414 / 5140)",
+      "current_hex": "0x1414",
+      "current_dec": 5140
+    },
+    "00B2": {
+      "name": "Unmapped_0x00B2",
+      "description": "Model-specific register (Value: 0x4646 / 17990)",
+      "current_hex": "0x4646",
+      "current_dec": 17990
+    },
+    "00B3": {
+      "name": "Unmapped_0x00B3",
+      "description": "Model-specific register (Value: 0x0041 / 65)",
+      "current_hex": "0x0041",
+      "current_dec": 65
+    },
+    "00B4": {
+      "name": "Espresso_1_2_Settings",
+      "description": "Front-Panel Buttons 1 & 2 aroma strength & pre-brew configuration",
+      "current_hex": "0x0232",
+      "current_dec": 562
+    },
+    "00B5": {
+      "name": "Coffee_1_2_Settings",
+      "description": "Front-Panel Buttons 3 & 4 aroma strength & pre-brew configuration",
+      "current_hex": "0x0131",
+      "current_dec": 305
+    },
+    "00B6": {
+      "name": "Unmapped_0x00B6",
+      "description": "Model-specific register (Value: 0x3005 / 12293)",
+      "current_hex": "0x3005",
+      "current_dec": 12293
+    },
+    "00B7": {
+      "name": "Unmapped_0x00B7",
+      "description": "Model-specific register (Value: 0x7803 / 30723)",
+      "current_hex": "0x7803",
+      "current_dec": 30723
+    },
+    "00B8": {
+      "name": "Unmapped_0x00B8",
+      "description": "Model-specific register (Value: 0x140A / 5130)",
+      "current_hex": "0x140A",
+      "current_dec": 5130
+    },
+    "00B9": {
+      "name": "Espresso_1_2_Volume",
+      "description": "Dispensed water volume for Single & Double Espresso (dl)",
+      "current_hex": "0x090A",
+      "current_dec": 2314
+    },
+    "00BA": {
+      "name": "Coffee_1_2_Volume",
+      "description": "Dispensed water volume for Single & Double Coffee (dl)",
+      "current_hex": "0x1430",
+      "current_dec": 5168
+    },
+    "00BB": {
+      "name": "Hotwater_Volume",
+      "description": "Hot water portion volume (dl)",
+      "current_hex": "0x2C19",
+      "current_dec": 11289
+    },
+    "00BC": {
+      "name": "Unmapped_0x00BC",
+      "description": "Model-specific register (Value: 0x140A / 5130)",
+      "current_hex": "0x140A",
+      "current_dec": 5130
+    },
+    "00BD": {
+      "name": "Unmapped_0x00BD",
+      "description": "Model-specific register (Value: 0x06C8 / 1736)",
+      "current_hex": "0x06C8",
+      "current_dec": 1736
+    },
+    "00BE": {
+      "name": "Unmapped_0x00BE",
+      "description": "Model-specific register (Value: 0x6401 / 25601)",
+      "current_hex": "0x6401",
+      "current_dec": 25601
+    },
+    "00C0": {
+      "name": "Unmapped_0x00C0",
+      "description": "Model-specific register (Value: 0x1234 / 4660)",
+      "current_hex": "0x1234",
+      "current_dec": 4660
+    },
+    "00C1": {
+      "name": "Unmapped_0x00C1",
+      "description": "Model-specific register (Value: 0x0042 / 66)",
+      "current_hex": "0x0042",
+      "current_dec": 66
+    },
+    "00C2": {
+      "name": "Unmapped_0x00C2",
+      "description": "Model-specific register (Value: 0x0605 / 1541)",
+      "current_hex": "0x0605",
+      "current_dec": 1541
+    },
+    "00C4": {
+      "name": "Unmapped_0x00C4",
+      "description": "Model-specific register (Value: 0x3200 / 12800)",
+      "current_hex": "0x3200",
+      "current_dec": 12800
+    },
+    "00C5": {
+      "name": "Unmapped_0x00C5",
+      "description": "Model-specific register (Value: 0x0AB4 / 2740)",
+      "current_hex": "0x0AB4",
+      "current_dec": 2740
+    },
+    "00C6": {
+      "name": "Unmapped_0x00C6",
+      "description": "Model-specific register (Value: 0xAAC8 / 43720)",
+      "current_hex": "0xAAC8",
+      "current_dec": 43720
+    },
+    "00C7": {
+      "name": "Unmapped_0x00C7",
+      "description": "Model-specific register (Value: 0x2C13 / 11283)",
+      "current_hex": "0x2C13",
+      "current_dec": 11283
+    },
+    "00C8": {
+      "name": "Unmapped_0x00C8",
+      "description": "Model-specific register (Value: 0x221B / 8731)",
+      "current_hex": "0x221B",
+      "current_dec": 8731
+    },
+    "00C9": {
+      "name": "Unmapped_0x00C9",
+      "description": "Model-specific register (Value: 0x2C28 / 11304)",
+      "current_hex": "0x2C28",
+      "current_dec": 11304
+    },
+    "00CA": {
+      "name": "Unmapped_0x00CA",
+      "description": "Model-specific register (Value: 0x0400 / 1024)",
+      "current_hex": "0x0400",
+      "current_dec": 1024
+    },
+    "00CB": {
+      "name": "Unmapped_0x00CB",
+      "description": "Model-specific register (Value: 0x8014 / 32788)",
+      "current_hex": "0x8014",
+      "current_dec": 32788
+    },
+    "00CC": {
+      "name": "Unmapped_0x00CC",
+      "description": "Model-specific register (Value: 0x028A / 650)",
+      "current_hex": "0x028A",
+      "current_dec": 650
+    },
+    "00CE": {
+      "name": "Unmapped_0x00CE",
+      "description": "Model-specific register (Value: 0x332D / 13101)",
+      "current_hex": "0x332D",
+      "current_dec": 13101
+    },
+    "00CF": {
+      "name": "Unmapped_0x00CF",
+      "description": "Model-specific register (Value: 0x0031 / 49)",
+      "current_hex": "0x0031",
+      "current_dec": 49
+    },
+    "00D0": {
+      "name": "Unmapped_0x00D0",
+      "description": "Model-specific register (Value: 0x093F / 2367)",
+      "current_hex": "0x093F",
+      "current_dec": 2367
+    },
+    "00D1": {
+      "name": "Unmapped_0x00D1",
+      "description": "Model-specific register (Value: 0x00E5 / 229)",
+      "current_hex": "0x00E5",
+      "current_dec": 229
+    },
+    "00D4": {
+      "name": "Unmapped_0x00D4",
+      "description": "Model-specific register (Value: 0x0028 / 40)",
+      "current_hex": "0x0028",
+      "current_dec": 40
+    },
+    "00D5": {
+      "name": "Unmapped_0x00D5",
+      "description": "Model-specific register (Value: 0x0014 / 20)",
+      "current_hex": "0x0014",
+      "current_dec": 20
+    },
+    "00D6": {
+      "name": "Unmapped_0x00D6",
+      "description": "Model-specific register (Value: 0x0102 / 258)",
+      "current_hex": "0x0102",
+      "current_dec": 258
+    },
+    "00D8": {
+      "name": "Unmapped_0x00D8",
+      "description": "Model-specific register (Value: 0x0222 / 546)",
+      "current_hex": "0x0222",
+      "current_dec": 546
+    },
+    "00D9": {
+      "name": "Unmapped_0x00D9",
+      "description": "Model-specific register (Value: 0x0111 / 273)",
+      "current_hex": "0x0111",
+      "current_dec": 273
+    },
+    "00E8": {
+      "name": "Unmapped_0x00E8",
+      "description": "Model-specific register (Value: 0x2F7B / 12155)",
+      "current_hex": "0x2F7B",
+      "current_dec": 12155
+    },
+    "00EB": {
+      "name": "Unmapped_0x00EB",
+      "description": "Model-specific register (Value: 0x2970 / 10608)",
+      "current_hex": "0x2970",
+      "current_dec": 10608
+    },
+    "00EC": {
+      "name": "Unmapped_0x00EC",
+      "description": "Model-specific register (Value: 0xFE00 / 65024)",
+      "current_hex": "0xFE00",
+      "current_dec": 65024
+    },
+    "00EF": {
+      "name": "Unmapped_0x00EF",
+      "description": "Model-specific register (Value: 0x0012 / 18)",
+      "current_hex": "0x0012",
+      "current_dec": 18
+    },
+    "00F0": {
+      "name": "Unmapped_0x00F0",
+      "description": "Model-specific register (Value: 0x0909 / 2313)",
+      "current_hex": "0x0909",
+      "current_dec": 2313
+    },
+    "00F1": {
+      "name": "Unmapped_0x00F1",
+      "description": "Model-specific register (Value: 0xF000 / 61440)",
+      "current_hex": "0xF000",
+      "current_dec": 61440
+    },
+    "00F3": {
+      "name": "Unmapped_0x00F3",
+      "description": "Model-specific register (Value: 0xD010 / 53264)",
+      "current_hex": "0xD010",
+      "current_dec": 53264
+    },
+    "0100": {
+      "name": "Unmapped_0x0100",
+      "description": "Model-specific register (Value: 0x0909 / 2313)",
+      "current_hex": "0x0909",
+      "current_dec": 2313
+    },
+    "0101": {
+      "name": "Unmapped_0x0101",
+      "description": "Model-specific register (Value: 0x1414 / 5140)",
+      "current_hex": "0x1414",
+      "current_dec": 5140
+    },
+    "0102": {
+      "name": "Unmapped_0x0102",
+      "description": "Model-specific register (Value: 0x2C14 / 11284)",
+      "current_hex": "0x2C14",
+      "current_dec": 11284
+    },
+    "0106": {
+      "name": "Unmapped_0x0106",
+      "description": "Model-specific register (Value: 0x1408 / 5128)",
+      "current_hex": "0x1408",
+      "current_dec": 5128
+    },
+    "0107": {
+      "name": "Unmapped_0x0107",
+      "description": "Model-specific register (Value: 0x0705 / 1797)",
+      "current_hex": "0x0705",
+      "current_dec": 1797
+    },
+    "0108": {
+      "name": "Unmapped_0x0108",
+      "description": "Model-specific register (Value: 0x1414 / 5140)",
+      "current_hex": "0x1414",
+      "current_dec": 5140
+    },
+    "0109": {
+      "name": "Unmapped_0x0109",
+      "description": "Model-specific register (Value: 0x141E / 5150)",
+      "current_hex": "0x141E",
+      "current_dec": 5150
+    },
+    "01A8": {
+      "name": "Unmapped_0x01A8",
+      "description": "Model-specific register (Value: 0x1604 / 5636)",
+      "current_hex": "0x1604",
+      "current_dec": 5636
+    },
+    "01A9": {
+      "name": "Unmapped_0x01A9",
+      "description": "Model-specific register (Value: 0x1001 / 4097)",
+      "current_hex": "0x1001",
+      "current_dec": 4097
+    },
+    "01C1": {
+      "name": "Unmapped_0x01C1",
+      "description": "Model-specific register (Value: 0x050A / 1290)",
+      "current_hex": "0x050A",
+      "current_dec": 1290
+    },
+    "01C4": {
+      "name": "Unmapped_0x01C4",
+      "description": "Model-specific register (Value: 0x031E / 798)",
+      "current_hex": "0x031E",
+      "current_dec": 798
+    },
+    "01C5": {
+      "name": "Unmapped_0x01C5",
+      "description": "Model-specific register (Value: 0x7975 / 31093)",
+      "current_hex": "0x7975",
+      "current_dec": 31093
+    },
+    "01C6": {
+      "name": "Unmapped_0x01C6",
+      "description": "Model-specific register (Value: 0x786D / 30829)",
+      "current_hex": "0x786D",
+      "current_dec": 30829
+    },
+    "01C7": {
+      "name": "Unmapped_0x01C7",
+      "description": "Model-specific register (Value: 0x8000 / 32768)",
+      "current_hex": "0x8000",
+      "current_dec": 32768
+    },
+    "01C9": {
+      "name": "Unmapped_0x01C9",
+      "description": "Model-specific register (Value: 0x3C28 / 15400)",
+      "current_hex": "0x3C28",
+      "current_dec": 15400
+    },
+    "01CE": {
+      "name": "Unmapped_0x01CE",
+      "description": "Model-specific register (Value: 0x000A / 10)",
+      "current_hex": "0x000A",
+      "current_dec": 10
+    },
+    "01CF": {
+      "name": "Unmapped_0x01CF",
+      "description": "Model-specific register (Value: 0x0A05 / 2565)",
+      "current_hex": "0x0A05",
+      "current_dec": 2565
+    },
+    "01D0": {
+      "name": "Unmapped_0x01D0",
+      "description": "Model-specific register (Value: 0x097B / 2427)",
+      "current_hex": "0x097B",
+      "current_dec": 2427
+    },
+    "01D1": {
+      "name": "Unmapped_0x01D1",
+      "description": "Model-specific register (Value: 0x1400 / 5120)",
+      "current_hex": "0x1400",
+      "current_dec": 5120
+    },
+    "01D3": {
+      "name": "Unmapped_0x01D3",
+      "description": "Model-specific register (Value: 0x020D / 525)",
+      "current_hex": "0x020D",
+      "current_dec": 525
+    },
+    "01D4": {
+      "name": "Unmapped_0x01D4",
+      "description": "Model-specific register (Value: 0x01FC / 508)",
+      "current_hex": "0x01FC",
+      "current_dec": 508
+    },
+    "01D5": {
+      "name": "Unmapped_0x01D5",
+      "description": "Model-specific register (Value: 0x0101 / 257)",
+      "current_hex": "0x0101",
+      "current_dec": 257
+    },
+    "01D6": {
+      "name": "Unmapped_0x01D6",
+      "description": "Model-specific register (Value: 0x0192 / 402)",
+      "current_hex": "0x0192",
+      "current_dec": 402
+    },
+    "01D7": {
+      "name": "Unmapped_0x01D7",
+      "description": "Model-specific register (Value: 0x01CC / 460)",
+      "current_hex": "0x01CC",
+      "current_dec": 460
+    },
+    "01D8": {
+      "name": "Unmapped_0x01D8",
+      "description": "Model-specific register (Value: 0x2864 / 10340)",
+      "current_hex": "0x2864",
+      "current_dec": 10340
+    },
+    "01D9": {
+      "name": "Unmapped_0x01D9",
+      "description": "Model-specific register (Value: 0x0C04 / 3076)",
+      "current_hex": "0x0C04",
+      "current_dec": 3076
+    },
+    "01DF": {
+      "name": "Unmapped_0x01DF",
+      "description": "Model-specific register (Value: 0x021E / 542)",
+      "current_hex": "0x021E",
+      "current_dec": 542
+    },
+    "01E0": {
+      "name": "Unmapped_0x01E0",
+      "description": "Model-specific register (Value: 0x008C / 140)",
+      "current_hex": "0x008C",
+      "current_dec": 140
+    },
+    "01E1": {
+      "name": "Unmapped_0x01E1",
+      "description": "Model-specific register (Value: 0x0A0A / 2570)",
+      "current_hex": "0x0A0A",
+      "current_dec": 2570
+    },
+    "01E2": {
+      "name": "Unmapped_0x01E2",
+      "description": "Model-specific register (Value: 0x026C / 620)",
+      "current_hex": "0x026C",
+      "current_dec": 620
+    },
+    "01E3": {
+      "name": "Unmapped_0x01E3",
+      "description": "Model-specific register (Value: 0x0A0A / 2570)",
+      "current_hex": "0x0A0A",
+      "current_dec": 2570
+    },
+    "01E4": {
+      "name": "Unmapped_0x01E4",
+      "description": "Model-specific register (Value: 0x4D67 / 19815)",
+      "current_hex": "0x4D67",
+      "current_dec": 19815
+    },
+    "01E5": {
+      "name": "Unmapped_0x01E5",
+      "description": "Model-specific register (Value: 0x0002 / 2)",
+      "current_hex": "0x0002",
+      "current_dec": 2
+    },
+    "01EB": {
+      "name": "Unmapped_0x01EB",
+      "description": "Model-specific register (Value: 0x0001 / 1)",
+      "current_hex": "0x0001",
+      "current_dec": 1
+    },
+    "01EC": {
+      "name": "Unmapped_0x01EC",
+      "description": "Model-specific register (Value: 0xB906 / 47366)",
+      "current_hex": "0xB906",
+      "current_dec": 47366
+    },
+    "01ED": {
+      "name": "Unmapped_0x01ED",
+      "description": "Model-specific register (Value: 0xB0B5 / 45237)",
+      "current_hex": "0xB0B5",
+      "current_dec": 45237
+    },
+    "01F0": {
+      "name": "Unmapped_0x01F0",
+      "description": "Model-specific register (Value: 0x0A3A / 2618)",
+      "current_hex": "0x0A3A",
+      "current_dec": 2618
+    },
+    "01F1": {
+      "name": "Unmapped_0x01F1",
+      "description": "Model-specific register (Value: 0x0708 / 1800)",
+      "current_hex": "0x0708",
+      "current_dec": 1800
+    },
+    "01F2": {
+      "name": "Unmapped_0x01F2",
+      "description": "Model-specific register (Value: 0x0801 / 2049)",
+      "current_hex": "0x0801",
+      "current_dec": 2049
+    },
+    "01F3": {
+      "name": "Unmapped_0x01F3",
+      "description": "Model-specific register (Value: 0x0A09 / 2569)",
+      "current_hex": "0x0A09",
+      "current_dec": 2569
+    },
+    "01F4": {
+      "name": "Unmapped_0x01F4",
+      "description": "Model-specific register (Value: 0x0650 / 1616)",
+      "current_hex": "0x0650",
+      "current_dec": 1616
+    },
+    "01F5": {
+      "name": "Unmapped_0x01F5",
+      "description": "Model-specific register (Value: 0x0028 / 40)",
+      "current_hex": "0x0028",
+      "current_dec": 40
+    },
+    "01F6": {
+      "name": "Unmapped_0x01F6",
+      "description": "Model-specific register (Value: 0x0028 / 40)",
+      "current_hex": "0x0028",
+      "current_dec": 40
+    },
+    "01F7": {
+      "name": "Unmapped_0x01F7",
+      "description": "Model-specific register (Value: 0x3A46 / 14918)",
+      "current_hex": "0x3A46",
+      "current_dec": 14918
+    },
+    "01F8": {
+      "name": "Unmapped_0x01F8",
+      "description": "Model-specific register (Value: 0x050C / 1292)",
+      "current_hex": "0x050C",
+      "current_dec": 1292
+    },
+    "01F9": {
+      "name": "Unmapped_0x01F9",
+      "description": "Model-specific register (Value: 0x1E37 / 7735)",
+      "current_hex": "0x1E37",
+      "current_dec": 7735
+    },
+    "01FA": {
+      "name": "Unmapped_0x01FA",
+      "description": "Model-specific register (Value: 0x0D50 / 3408)",
+      "current_hex": "0x0D50",
+      "current_dec": 3408
+    },
+    "01FB": {
+      "name": "Unmapped_0x01FB",
+      "description": "Model-specific register (Value: 0x0208 / 520)",
+      "current_hex": "0x0208",
+      "current_dec": 520
+    },
+    "01FC": {
+      "name": "Unmapped_0x01FC",
+      "description": "Model-specific register (Value: 0x1E23 / 7715)",
+      "current_hex": "0x1E23",
+      "current_dec": 7715
+    },
+    "01FD": {
+      "name": "Unmapped_0x01FD",
+      "description": "Model-specific register (Value: 0x0073 / 115)",
+      "current_hex": "0x0073",
+      "current_dec": 115
+    },
+    "01FF": {
+      "name": "Unmapped_0x01FF",
+      "description": "Model-specific register (Value: 0x0064 / 100)",
+      "current_hex": "0x0064",
+      "current_dec": 100
+    }
+  },
+  "recipe_buttons": [
+    {
+      "button": 1,
+      "product": "1 Espresso",
+      "volume_reg": "00B9",
+      "volume_byte": "low",
+      "settings_reg": "00B4",
+      "settings_byte": "low"
+    },
+    {
+      "button": 2,
+      "product": "2 Espressi",
+      "volume_reg": "00B9",
+      "volume_byte": "high",
+      "settings_reg": "00B4",
+      "settings_byte": "high"
+    },
+    {
+      "button": 3,
+      "product": "1 Coffee",
+      "volume_reg": "00BA",
+      "volume_byte": "low",
+      "settings_reg": "00B5",
+      "settings_byte": "low"
+    },
+    {
+      "button": 4,
+      "product": "2 Coffees",
+      "volume_reg": "00BA",
+      "volume_byte": "high",
+      "settings_reg": "00B5",
+      "settings_byte": "high"
+    }
+  ],
+  "gateways": {
+    "TY:": "ty:EF518M V02.20",
+    "TL:": "tl:R8Cx Loader V2.0",
+    "TY$:": "ty$:EF518D V02.04",
+    "TL$:": "tl$:R8C Loader V2.0",
+    "CS$:": "cs$:0105",
+    "IC:": "ic:0E0B",
+    "HZ:": "hz:010001100000,028A,00E5,0000,03D3,0802,3,000000,0000,00",
+    "AS:": "as:077306400000,0773069F0001"
+  },
+  "non_zero_eeprom": {
+    "0001": "10A9",
+    "0002": "4745",
+    "0004": "025F",
+    "0005": "15F5",
+    "0007": "0E1F",
+    "0008": "00A6",
+    "0009": "0026",
+    "000A": "6E03",
+    "000D": "0004",
+    "000E": "0002",
+    "000F": "0002",
+    "0010": "B098",
+    "0011": "0002",
+    "0012": "0187",
+    "0014": "0002",
+    "0015": "703C",
+    "001F": "01FB",
+    "0020": "0034",
+    "0021": "0640",
+    "0022": "0001",
+    "0023": "0004",
+    "0024": "0414",
+    "0025": "780A",
+    "0026": "1E04",
+    "0027": "A028",
+    "0028": "0B39",
+    "0029": "000C",
+    "002A": "0C0E",
+    "002B": "1E02",
+    "002C": "0A06",
+    "002D": "0708",
+    "002E": "2D64",
+    "002F": "141E",
+    "0030": "4660",
+    "0031": "0033",
+    "0032": "2EBE",
+    "0033": "2996",
+    "0039": "1E6F",
+    "003A": "046E",
+    "003B": "5028",
+    "003C": "180F",
+    "003D": "0014",
+    "003E": "0104",
+    "003F": "0276",
+    "0040": "050C",
+    "0041": "00E6",
+    "0042": "010A",
+    "0043": "0208",
+    "0044": "0222",
+    "0045": "006A",
+    "0046": "01D1",
+    "0047": "0510",
+    "0048": "7803",
+    "0049": "400A",
+    "004A": "DD78",
+    "004B": "050F",
+    "004C": "0A12",
+    "004D": "00C8",
+    "004E": "1455",
+    "004F": "145C",
+    "0050": "6B6B",
+    "0051": "015A",
+    "0053": "0F3C",
+    "0054": "1606",
+    "0055": "2801",
+    "0056": "00B1",
+    "0057": "0050",
+    "0058": "0204",
+    "0059": "0101",
+    "005A": "0F00",
+    "005B": "2C0C",
+    "005C": "2D80",
+    "005D": "463C",
+    "005E": "4603",
+    "005F": "2F7B",
+    "0060": "0604",
+    "0061": "FE20",
+    "0065": "2F7B",
+    "0066": "0604",
+    "0067": "0020",
+    "0068": "0001",
+    "0069": "A12F",
+    "006A": "D297",
+    "006B": "2C7F",
+    "006C": "1414",
+    "006D": "2828",
+    "006E": "0602",
+    "006F": "040A",
+    "0071": "09C4",
+    "0072": "0F0F",
+    "0074": "140E",
+    "0075": "60EA",
+    "0077": "1210",
+    "0078": "0C12",
+    "0079": "3C07",
+    "007A": "0200",
+    "007B": "0200",
+    "007C": "C733",
+    "007D": "0928",
+    "007E": "3550",
+    "007F": "891E",
+    "0081": "0028",
+    "0082": "0014",
+    "0083": "1606",
+    "0084": "3F14",
+    "0085": "00B4",
+    "0086": "0102",
+    "0087": "0307",
+    "0088": "0A01",
+    "0089": "000A",
+    "008A": "1106",
+    "008B": "01F4",
+    "008C": "0C00",
+    "008D": "1E14",
+    "008E": "4632",
+    "008F": "3E2A",
+    "0090": "5060",
+    "0091": "1E28",
+    "0092": "1A32",
+    "0093": "0E46",
+    "0094": "6C68",
+    "0095": "3C28",
+    "0096": "685E",
+    "0097": "5F5D",
+    "0098": "0B07",
+    "0099": "6E69",
+    "009A": "1214",
+    "009C": "6F00",
+    "009D": "8776",
+    "009E": "28AA",
+    "009F": "1406",
+    "00A0": "3228",
+    "00A1": "7066",
+    "00A2": "847E",
+    "00A5": "3728",
+    "00A6": "374B",
+    "00A7": "326C",
+    "00A9": "0100",
+    "00AB": "5A05",
+    "00AC": "0A1E",
+    "00AD": "0500",
+    "00B0": "0600",
+    "00B1": "1414",
+    "00B2": "4646",
+    "00B3": "0041",
+    "00B4": "0232",
+    "00B5": "0131",
+    "00B6": "3005",
+    "00B7": "7803",
+    "00B8": "140A",
+    "00B9": "090A",
+    "00BA": "1430",
+    "00BB": "2C19",
+    "00BC": "140A",
+    "00BD": "06C8",
+    "00BE": "6401",
+    "00C0": "1234",
+    "00C1": "0042",
+    "00C2": "0605",
+    "00C3": "1E32",
+    "00C4": "3200",
+    "00C5": "0AB4",
+    "00C6": "AAC8",
+    "00C7": "2C13",
+    "00C8": "221B",
+    "00C9": "2C28",
+    "00CA": "0400",
+    "00CB": "8014",
+    "00CC": "028A",
+    "00CE": "332D",
+    "00CF": "0031",
+    "00D0": "093F",
+    "00D1": "00E5",
+    "00D4": "0028",
+    "00D5": "0014",
+    "00D6": "0102",
+    "00D8": "0222",
+    "00D9": "0111",
+    "00DA": "435A",
+    "00DB": "2F4C",
+    "00DC": "2D8C",
+    "00E8": "2F7B",
+    "00EA": "0007",
+    "00EB": "2970",
+    "00EC": "FE00",
+    "00EF": "0012",
+    "00F0": "0909",
+    "00F1": "F000",
+    "00F3": "D010",
+    "0100": "0909",
+    "0101": "1414",
+    "0102": "2C14",
+    "0106": "1408",
+    "0107": "0705",
+    "0108": "1414",
+    "0109": "141E",
+    "01A8": "1604",
+    "01A9": "1001",
+    "01B0": "008E",
+    "01B1": "8A00",
+    "01B2": "054B",
+    "01B4": "0103",
+    "01B5": "0200",
+    "01C1": "050A",
+    "01C4": "031E",
+    "01C5": "7975",
+    "01C6": "786D",
+    "01C7": "8000",
+    "01C9": "3C28",
+    "01CE": "000A",
+    "01CF": "0A05",
+    "01D0": "097B",
+    "01D1": "1400",
+    "01D3": "020D",
+    "01D4": "01FC",
+    "01D5": "0101",
+    "01D6": "0192",
+    "01D7": "01CC",
+    "01D8": "2864",
+    "01D9": "0C04",
+    "01DF": "021E",
+    "01E0": "008C",
+    "01E1": "0A0A",
+    "01E2": "026C",
+    "01E3": "0A0A",
+    "01E4": "4D67",
+    "01E5": "0002",
+    "01EB": "0001",
+    "01EC": "B906",
+    "01ED": "B0B5",
+    "01F0": "0A3A",
+    "01F1": "0708",
+    "01F2": "0801",
+    "01F3": "0A09",
+    "01F4": "0650",
+    "01F5": "0028",
+    "01F6": "0028",
+    "01F7": "3A46",
+    "01F8": "050C",
+    "01F9": "1E37",
+    "01FA": "0D50",
+    "01FB": "0208",
+    "01FC": "1E23",
+    "01FD": "0073",
+    "01FF": "0064"
+  }
+}
