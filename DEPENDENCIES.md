@@ -131,7 +131,7 @@ sudo pacman -S python-gobject gtk3
 
 ### Windows 10 / 11
 ```powershell
-# Open PowerShell in the WRAT_win folder and run:
+# Open PowerShell in the spectra-win folder and run:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\install_windows.ps1
 ```
