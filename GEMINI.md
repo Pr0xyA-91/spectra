@@ -1,21 +1,21 @@
-# W.R.A.T. — WhiteRat Asynchronous Telemetry (`wrat-sniffer` Main Edition Guidelines)
+# SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics (`spectra` Main Edition Guidelines)
 
 > **IMPORTANT FOR AGY (ANTIGRAVITY) ON ANY DEVICE**:
 > Always read [`SESSION_NOTES.md`](./SESSION_NOTES.md) at the start of a session for complete hardware testbench details, protocol register mappings, architectural decisions, and multi-device setup instructions.
 > Both `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `wrat-sniffer_dev.git` only) and must **NEVER** be pushed to the public repository (`wrat-sniffer.git`).
 
 ## 1. Quick Reference & Entry Points
-- **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `JuraModernDiag.desktop`.
-- **Unit Tests**: Run `python3 -m unittest discover -s .` (8/8 tests must pass).
-- **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/wrat-sniffer/` on primary workstation).
+- **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `SPECTRA.desktop`.
+- **Unit Tests**: Run `python3 -m unittest discover -s .` (10/10 tests must pass).
+- **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/spectra/` on primary workstation).
 
 ## 2. Repository & Branch Topology (3-Branch Architecture)
 The private repository (`https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
-1. **`main` (`wrat-sniffer/`)** — Linux Jura-only Edition (`v0.3.4`).
+1. **`main` (`spectra/`)** — Linux Jura-only Edition (`v0.4.1`).
    - Remotes: `origin` (`wrat-sniffer_dev.git` — private) and `public` (`wrat-sniffer.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
-2. **`multi-manufacturer` (`WRAT/`)** — Linux Multi-Manufacturer Suite (`v0.3.4_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
+2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.4.1_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
    - Remote: `origin` (`wrat-sniffer_dev.git` ONLY — **NEVER** push to `public`).
-3. **`windows` (`WRAT_win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.1`: includes `.bat` launchers, `COM*` auto-discovery, zero-dependency Web UI fallback).
+3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.2.1`: includes `.bat` launchers, `install_windows.ps1`, `COM*` auto-discovery, zero-dependency Web UI fallback).
    - Remote: `origin` (`wrat-sniffer_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules
