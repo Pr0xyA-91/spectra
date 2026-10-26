@@ -550,7 +550,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `spectra_export_${new Date().toISOString().slice(0,10)}.${ext}`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
 
     document.getElementById('btnRefreshPorts').onclick = fetchPorts;
@@ -594,7 +597,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self' 'unsafe-inline';")
+        self.send_header("Content-Security-Policy", "default-src 'self' 'unsafe-inline' blob: data:;")
 
     def do_GET(self):
         url = urlparse(self.path)

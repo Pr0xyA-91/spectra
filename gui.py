@@ -7,6 +7,7 @@ maintenance history, active alerts, and live sensors from Jura, Nivona, and Lama
 
 import sys
 import os
+import re
 import time
 import threading
 from datetime import datetime
