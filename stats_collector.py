@@ -211,11 +211,22 @@ def query_live_sensors(
             bu_encoder_pos_raw = 0
             rotary_pos = "0"
             grounds_full = False
+            bu_init_ok = True
+            mv_init_ok = True
+            mv_busy = False
+            heater_ready_flag = True
+            button_matrix_hex = "0000"
+            aux_inputs_bits = "00"
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
                 parts = payload.split(",")
 
+                if len(parts) > 0 and len(parts[0]) >= 7:
+                    bu_init_ok = (parts[0][1] == "1")
+                    mv_busy = (parts[0][2] == "1")
+                    heater_ready_flag = (parts[0][5] == "1")
+                    mv_init_ok = (parts[0][6] == "1")
                 if len(parts) > 1:
                     try:
                         bu_encoder_upper_raw = int(parts[1], 16)
@@ -243,6 +254,10 @@ def query_live_sensors(
                         steam_ntc_raw = 0
                 if len(parts) > 6:
                     rotary_pos = parts[6]
+                if len(parts) > 7 and len(parts[7]) >= 6:
+                    aux_inputs_bits = parts[7][4:6]
+                if len(parts) > 8 and parts[8]:
+                    button_matrix_hex = parts[8]
 
                 # Physical Microswitches & Cuts:
                 # In Jura telemetry, parts[7] and parts[9] convey live microswitch cuts:
@@ -323,6 +338,10 @@ def query_live_sensors(
             total_fm_timeouts = 0
             fm_intake_timeouts = 0
             fm_rinse_timeouts = 0
+            bu_mill_target = getattr(conn, "_cached_bu_mill_target", 0)
+            bu_init_count = 0
+            loader_version = ""
+            display_firmware = ""
 
             if not fast_poll:
                 # Query hardware fault register RE:0028 (fast, ~350ms)
@@ -338,6 +357,30 @@ def query_live_sensors(
                 ic_resp = conn.query_ascii("IC:")
                 if ic_resp and ic_resp.startswith("ic:"):
                     results["raw_ic"] = ic_resp
+
+                # Query Brew Unit Grind/Mill Target Position (RE:0041) & Init Counter (RE:0056)
+                r41 = conn.query_ascii("RE:0041")
+                if r41 and r41.startswith("re:"):
+                    try:
+                        bu_mill_target = int(r41[3:], 16)
+                        setattr(conn, "_cached_bu_mill_target", bu_mill_target)
+                    except ValueError:
+                        pass
+
+                r56 = conn.query_ascii("RE:0056")
+                if r56 and r56.startswith("re:"):
+                    try:
+                        bu_init_count = int(r56[3:], 16)
+                    except ValueError:
+                        pass
+
+                tl_resp = conn.query_ascii("TL:")
+                if tl_resp and tl_resp.startswith("tl:"):
+                    loader_version = tl_resp[3:].strip()
+
+                ty_disp_resp = conn.query_ascii("TY$:")
+                if ty_disp_resp and ty_disp_resp.startswith("ty$:"):
+                    display_firmware = ty_disp_resp[4:].strip()
 
                 # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
@@ -531,17 +574,36 @@ def query_live_sensors(
                 }
             ]
             if bu_encoder_pos_raw > 0:
+                mill_str = f" | Mill Target (RE:0041): {bu_mill_target} ticks (0x{bu_mill_target:04X})" if bu_mill_target else ""
                 sensor_list.append({
                     "id": "bu_encoder",
                     "name": "Live Brew Unit Encoder",
                     "status": f"{bu_encoder_pos_raw} ticks",
-                    "ok": True,
+                    "ok": bu_init_ok,
                     "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}",
-                    "details": f"Current position: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}) | Upper stop ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X})",
+                    "details": f"Current: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}){mill_str} | Upper Ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X}) | Init Flag: {'OK' if bu_init_ok else 'Fault'}",
                     "icon": "⚙️",
                     "value": bu_encoder_pos_raw,
                     "unit": "ticks"
                 })
+            sensor_list.append({
+                "id": "mv_live_state",
+                "name": "Live Multiway Valve State",
+                "status": "Moving / Positioning" if mv_busy else ("Initialized & Idle" if mv_init_ok else "Not Initialized"),
+                "ok": mv_init_ok,
+                "badge": "MOVING" if mv_busy else ("READY" if mv_init_ok else "UNINIT"),
+                "details": f"Multiway valve init flag (HZ[0][6]): {'1 (OK)' if mv_init_ok else '0'} | Busy flag (HZ[0][2]): {'1 (Moving)' if mv_busy else '0 (Idle)'}",
+                "icon": "🔀"
+            })
+            sensor_list.append({
+                "id": "panel_inputs",
+                "name": "Live Front Panel & Aux Inputs",
+                "status": f"Rotary: {rotary_pos} | Keys: 0x{button_matrix_hex}",
+                "ok": True,
+                "badge": "IDLE" if button_matrix_hex == "0000" else f"KEY {button_matrix_hex}",
+                "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
+                "icon": "🎛️"
+            })
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -619,7 +681,14 @@ def query_live_sensors(
                 "heater_steam_str": (f"{temp_steam:.1f} °C" if temp_steam is not None else "Installed (Standby)") if is_dual_heater else "Not Installed (Single Heater Model)",
                 "bu_encoder_pos": bu_encoder_pos_raw,
                 "bu_encoder_upper": bu_encoder_upper_raw,
+                "bu_mill_target": bu_mill_target,
                 "bu_encoder_str": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks" if bu_encoder_pos_raw > 0 else "N/A",
+                "bu_init_ok": bu_init_ok,
+                "mv_init_ok": mv_init_ok,
+                "mv_busy": mv_busy,
+                "heater_ready_flag": heater_ready_flag,
+                "button_matrix": button_matrix_hex,
+                "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
                 "rotary_switch": rotary_pos,
                 "flow_pulses": flow_pulses_raw,
@@ -634,6 +703,11 @@ def query_live_sensors(
                 results["telemetry"]["total_fm_timeouts"] = total_fm_timeouts
                 results["telemetry"]["fm_intake_timeouts"] = fm_intake_timeouts
                 results["telemetry"]["fm_rinse_timeouts"] = fm_rinse_timeouts
+                results["telemetry"]["bu_init_count"] = bu_init_count
+                if loader_version:
+                    results["telemetry"]["loader_version"] = loader_version
+                if display_firmware:
+                    results["telemetry"]["display_firmware"] = display_firmware
             # Append only live physical lockouts to active alerts (historical RE:0028 faults stay in sensors/diagnostics)
             if not tray_ok:
                 results["alerts"].append({"name": "Drip Tray Missing", "details": "Insert drip tray / grounds drawer", "blocking": True})
@@ -1390,6 +1464,14 @@ class JuraStatsSession:
                     out.append(f"   * Steam Thermoblock (TB2)       : Not Installed (Single Heater Model)")
                 if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
                     out.append(f"   * Brew Unit Encoder (Pos / Ref) : {telem['bu_encoder_str']}")
+                if "bu_mill_target" in telem:
+                    out.append(f"   * Brew Unit Mill Target (RE:0041): {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
+                if "bu_init_count" in telem:
+                    out.append(f"   * Brew Unit Init Count (RE:0056): {telem['bu_init_count']} cycles")
+                if "loader_version" in telem:
+                    out.append(f"   * Main Board Bootloader (TL:)   : {telem['loader_version']}")
+                if "display_firmware" in telem:
+                    out.append(f"   * Display / Sub-MCU (TY$:)      : {telem['display_firmware']}")
                 out.append("")
 
             if ls.get("switches"):

@@ -130,6 +130,40 @@ conn.close()
   - `parts[2]` (`0x00E3` = `227` ticks) is the **Brew Unit Current / Lower (Mill) Encoder Position** (`Copy(hz_payload, 19, 4)` in Jura's `WaterControl`, calibrated against `RE:0041 = 0x00E6` = `230` ticks).
 * **RULE**: Never decode `parts[2]` as an ambient/water-intake temperature (`227 / 10 = 22.7 °C`). Single-heater Jura machines (`EF518M` etc.) have only one NTC sensor (`parts[4]` Coffee Thermoblock); dual-heater machines add `parts[5]` (Steam Thermoblock).
 
+### 6. Complete `EF518M` / `EF518D` Sensor, Register & Sub-Bus (`$:`) Map
+* **Dual-MCU Architecture**:
+  - `TY:` $\rightarrow$ `ty:EF518M V02.20` (Main Logic Board Firmware)
+  - `TL:` $\rightarrow$ `tl:R8Cx Loader V2.0` (Main Logic Board Bootloader)
+  - `TY$:` $\rightarrow$ `ty$:EF518D V02.04` (Display / Front Panel MCU Firmware on `$` sub-bus)
+  - `TL$:` $\rightarrow$ `tl$:R8C Loader V2.0` (Display / Front Panel MCU Bootloader)
+  - `CS$:` $\rightarrow$ `cs$:181C` (Display MCU Flash/ROM Checksum `0x181C`)
+  - `DI$:` $\rightarrow$ Triggers the built-in **Display Pixel Check** on the `EF518D` Display Unit (and re-homes the Brew Unit encoder / resets cycle flowmeter counter). Do **not** include `DI$:` in passive read-only polling.
+  - `AS:` $\rightarrow$ `as:077106810000,077106E40001` (Main Board Analog Sensor Check from `P518Ani.exe`).
+* **`HZ:` Bitfield Breakdown (`hz:010001100000,0287,00E3,0078,03DE,0802,3,000100,0000,00`)**:
+  - `parts[0][0]` (`cut="1,1"`): Busy / Operation active (`0` = Idle/Ready, `1` = Busy/Steam-out)
+  - `parts[0][1]` (`cut="2,1"`): Brew Unit Initialized & Positioned OK (`1` = OK, `0` = Fault 248)
+  - `parts[0][2]` (`cut="3,1"`): Multiway Valve Moving / Busy (`0` = Idle, `1` = Moving)
+  - `parts[0][5]` (`cut="6,1"`): Coffee Thermoblock Temperature Ready (`1` = Ready, `0` = Heating/Fault 708)
+  - `parts[0][6]` (`cut="7,1"`): Multiway Valve Initialized OK (`1` = OK)
+  - `parts[1]` (`cut="14,4"`): Brew Unit Upper / Reference Encoder Position (`0x0287` = `647` ticks)
+  - `parts[2]` (`cut="19,4"`): Brew Unit Current / Lower (Mill) Encoder Position (`0x00E3` = `227` ticks)
+  - `parts[3]` (`cut="24,4"`): DigiMesa Flowmeter Turbine Pulse Counter (`2.366 pulses/ml`)
+  - `parts[4]` (`cut="29,4"`): Coffee Thermoblock NTC Sensor (`0.1 °C` resolution, e.g. `0x03DE` = `99.0 °C`)
+  - `parts[5]` (`cut="34,4"`): Steam Thermoblock NTC (`0x0802` = `2050` open pull-up on single-heater models)
+  - `parts[6]` (`cut="39,1"`): Selector State (`3` on `EF518M`; front-panel rotary/buttons are handled locally on `EF518D`)
+  - `parts[7][0]` (`cut="41,1"`): Drip Tray Microswitch (`0` = Inserted, `1` = Missing)
+  - `parts[7][1]` (`cut="42,1"`): Grounds Container Full (`0` = OK, `1` = Full)
+  - `parts[7][2]` (`cut="43,1"`): Water Tank Float/Reed Sensor (`0` = Water OK, `1` = Empty)
+  - `parts[7][3]` (`cut="44,1"`): 1 Hz MCU Internal Heartbeat Oscillator (`0` $\leftrightarrow$ `1`)
+  - `parts[7][4..5]` (`cut="45,2"`): Auxiliary input bits (`00`)
+  - `parts[8]` (`cut="48,4"`): Key Matrix (`0000`)
+  - `parts[9][0..1]` (`cut="53,2"`): Hardware Interlock Mirrors (Tray `parts[9][0]`, Tank `parts[9][1]`)
+* **Brew Unit Calibration & Subsystem Registers**:
+  - `RE:0040`: `0x050C` (`1292` ticks, Brew Unit mechanical upper limit)
+  - `RE:0041`: `0x00E6` (`230` ticks, Brew Unit calibrated Mill/Grind Target Position)
+  - `RE:0042`..`RE:0044`: `0x010A` (`266`), `0x0208` (`520`), `0x0222` (`546`) intermediate travel targets
+  - `RE:0056`: `0x00AF` (`175` cycles, Brew Unit Initialization Counter)
+
 ---
 
 ## 5. Security & Privacy Guardrails

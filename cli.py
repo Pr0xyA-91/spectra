@@ -144,6 +144,47 @@ def main():
             for c_name, c_cnt in sensors_data["error_counters"].items():
                 print(f"  * {c_name:<36}: {c_cnt:>5} events")
 
+        if sensors_data.get("telemetry"):
+            print("\n[THERMAL HEATING & SUBSYSTEM TELEMETRY]")
+            telem = sensors_data["telemetry"]
+            is_dual = telem.get("is_dual_heater", False)
+            arch_str = "Dual-Heater Model (2 Thermoblocks)" if is_dual else "Single-Heater Model (1 Thermoblock)"
+            print(f"  * Machine Architecture             : {arch_str}")
+
+            c_str = telem.get("heater_coffee_str", "N/A")
+            c_stat = telem.get("heater_coffee_status", "Nominal")
+            raw_c = telem.get("heater_coffee_raw", telem.get("heater_ntc_raw", 0))
+            print(f"  ☕ Coffee Thermoblock (TB1)        : {c_str:<12} [{c_stat}] (ADC: 0x{raw_c:04X})")
+
+            s_str = telem.get("heater_steam_str", "N/A")
+            s_stat = telem.get("heater_steam_status", "")
+            raw_s = telem.get("heater_steam_raw", 0)
+            if is_dual:
+                print(f"  💨 Steam Thermoblock (TB2)         : {s_str:<12} [{s_stat}] (ADC: 0x{raw_s:04X})")
+            else:
+                print(f"  💨 Steam Thermoblock (TB2)         : Not Installed (Single Heater Model)")
+
+            if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
+                raw_pos = telem.get("bu_encoder_pos", 0)
+                raw_ref = telem.get("bu_encoder_upper", 0)
+                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} (0x{raw_pos:04X} / 0x{raw_ref:04X})")
+            if "bu_mill_target" in telem:
+                print(f"  🎯 Brew Unit Mill Target (RE:0041) : {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
+            if "bu_init_count" in telem:
+                print(f"  🔄 Brew Unit Init Counter (RE:0056): {telem['bu_init_count']} cycles")
+            if "loader_version" in telem:
+                print(f"  * Main Board Bootloader (TL:)      : {telem['loader_version']}")
+            if "display_firmware" in telem:
+                print(f"  * Display / Sub-MCU Firmware (TY$:): {telem['display_firmware']}")
+            if "water_hardness_dh" in telem:
+                print(f"  * Configured Water Hardness        : {telem['water_hardness_dh']} °dH")
+            if "filter_volume_liters" in telem:
+                print(f"  * Water Volume Through Filter      : {telem['filter_volume_liters']} Liters")
+            if "rotary_switch" in telem:
+                print(f"  * Selection / Rotary Switch Position: {telem['rotary_switch']}")
+            if "button_matrix" in telem:
+                print(f"  * Front Panel Key Matrix / Aux Bits: 0x{telem['button_matrix']} / {telem.get('aux_inputs', '00')}")
+
         print("=" * 78 + "\n")
 
         if args.export:
