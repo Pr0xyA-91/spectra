@@ -21,7 +21,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 # Global state for background polling
 _poll_lock = threading.Lock()

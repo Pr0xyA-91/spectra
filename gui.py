@@ -33,7 +33,7 @@ import stats_collector as sc
 from wrat_engine import WRATSession, format_text_summary, format_csv_summary
 from drivers import DRIVER_DISPLAY_NAMES
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 class JuraDiagApp(Gtk.Window):

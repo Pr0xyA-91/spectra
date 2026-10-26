@@ -13,7 +13,7 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 def print_banner():
@@ -24,14 +24,14 @@ def print_banner():
   ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══██║
   ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝
-   — Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.1) —
+   — Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.2) —
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.1)"
+        description="SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v0.2.2)"
     )
     parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (Hardware Telemetry & Logic Board Diagnostics)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")

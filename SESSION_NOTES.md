@@ -1,32 +1,32 @@
 # SPECTRA — Comprehensive Context & Session Notes for Agy
-**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.1)
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.2)
 
-> **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/wrat-sniffer.git`).
+> **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/spectra_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/spectra.git`).
 
 ---
 
 ## 1. Multi-Device Onboarding & Setup for Agy
 
-When cloning or resuming work on a new machine, the private repository `wrat-sniffer_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
+When cloning or resuming work on a new machine, the private repository `spectra_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.4.2` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.2_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.2.2` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
 mkdir -p ~/Projects && cd ~/Projects
 
 # 1. Main Linux Jura-only edition:
-git clone -b main https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra
+git clone -b main https://github.com/Pr0xyA-91/spectra_dev.git spectra
 
 # 2. Linux Multi-Manufacturer edition:
-git clone -b multi-manufacturer https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-mm
+git clone -b multi-manufacturer https://github.com/Pr0xyA-91/spectra_dev.git spectra-mm
 
 # 3. Windows Cross-Platform edition:
-git clone -b windows https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-win
+git clone -b windows https://github.com/Pr0xyA-91/spectra_dev.git spectra-win
 ```
 
 ### Quick Verification Commands
@@ -194,10 +194,10 @@ conn.close()
 ---
 
 ## 5. Security & Privacy Guardrails
-1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`wrat-sniffer.git`).
-2. Only `wrat-sniffer` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `wrat-sniffer.git` repository. `WRAT` (`multi-manufacturer`) and `WRAT_win` (`windows`) are strictly private.
-3. On any new device where `wrat-sniffer` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
-4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.4.1.tar.gz`, `WRAT-v0.4.1_mm.tar.gz`, `WRAT_win-v0.2.1.tar.gz`).
+1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`spectra.git`).
+2. Only `spectra` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `spectra.git` repository. `spectra-mm` (`multi-manufacturer`) and `spectra-win` (`windows`) are strictly private.
+3. On any new device where `spectra` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
+4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`spectra-v0.4.1.tar.gz`, `spectra-mm-v0.4.1.tar.gz`, `spectra-win-v0.2.1.tar.gz`).
 
 ---
 
@@ -225,3 +225,45 @@ conn.close()
   - Updated all banners, web dashboard UI headers, docstrings, and documentation.
   - Renamed local project working directories to `~/Projects/spectra`, `~/Projects/spectra-mm`, and `~/Projects/spectra-win`.
   - Updated application icon (`icon.png`) to the cyberpunk obsidian refraction prism.
+
+---
+
+## 7. GTK3 Hitbox & Active Zone Desync Resolution (Session 2026-10-26)
+* **Root Cause Diagnosis**:
+  1. **Window Horizontal Overflow / Surface Desync**:
+     - `_create_sensors_tab()` placed 9 diagnostic sensor badges horizontally inside a single `Gtk.Box(spacing=6)` configured with `homogeneous=True`.
+     - Because each badge had a natural width of ~150px, this forced the minimum preferred width of the entire window to **1,398 px**.
+     - On displays constrained by fractional scaling (e.g. 1600x900 @ 1.25x = 1280x698 logical space on Hyprland), the Wayland compositor clamped the window surface to 1,280 px.
+     - Because GTK3's internal layout could not shrink below 1,398 px, the compositor's pointer event coordinate space and GTK's rendered widget buffer became severely desynced, particularly towards the right side of the window where `btn_read` ("Read Statistics") is placed.
+  2. **Ambiguous CheckButton Hit Area**:
+     - "Auto-Poll (2s)" was implemented as a `Gtk.CheckButton`, which in modern dark themes has an ambiguous hit target (a small checkbox indicator plus plain text without a bounded button box).
+  3. **Button Alignment & CSS Feedback**:
+     - Action buttons lacked explicit vertical centering (`set_valign(Gtk.Align.CENTER)`), causing variable event box heights inside the horizontal header panel and control bar.
+     - `button.primary-btn` lacked `:active` and `:disabled` visual feedback states.
+* **Implemented Fixes**:
+  1. **2-Row Responsive Grid Layout**:
+     - Replaced the single-row horizontal box in `_create_sensors_tab()` with a responsive 2-row `Gtk.Grid(column_homogeneous=True)`.
+     - Row 0 (5 columns): Machine State, Brew Unit, Water Tank, Drip Tray, Bean Hopper.
+     - Row 1 (4 columns): Coffee Thermoblock, Steam Thermoblock, Water Flow, Water Filter (spanning 2 columns).
+     - Reduced window minimum preferred width from **1,398 px down to 1,042 px** (`1,195 px` in multi-manufacturer edition), easily fitting standard 1280 px displays with zero compositor clipping or coordinate scaling artifacts.
+  2. **Modern `Gtk.ToggleButton` for Auto-Poll**:
+     - Replaced `Gtk.CheckButton` with a proper `Gtk.ToggleButton` with `.toggle-btn` styling.
+     - Added distinct active/pressed styling (`button.toggle-btn:checked`) with a luminous green/cyan gradient (`#a6e3a1` to `#94e2d5`), giving 100% matched rectangular hitbox and visual active indication.
+  3. **Strict Vertical Alignment & Port Ellipsizing**:
+     - Explicitly centered (`Gtk.Align.CENTER`) all buttons and controls in `_create_header_bar()` and `_create_sensors_tab()`.
+     - Added Pango ellipsizing to `port_combo` to prevent simulation entries from stretching the header.
+     - Added `:active` and `:disabled` CSS states to `button.primary-btn`.
+  4. Mirrored across all 3 editions (`spectra`, `spectra-mm`, `spectra-win`) and verified with all 46 unit tests passing.
+
+---
+
+## 8. Performance Optimization, Security Hardening & v0.4.2 Release (Session 2026-10-26)
+* **Performance Enhancements**:
+  - In-memory profile resolution and model specification caching (`_PROFILE_LOOKUP_CACHE`, `_MODEL_SPEC_LOOKUP_CACHE`) in `profiles_db.py` reducing live auto-polling query resolution to O(1).
+  - Optimized `query_ascii` frame reassembly in `serial_io.py` by removing redundant loop sleeping, relying on kernel `select.select()` yielding.
+* **Security & Resource Management**:
+  - Implemented `__enter__` and `__exit__` context managers on `JuraSerialConnection` and `JuraStatsSession` for deterministic serial port cleanup.
+  - Injected defense-in-depth HTTP security headers (`nosniff`, `DENY`, `no-referrer`, `CSP`) in `gui_web.py`.
+  - Added strict input validation for serial port parameters (`is_valid_port()`) in Web API.
+  - Resolved GTK export dialog `import re` NameError and permitted `blob: data:` in Web CSP for reliable report saving.
+  - Bumped version to `v0.4.2` (`spectra`), `v0.4.2_mm` (`spectra-mm`), and `v0.2.2` (`spectra-win`).
