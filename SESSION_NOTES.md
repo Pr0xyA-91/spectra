@@ -225,3 +225,32 @@ conn.close()
   - Updated all banners, web dashboard UI headers, docstrings, and documentation.
   - Renamed local project working directories to `~/Projects/spectra`, `~/Projects/spectra-mm`, and `~/Projects/spectra-win`.
   - Updated application icon (`icon.png`) to the cyberpunk obsidian refraction prism.
+
+---
+
+## 7. GTK3 Hitbox & Active Zone Desync Resolution (Session 2026-10-26)
+* **Root Cause Diagnosis**:
+  1. **Window Horizontal Overflow / Surface Desync**:
+     - `_create_sensors_tab()` placed 9 diagnostic sensor badges horizontally inside a single `Gtk.Box(spacing=6)` configured with `homogeneous=True`.
+     - Because each badge had a natural width of ~150px, this forced the minimum preferred width of the entire window to **1,398 px**.
+     - On displays constrained by fractional scaling (e.g. 1600x900 @ 1.25x = 1280x698 logical space on Hyprland), the Wayland compositor clamped the window surface to 1,280 px.
+     - Because GTK3's internal layout could not shrink below 1,398 px, the compositor's pointer event coordinate space and GTK's rendered widget buffer became severely desynced, particularly towards the right side of the window where `btn_read` ("Read Statistics") is placed.
+  2. **Ambiguous CheckButton Hit Area**:
+     - "Auto-Poll (2s)" was implemented as a `Gtk.CheckButton`, which in modern dark themes has an ambiguous hit target (a small checkbox indicator plus plain text without a bounded button box).
+  3. **Button Alignment & CSS Feedback**:
+     - Action buttons lacked explicit vertical centering (`set_valign(Gtk.Align.CENTER)`), causing variable event box heights inside the horizontal header panel and control bar.
+     - `button.primary-btn` lacked `:active` and `:disabled` visual feedback states.
+* **Implemented Fixes**:
+  1. **2-Row Responsive Grid Layout**:
+     - Replaced the single-row horizontal box in `_create_sensors_tab()` with a responsive 2-row `Gtk.Grid(column_homogeneous=True)`.
+     - Row 0 (5 columns): Machine State, Brew Unit, Water Tank, Drip Tray, Bean Hopper.
+     - Row 1 (4 columns): Coffee Thermoblock, Steam Thermoblock, Water Flow, Water Filter (spanning 2 columns).
+     - Reduced window minimum preferred width from **1,398 px down to 1,042 px** (`1,195 px` in multi-manufacturer edition), easily fitting standard 1280 px displays with zero compositor clipping or coordinate scaling artifacts.
+  2. **Modern `Gtk.ToggleButton` for Auto-Poll**:
+     - Replaced `Gtk.CheckButton` with a proper `Gtk.ToggleButton` with `.toggle-btn` styling.
+     - Added distinct active/pressed styling (`button.toggle-btn:checked`) with a luminous green/cyan gradient (`#a6e3a1` to `#94e2d5`), giving 100% matched rectangular hitbox and visual active indication.
+  3. **Strict Vertical Alignment & Port Ellipsizing**:
+     - Explicitly centered (`Gtk.Align.CENTER`) all buttons and controls in `_create_header_bar()` and `_create_sensors_tab()`.
+     - Added Pango ellipsizing to `port_combo` to prevent simulation entries from stretching the header.
+     - Added `:active` and `:disabled` CSS states to `button.primary-btn`.
+  4. Mirrored across all 3 editions (`spectra`, `spectra-mm`, `spectra-win`) and verified with all 46 unit tests passing.
