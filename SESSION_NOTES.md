@@ -1,5 +1,5 @@
-# W.R.A.T. & wrat-sniffer — Comprehensive Context & Session Notes for Agy
-**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working
+# SPECTRA — Comprehensive Context & Session Notes for Agy
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.1)
 
 > **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/wrat-sniffer.git`).
 
@@ -11,28 +11,28 @@ When cloning or resuming work on a new machine, the private repository `wrat-sni
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/wrat-sniffer` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
-| `~/Projects/WRAT` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
-| `~/Projects/WRAT_win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
 mkdir -p ~/Projects && cd ~/Projects
 
 # 1. Main Linux Jura-only edition:
-git clone -b main https://github.com/Pr0xyA-91/wrat-sniffer_dev.git wrat-sniffer
+git clone -b main https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra
 
 # 2. Linux Multi-Manufacturer edition:
-git clone -b multi-manufacturer https://github.com/Pr0xyA-91/wrat-sniffer_dev.git WRAT
+git clone -b multi-manufacturer https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-mm
 
 # 3. Windows Cross-Platform edition:
-git clone -b windows https://github.com/Pr0xyA-91/wrat-sniffer_dev.git WRAT_win
+git clone -b windows https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-win
 ```
 
 ### Quick Verification Commands
 ```bash
-# Run unit tests in wrat-sniffer (8/8 tests must pass):
-cd ~/Projects/wrat-sniffer && python3 -m unittest discover -s .
+# Run unit tests in spectra (10/10 tests must pass):
+cd ~/Projects/spectra && python3 -m unittest discover -s .
 
 # Run unit tests in WRAT / WRAT_win (16/16 tests must pass):
 cd ~/Projects/WRAT && python3 -m unittest discover -s .
@@ -216,6 +216,12 @@ conn.close()
   - `WRAT_win/INSTALL_WINDOWS.md`: Complete guide covering Python install (PATH checkbox requirement), FTDI/CH340 drivers, Device Manager COM verification, and running scripts.
   - `WRAT_win/install_windows.ps1`: Automated PowerShell installer handling execution policy bypass, python/pip check, installing `pyserial`, testing COM ports, and optional desktop shortcut creation.
 * **Version Alignment & Synchronization**:
-  - Updated versions and banners: `v0.4.1` (`wrat-sniffer`), `v0.4.1_mm` (`WRAT`), `v0.2.1` (`WRAT_win`).
+  - Updated versions and banners: `v0.4.1` (`spectra`), `v0.4.1_mm` (`spectra-mm`), `v0.2.1` (`spectra-win`).
   - Mirrored all tools, documentation, model specs, and test enhancements across all three repositories.
-  - All 46 unit tests passing across all test suites (`10/10` in `wrat-sniffer`, `18/18` in `WRAT`, `18/18` in `WRAT_win`).
+  - All 46 unit tests passing across all test suites (`10/10` in `spectra`, `18/18` in `spectra-mm`, `18/18` in `spectra-win`).
+* **Project Rebranding to SPECTRA**:
+  - Successfully transitioned project identity from W.R.A.T. to **SPECTRA** (*Universal Hardware Telemetry & Logic Board Diagnostics*).
+  - Renamed desktop launcher entries to `SPECTRA.desktop`.
+  - Updated all banners, web dashboard UI headers, docstrings, and documentation.
+  - Renamed local project working directories to `~/Projects/spectra`, `~/Projects/spectra-mm`, and `~/Projects/spectra-win`.
+  - Updated application icon (`icon.png`) to the cyberpunk obsidian refraction prism.

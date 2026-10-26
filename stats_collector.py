@@ -1512,7 +1512,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"W.R.A.T. Telemetry Suite v{__version__} (WhiteRat Asynchronous Telemetry - Jura Module)")
+        out.append(f"SPECTRA Diagnostics Suite v{__version__} (Hardware Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")
@@ -1741,7 +1741,7 @@ def generate_eeprom_diff_report(
 
     lines = []
     lines.append("=" * 82)
-    lines.append(f"W.R.A.T. EEPROM & TELEMETRY AUDIT DIFF — {label}")
+    lines.append(f"SPECTRA EEPROM & TELEMETRY AUDIT DIFF — {label}")
     lines.append(f"Live Interrogation vs. Baseline: {baseline_name}")
     lines.append("=" * 82)
 

@@ -1,4 +1,4 @@
-# W.R.A.T. — WhiteRat Asynchronous Telemetry
+# SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics
 
 [![Version: 0.4.1](https://img.shields.io/badge/version-0.4.1-blue.svg)](https://github.com/Pr0xyA-91/wrat-sniffer)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -8,7 +8,7 @@
 
 > [!NOTE]
 > **Project Status: v0.4.1 (Jura Linux Edition)** — Active reverse-engineering and protocol integration.
-> **W.R.A.T.** (**W**hite**R**at **A**synchronous **T**elemetry) is an extensible appliance telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines with dynamic model profiling, EEPROM baseline diffing, and optical sensor interrogation.
+> **SPECTRA** is an extensible appliance hardware telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines with dynamic model profiling, EEPROM baseline diffing, optical sensor interrogation, and community model dumper tools.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
 
@@ -151,7 +151,7 @@ sudo usermod -aG dialout $USER
 ```
 .
 ├── run.sh                  # Application launcher script (CLI & GUI)
-├── JuraModernDiag.desktop  # Desktop entry launcher
+├── SPECTRA.desktop         # Desktop entry launcher
 ├── icon.png                # Application desktop icon
 ├── gui.py                  # GTK 3 desktop application
 ├── cli.py                  # Command-line interface runner
