@@ -65,6 +65,8 @@ def list_serial_ports() -> List[str]:
             ports.append(tty)
 
     # Always provide Demo / Simulation option
+    ports.append("DEMO / SIMULATION (Jura Impressa XJ5)")
+    ports.append("DEMO / SIMULATION (Jura Z6)")
     ports.append("DEMO / SIMULATION (Jura S8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
@@ -86,7 +88,11 @@ class JuraSerialConnection:
         self.is_open = False
 
         if self.is_demo:
-            if "Z10" in port_name.upper():
+            if "XJ5" in port_name.upper():
+                self.mock_machine = MockJuraMachine(model_ef="EF518M V02.20", model_name="IMPRESSA XJ5")
+            elif "Z6" in port_name.upper():
+                self.mock_machine = MockJuraMachine(model_ef="EF540M V01.22", model_name="Z6")
+            elif "Z10" in port_name.upper():
                 self.mock_machine = MockJuraMachine(model_ef="EF545 V01.20", model_name="Z10")
             elif "E8" in port_name.upper():
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
@@ -279,6 +285,9 @@ class JuraSerialConnection:
                 if "Z10" in self.port_name.upper():
                     # Dual heater demo model (Coffee: 94.2°C, Steam: 135.0°C)
                     return "hz:010001100000,027E,00E2,0000,03AE,0546,4,000000,0000,00"
+                elif "XJ5" in self.port_name.upper() or "Z6" in self.port_name.upper():
+                    # Dual heater demo model (Coffee: 92.4°C [0x039C], Steam: 135.0°C [0x0546])
+                    return "hz:010001100000,027E,00E2,0000,039C,0546,4,000000,0000,00"
                 else:
                     # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
                     return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
