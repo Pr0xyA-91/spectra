@@ -21,7 +21,7 @@ import stats_collector as sc
 from spectra_engine import SpectraSession, WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.4.2_mm"
+__version__ = "0.5.0_win"
 
 # Global state for background polling
 _poll_lock = threading.Lock()

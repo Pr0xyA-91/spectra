@@ -11,11 +11,11 @@
 
 ## 2. Repository & Branch Topology (3-Branch Architecture)
 The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
-1. **`main` (`spectra/`)** — Linux Jura-only Edition (`v0.4.2`).
+1. **`main` (`spectra/`)** — Linux Jura-only Edition (`v0.5.0`).
    - Remotes: `origin` (`spectra_dev.git` — private) and `public` (`spectra.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
-2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.4.2_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
+2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.5.0_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
-3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.2.2`: includes `.bat` launchers, `install_windows.ps1`, `COM*` auto-discovery, zero-dependency Web UI fallback).
+3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.5.0_win`: includes `.bat` launchers, `install_windows.ps1`, `COM*` auto-discovery, zero-dependency Web UI fallback).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules

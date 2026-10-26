@@ -19,6 +19,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib, Pango
 
+__version__ = "0.5.0_win"
+
 
 # ============================================================================
 # 1. Digital Twin Widget (Interactive Hydraulic & Sensor Schematic)
@@ -1140,7 +1142,7 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     </div>
 
     <div class="footer">
-        <span>Verified by SPECTRA Hardware Interrogation Engine (v{__version__ if '__version__' in globals() else '0.4.3'})</span>
+        <span>Verified by SPECTRA Hardware Interrogation Engine (v{__version__})</span>
         <span>Checksum: SHA256-AUTHENTICATED • Non-invasive Optical Bus Telemetry</span>
     </div>
 </div>
