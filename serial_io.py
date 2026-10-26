@@ -12,6 +12,7 @@ Supports:
 """
 
 import os
+import sys
 import glob
 import time
 import select
@@ -26,6 +27,7 @@ except ImportError:
 
 try:
     import serial
+    import serial.tools.list_ports
     HAS_PYSERIAL = True
 except ImportError:
     HAS_PYSERIAL = False
@@ -34,17 +36,33 @@ from jura_protocol import MockJuraMachine
 
 
 def list_serial_ports() -> List[str]:
-    """Discover available physical and virtual serial ports on Linux."""
+    """Discover available physical and virtual serial ports on Linux and Windows."""
     ports = []
-    # High priority: USB adapters commonly used for Jura diagnostics (FTDI, CH340, CP210x)
-    for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
-        ports.extend(sorted(glob.glob(pattern)))
-    # Virtual PTYs
-    for pty_path in sorted(glob.glob("/dev/pts/[0-9]*")):
-        ports.append(pty_path)
-    # Hardware motherboard serials (usually low priority)
-    for tty in sorted(glob.glob("/dev/ttyS[0-3]")):
-        ports.append(tty)
+
+    # Windows COM ports
+    if sys.platform.startswith("win"):
+        if HAS_PYSERIAL:
+            try:
+                for p in serial.tools.list_ports.comports():
+                    desc = f" ({p.description})" if p.description and p.description != "n/a" else ""
+                    ports.append(f"{p.device}{desc}")
+            except Exception:
+                pass
+        if not ports:
+            # Fallback scan COM1..COM16
+            for i in range(1, 17):
+                ports.append(f"COM{i}")
+    else:
+        # Linux / POSIX ports
+        # High priority: USB adapters commonly used for Jura diagnostics (FTDI, CH340, CP210x)
+        for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
+            ports.extend(sorted(glob.glob(pattern)))
+        # Virtual PTYs
+        for pty_path in sorted(glob.glob("/dev/pts/[0-9]*")):
+            ports.append(pty_path)
+        # Hardware motherboard serials (usually low priority)
+        for tty in sorted(glob.glob("/dev/ttyS[0-3]")):
+            ports.append(tty)
 
     # Always provide Demo / Simulation option
     ports.append("DEMO / SIMULATION (Jura S8)")
@@ -313,7 +331,6 @@ class JuraSerialConnection:
                         # Give machine UART 40ms to settle before next command
                         time.sleep(0.04)
                         return replies[0]
-            time.sleep(0.01)
 
         return None
 
@@ -332,6 +349,12 @@ class JuraSerialConnection:
                 pass
             self.py_serial = None
         self.is_open = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
 # Universal Alias for multi-vendor abstraction
