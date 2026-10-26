@@ -33,7 +33,7 @@ Choose any of the three installation methods below:
 ### Method 1: Automated PowerShell Script (Recommended)
 This script automatically checks Python, upgrades `pip`, installs `pyserial`, scans for connected COM ports, and creates an optional Desktop shortcut.
 
-1. Open File Explorer and navigate to your `WRAT_win` folder.
+1. Open File Explorer and navigate to your `spectra-win` folder.
 2. Right-click in the empty space, hold `Shift`, and select **Open PowerShell window here** (or **Open in Terminal**).
 3. Run the following command:
    ```powershell
@@ -45,7 +45,7 @@ This script automatically checks Python, upgrades `pip`, installs `pyserial`, sc
 ---
 
 ### Method 2: One-Click Batch Installer
-1. Navigate to the `WRAT_win` folder.
+1. Navigate to the `spectra-win` folder.
 2. Double-click **`install_windows.bat`**.
 3. A command prompt window will open, verify Python, and install dependencies automatically.
 4. Press any key when finished.
@@ -53,7 +53,7 @@ This script automatically checks Python, upgrades `pip`, installs `pyserial`, sc
 ---
 
 ### Method 3: Manual Command Line
-1. Open **Command Prompt** (`cmd.exe`) or **PowerShell** in the `WRAT_win` directory.
+1. Open **Command Prompt** (`cmd.exe`) or **PowerShell** in the `spectra-win` directory.
 2. Run:
    ```cmd
    python -m pip install --upgrade pip

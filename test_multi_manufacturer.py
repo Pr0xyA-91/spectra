@@ -31,7 +31,7 @@ from drivers.lamanti_jn.driver import (
     JETINNO_FAULT_CODES
 )
 from drivers import list_drivers, get_driver, detect_driver
-from wrat_engine import WRATSession
+from spectra_engine import SpectraSession, WRATSession
 import serial_io
 
 
@@ -217,9 +217,10 @@ class TestMultiManufacturerDrivers(unittest.TestCase):
         self.assertEqual(drv_jn.vendor, "Lamanti-JN")
         self.assertEqual(id_jn.vendor, "Lamanti-JN")
 
-    def test_wrat_session_coordinator(self):
+    def test_spectra_session_coordinator(self):
+        self.assertIs(WRATSession, SpectraSession)
         conn_kl = MockSerialPort(vendor_profile="lamanti-kl")
-        session = WRATSession(manufacturer="auto", conn=conn_kl)
+        session = SpectraSession(manufacturer="auto", conn=conn_kl)
         session.initialize_driver()
         self.assertEqual(session.driver.vendor, "Lamanti-KL")
 

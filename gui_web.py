@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional
 
 import serial_io
 import stats_collector as sc
-from wrat_engine import WRATSession
+from spectra_engine import SpectraSession, WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
 __version__ = "0.2.2"
@@ -28,7 +28,7 @@ _poll_lock = threading.Lock()
 _poll_active = False
 _poll_thread: Optional[threading.Thread] = None
 _latest_telemetry: Dict[str, Any] = {}
-_active_session: Optional[WRATSession] = None
+_active_session: Optional[SpectraSession] = None
 _current_port: str = ""
 _current_mfr: str = "auto"
 
@@ -637,7 +637,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
                             pass
                     _current_port = port
                     _current_mfr = mfr
-                    _active_session = WRATSession(port_name=port, manufacturer=mfr)
+                    _active_session = SpectraSession(port_name=port, manufacturer=mfr)
 
                 try:
                     data = _active_session.query_live_sensors(fast_poll=fast_poll)
@@ -664,7 +664,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                     _active_session = None
-                session = WRATSession(port_name=port, manufacturer=mfr)
+                session = SpectraSession(port_name=port, manufacturer=mfr)
                 try:
                     session.run_interrogation()
                     data = session.get_structured_summary()

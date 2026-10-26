@@ -30,7 +30,7 @@ except (ImportError, ValueError) as e:
 import serial_io
 import profiles_db
 import stats_collector as sc
-from wrat_engine import WRATSession, format_text_summary, format_csv_summary
+from spectra_engine import SpectraSession, WRATSession, format_text_summary, format_csv_summary
 from drivers import DRIVER_DISPLAY_NAMES
 
 __version__ = "0.2.2"
@@ -46,12 +46,20 @@ class JuraDiagApp(Gtk.Window):
         self._apply_styling()
 
         self.session: Optional[Any] = None
-        self.wrat_session: Optional[WRATSession] = None
+        self.spectra_session: Optional[SpectraSession] = None
         self.is_reading = False
         self.is_polling = False
         self.serial_lock = threading.Lock()
         self.auto_poll_active = False
         self.auto_poll_thread: Optional[threading.Thread] = None
+
+    @property
+    def wrat_session(self) -> Optional[SpectraSession]:
+        return self.spectra_session
+
+    @wrat_session.setter
+    def wrat_session(self, val: Optional[SpectraSession]):
+        self.spectra_session = val
 
         # Main Layout Box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -649,10 +657,10 @@ class JuraDiagApp(Gtk.Window):
 
         GLib.idle_add(self._on_session_finished, session, success)
 
-    def _on_session_finished(self, session: WRATSession, success: bool):
+    def _on_session_finished(self, session: SpectraSession, success: bool):
         self.is_reading = False
         self.btn_read.set_sensitive(True)
-        self.wrat_session = session
+        self.spectra_session = session
 
         if not success:
             self.progress_bar.set_fraction(1.0)
@@ -1062,7 +1070,7 @@ class JuraDiagApp(Gtk.Window):
             self.live_counters_store.append([c_name, c_cnt, eval_str])
 
     def _on_export_clicked(self):
-        active_sess = self.wrat_session or self.session
+        active_sess = self.spectra_session or self.session
         if not active_sess:
             dialog = Gtk.MessageDialog(
                 transient_for=self,

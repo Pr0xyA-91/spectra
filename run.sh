@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# W.R.A.T. - WhiteRat Asynchronous Telemetry - Launcher Script
+# SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics - Launcher Script
 # Universal Appliance Telemetry Engine (Jura, Nivona, Lamanti-KL, Lamanti-JN)
 # ==============================================================================
 
