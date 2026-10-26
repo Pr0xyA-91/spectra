@@ -106,8 +106,8 @@ Open **Device Manager** (`devmgmt.msc`) and expand **Ports (COM & LPT)**:
 ### Debian / Ubuntu / Raspberry Pi OS
 ```bash
 # 1. Clone repository
-git clone https://github.com/Pr0xyA-91/wrat-sniffer_dev.git
-cd wrat-sniffer_dev
+git clone https://github.com/Pr0xyA-91/spectra_dev.git
+cd spectra_dev
 
 # 2. (Optional) Install GTK3 GUI dependencies if running desktop environment
 sudo apt update && sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0
@@ -119,8 +119,8 @@ python3 cli.py
 ### Arch Linux / Manjaro / Omarchy
 ```bash
 # 1. Clone repository
-git clone https://github.com/Pr0xyA-91/wrat-sniffer_dev.git
-cd wrat-sniffer_dev
+git clone https://github.com/Pr0xyA-91/spectra_dev.git
+cd spectra_dev
 
 # 2. (Optional) Install GTK3 dependencies
 sudo pacman -S python-gobject gtk3

@@ -1,32 +1,32 @@
 # SPECTRA — Comprehensive Context & Session Notes for Agy
 **Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.4.1)
 
-> **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/wrat-sniffer_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/wrat-sniffer.git`).
+> **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/spectra_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/spectra.git`).
 
 ---
 
 ## 1. Multi-Device Onboarding & Setup for Agy
 
-When cloning or resuming work on a new machine, the private repository `wrat-sniffer_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
+When cloning or resuming work on a new machine, the private repository `spectra_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`wrat-sniffer_dev`) & `public` (`wrat-sniffer` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`wrat-sniffer_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`wrat-sniffer_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.4.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.4.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.2.1` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
 mkdir -p ~/Projects && cd ~/Projects
 
 # 1. Main Linux Jura-only edition:
-git clone -b main https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra
+git clone -b main https://github.com/Pr0xyA-91/spectra_dev.git spectra
 
 # 2. Linux Multi-Manufacturer edition:
-git clone -b multi-manufacturer https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-mm
+git clone -b multi-manufacturer https://github.com/Pr0xyA-91/spectra_dev.git spectra-mm
 
 # 3. Windows Cross-Platform edition:
-git clone -b windows https://github.com/Pr0xyA-91/wrat-sniffer_dev.git spectra-win
+git clone -b windows https://github.com/Pr0xyA-91/spectra_dev.git spectra-win
 ```
 
 ### Quick Verification Commands
@@ -194,10 +194,10 @@ conn.close()
 ---
 
 ## 5. Security & Privacy Guardrails
-1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`wrat-sniffer.git`).
-2. Only `wrat-sniffer` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `wrat-sniffer.git` repository. `WRAT` (`multi-manufacturer`) and `WRAT_win` (`windows`) are strictly private.
-3. On any new device where `wrat-sniffer` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
-4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`wrat-sniffer-v0.4.1.tar.gz`, `WRAT-v0.4.1_mm.tar.gz`, `WRAT_win-v0.2.1.tar.gz`).
+1. `GEMINI.md` and `SESSION_NOTES.md` contain internal project guidelines and must **NEVER** be pushed to public repositories (`spectra.git`).
+2. Only `spectra` (`main` branch via `./publish_release.sh` $\rightarrow$ `public-main`) may ever be synced to the public `spectra.git` repository. `spectra-mm` (`multi-manufacturer`) and `spectra-win` (`windows`) are strictly private.
+3. On any new device where `spectra` is cloned and a `public` remote is added, ensure `.git/hooks/pre-push` is installed to block any push to `public` that is not `public-main` or that contains `GEMINI.md`, `SESSION_NOTES.md`, `drivers/`, `wrat_engine.py`, `gui_web.py`, `.bat`, or `/home/` paths.
+4. Local versioned backups on the primary workstation are stored in `~/Projects/backup/` (`spectra-v0.4.1.tar.gz`, `spectra-mm-v0.4.1.tar.gz`, `spectra-win-v0.2.1.tar.gz`).
 
 ---
 

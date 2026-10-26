@@ -431,7 +431,7 @@ def write_specification_files(spec: Dict[str, Any], eeprom: Dict[int, int], out_
     lines.append("To contribute additions or corrections for this model specification:")
     lines.append("1. Fork and create a topic branch: `git checkout -b model/<EF_CODE>`")
     lines.append(f"2. Add your verified registers or recipe settings in `docs/models/{base_filename}.json`")
-    lines.append("3. Submit a Pull Request to `https://github.com/Pr0xyA-91/wrat-sniffer.git`")
+    lines.append("3. Submit a Pull Request to `https://github.com/Pr0xyA-91/spectra.git`")
     lines.append("")
 
     with open(md_path, "w", encoding="utf-8") as f:

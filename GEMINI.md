@@ -2,7 +2,7 @@
 
 > **IMPORTANT FOR AGY (ANTIGRAVITY) ON ANY DEVICE**:
 > Always read [`SESSION_NOTES.md`](./SESSION_NOTES.md) at the start of a session for complete hardware testbench details, protocol register mappings, architectural decisions, and multi-device setup instructions.
-> Both `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `wrat-sniffer_dev.git` only) and must **NEVER** be pushed to the public repository (`wrat-sniffer.git`).
+> Both `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `spectra_dev.git` only) and must **NEVER** be pushed to the public repository (`spectra.git`).
 
 ## 1. Quick Reference & Entry Points
 - **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `SPECTRA.desktop`.
@@ -10,13 +10,13 @@
 - **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/spectra/` on primary workstation).
 
 ## 2. Repository & Branch Topology (3-Branch Architecture)
-The private repository (`https://github.com/Pr0xyA-91/wrat-sniffer_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
+The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
 1. **`main` (`spectra/`)** — Linux Jura-only Edition (`v0.4.1`).
-   - Remotes: `origin` (`wrat-sniffer_dev.git` — private) and `public` (`wrat-sniffer.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
+   - Remotes: `origin` (`spectra_dev.git` — private) and `public` (`spectra.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
 2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.4.1_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
-   - Remote: `origin` (`wrat-sniffer_dev.git` ONLY — **NEVER** push to `public`).
+   - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.2.1`: includes `.bat` launchers, `install_windows.ps1`, `COM*` auto-discovery, zero-dependency Web UI fallback).
-   - Remote: `origin` (`wrat-sniffer_dev.git` ONLY — **NEVER** push to `public`).
+   - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules
 - **Hardware Port**: Auto-detects `/dev/ttyUSB*` and `/dev/ttyACM*` (9600 baud, 8N1).

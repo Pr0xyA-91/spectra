@@ -511,4 +511,4 @@
 To contribute additions or corrections for this model specification:
 1. Fork and create a topic branch: `git checkout -b model/<EF_CODE>`
 2. Add your verified registers or recipe settings in `docs/models/EF518M_IMPRESSA_XJ5_Professional_GII.json`
-3. Submit a Pull Request to `https://github.com/Pr0xyA-91/wrat-sniffer.git`
+3. Submit a Pull Request to `https://github.com/Pr0xyA-91/spectra.git`

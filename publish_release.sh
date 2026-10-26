@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Helper script to sync the latest tested code to the public 'wrat-sniffer' repository
+# Helper script to sync the latest tested code to the public 'spectra' repository
 # while strictly excluding GEMINI.md and any private development notes.
 
 set -e
@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR"
 
 SOURCE_BRANCH="${1:-main}"
 
-echo "[*] Syncing release from '$SOURCE_BRANCH' to public repository (wrat-sniffer)..."
+echo "[*] Syncing release from '$SOURCE_BRANCH' to public repository (spectra)..."
 
 # Ensure working directory is clean
 if [ -n "$(git status --porcelain)" ]; then
@@ -59,7 +59,7 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 # Push to public remote
-echo "[*] Pushing to public remote (wrat-sniffer)..."
+echo "[*] Pushing to public remote (spectra)..."
 git push public public-main:main
 
 # Switch back to original branch
