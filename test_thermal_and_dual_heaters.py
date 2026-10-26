@@ -16,7 +16,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
     def test_temperature_decoding_precision(self):
         """Test exact 0.1°C resolution decoding across realistic Jura operating ranges."""
-        # 1. Cold water / ambient room temperature
+        # 1. Cold / standby thermoblock temperature
         self.assertEqual(sc.decode_jura_temperature("00E2"), 22.6)
         self.assertEqual(sc.decode_jura_temperature(226), 22.6)
         self.assertEqual(sc.decode_jura_temperature("0x00E4"), 22.8)
@@ -67,6 +67,9 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(res["telemetry"]["heater_coffee_status"], "Ready to Brew")
         self.assertEqual(res["telemetry"]["heater_steam_str"], "Not Installed (Single Heater Model)")
         self.assertEqual(res["telemetry"]["heater_steam_status"], "Not Installed")
+        self.assertNotIn("ambient_temp_c", res["telemetry"])
+        self.assertIn("bu_encoder_pos", res["telemetry"])
+        self.assertIn("bu_encoder_upper", res["telemetry"])
 
         # Verify single-heater fault definitions map to Main Relay and Thermal Overheat
         sensor_names = [s["name"] for s in res["sensors"]]
@@ -226,6 +229,114 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         flow_sensor = next((s for s in res2["sensors"] if s["id"] == "water_flow"), None)
         self.assertIsNotNone(flow_sensor)
         self.assertIn("ml/s", flow_sensor["status"])
+
+    def test_brew_unit_dynamic_position_zones(self):
+        """Test dynamic Brew Unit mechanical zone and stroke percentage evaluation."""
+        # 1. Home / Mill Position (RE:0041 target = 229)
+        zone, short, pct = sc.evaluate_brew_unit_position(229, 648, mill_target=229, init_ok=True)
+        self.assertEqual(zone, "Home / Mill Position")
+        self.assertEqual(short, "Home / Mill")
+        self.assertEqual(pct, 0)
+
+        # 2. Tamping / Pre-Brew Travel (~380 ticks)
+        zone, short, pct = sc.evaluate_brew_unit_position(380, 648, mill_target=229, init_ok=True)
+        self.assertEqual(zone, "Tamping / Pre-Brew Travel")
+        self.assertEqual(short, "Tamping / Travel")
+        self.assertGreater(pct, 20)
+        self.assertLess(pct, 50)
+
+        # 3. Brewing / Compression (~579 ticks)
+        zone, short, pct = sc.evaluate_brew_unit_position(579, 648, mill_target=229, init_ok=True)
+        self.assertEqual(zone, "Brewing / Compression")
+        self.assertEqual(short, "Brewing / Compress")
+        self.assertGreater(pct, 70)
+
+        # 4. Upper / Eject & Rinse (~646-648 ticks)
+        zone, short, pct = sc.evaluate_brew_unit_position(646, 648, mill_target=229, init_ok=True)
+        self.assertEqual(zone, "Upper / Eject & Rinse")
+        self.assertEqual(short, "Upper / Eject")
+        self.assertEqual(pct, 100)
+
+        # 5. Dynamic movement direction indicator
+        zone_up, short_up, _ = sc.evaluate_brew_unit_position(350, 648, mill_target=229, delta_ticks=12)
+        self.assertIn("Moving ▲", zone_up)
+        self.assertIn("Moving ▲", short_up)
+
+        zone_down, short_down, _ = sc.evaluate_brew_unit_position(350, 648, mill_target=229, delta_ticks=-12)
+        self.assertIn("Moving ▼", zone_down)
+        self.assertIn("Moving ▼", short_down)
+
+        # 6. Position Fault / Not Initialized
+        zone_fault, short_fault, pct_fault = sc.evaluate_brew_unit_position(229, 648, init_ok=False)
+        self.assertEqual(zone_fault, "Init / Position Fault")
+        self.assertEqual(pct_fault, 0)
+
+    def test_bean_hopper_optical_sensor_and_readiness(self):
+        """Test optical bean hopper sensor ADC decoding, readiness blocking, and cake measurement."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
+
+        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0700 (1792 decimal > 1680)
+        def mock_query_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206980000,077207000001"
+            elif cmd_c == "HZ:":
+                # Machine heated, tray inserted, water present, cake thickness = 14 ticks (empty grind)
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query_empty
+
+        res_empty = sc.query_live_sensors("mock_bean", conn=conn, fast_poll=False)
+        switches_empty = {s["id"]: s for s in res_empty["switches"]}
+
+        # Bean Hopper switch must indicate empty
+        self.assertFalse(switches_empty["bean_hopper"]["ok"])
+        self.assertEqual(switches_empty["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertIn("Fill Beans", switches_empty["bean_hopper"]["status"])
+
+        # Machine readiness must be blocked
+        self.assertFalse(switches_empty["machine_ready"]["ok"])
+        self.assertEqual(switches_empty["machine_ready"]["badge"], "FILL BEANS")
+        self.assertEqual(switches_empty["machine_ready"]["status"], "Not Ready (Fill Beans)")
+
+        # Alert must be generated
+        alert_names = [a["name"] for a in res_empty["alerts"]]
+        self.assertIn("Fill Beans", alert_names)
+
+        # 2. Charged Bean Hopper: AS: returns ON_ADC = 0x061C (1564 decimal <= 1680)
+        def mock_query_full(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206450000,0772061C0001"
+            elif cmd_c == "HZ:":
+                # Machine heated, tray inserted, water present, cake thickness = 29 ticks (thick puck)
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query_full
+
+        res_full = sc.query_live_sensors("mock_bean", conn=conn, fast_poll=False)
+        switches_full = {s["id"]: s for s in res_full["switches"]}
+
+        # Bean Hopper switch must indicate nominal
+        self.assertTrue(switches_full["bean_hopper"]["ok"])
+        self.assertEqual(switches_full["bean_hopper"]["badge"], "NORMAL")
+        self.assertIn("Beans OK", switches_full["bean_hopper"]["status"])
+
+        # Machine readiness must be ready
+        self.assertTrue(switches_full["machine_ready"]["ok"])
+        self.assertEqual(switches_full["machine_ready"]["badge"], "READY")
+        self.assertEqual(switches_full["machine_ready"]["status"], "Ready to Brew / Nominal")
+
+        # Telemetry should capture cake thickness and optical ADCs
+        self.assertEqual(res_full["telemetry"]["cake_thickness_ticks"], 29)
+        self.assertEqual(res_full["telemetry"]["bean_adcs"], (1605, 1564))
+
+        # Optical Bean Sensor entry should be in diagnostic sensor list
+        opt_sensor = next((s for s in res_full["sensors"] if s["id"] == "optical_bean_sensor"), None)
+        self.assertIsNotNone(opt_sensor)
+        self.assertTrue(opt_sensor["ok"])
+        self.assertIn("Reflected IR ADC: 1564", opt_sensor["details"])
 
     def test_ascii_and_smart_connect_counter_mapping(self):
         """Test that ASCII EEPROM mode and Smart Connect mode map maintenance and beverage labels accurately."""

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - WhiteRat Asynchronous Telemetry - Desktop GUI
+SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics - Desktop GUI
 A modern GTK3 application for reading statistics, beverage counters,
 maintenance history, active alerts, and live sensors from Jura coffee machines.
 """
@@ -19,12 +19,12 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.4"
+__version__ = "0.4.1"
 
 
 class JuraDiagApp(Gtk.Window):
     def __init__(self):
-        super().__init__(title="W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)")
+        super().__init__(title=f"SPECTRA — Hardware Telemetry & Diagnostics (v{__version__})")
         self.set_default_size(1020, 700)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -123,6 +123,10 @@ class JuraDiagApp(Gtk.Window):
             font-size: 11px;
             color: #a6adc8;
         }
+        button {
+            border-radius: 6px;
+            min-height: 28px;
+        }
         button.primary-btn {
             background: linear-gradient(to bottom, #89b4fa, #74c7ec);
             color: #11111b;
@@ -130,9 +134,43 @@ class JuraDiagApp(Gtk.Window):
             border-radius: 6px;
             padding: 6px 16px;
             border: none;
+            min-height: 28px;
         }
         button.primary-btn:hover {
             background: #b4befe;
+        }
+        button.primary-btn:active {
+            background: #74c7ec;
+        }
+        button.primary-btn:disabled {
+            background: #313244;
+            color: #585b70;
+            border: 1px solid #45475a;
+        }
+        button.toggle-btn {
+            background-color: #24273a;
+            background-image: none;
+            color: #cdd6f4;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: 1px solid #45475a;
+            min-height: 28px;
+            font-weight: 500;
+        }
+        button.toggle-btn:hover {
+            background-color: #313244;
+            border-color: #585b70;
+        }
+        button.toggle-btn:checked {
+            background-color: #a6e3a1;
+            background-image: linear-gradient(to bottom, #a6e3a1, #94e2d5);
+            color: #11111b;
+            font-weight: bold;
+            border: 1px solid #a6e3a1;
+        }
+        button.toggle-btn:checked:hover {
+            background-color: #b4befe;
+            background-image: none;
         }
         progressbar progress {
             background-color: #a6e3a1;
@@ -172,9 +210,9 @@ class JuraDiagApp(Gtk.Window):
         # Title & Icon
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         app_title = Gtk.Label()
-        app_title.set_markup("<b><span size='large' color='#89b4fa'>W.R.A.T.</span> <span size='small' color='#f9e2af'>v0.3.4</span></b>")
+        app_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
         app_title.set_alignment(0, 0.5)
-        sub_title = Gtk.Label(label="WhiteRat Asynchronous Telemetry — Jura Diagnostics Module")
+        sub_title = Gtk.Label(label="Universal Hardware Telemetry & Logic Board Diagnostics")
         sub_title.get_style_context().add_class("card-label")
         sub_title.set_alignment(0, 0.5)
         title_box.pack_start(app_title, False, False, 0)
@@ -183,15 +221,22 @@ class JuraDiagApp(Gtk.Window):
 
         # Port Selector Label
         lbl_port = Gtk.Label(label="Serial Port:")
+        lbl_port.set_valign(Gtk.Align.CENTER)
         header_box.pack_start(lbl_port, False, False, 0)
 
         # Port ComboBox
         self.port_combo = Gtk.ComboBoxText()
-        self.port_combo.set_size_request(260, -1)
+        self.port_combo.set_size_request(240, -1)
+        self.port_combo.set_valign(Gtk.Align.CENTER)
+        for cell in self.port_combo.get_cells():
+            cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+            cell.set_property("width-chars", 16)
+            cell.set_property("max-width-chars", 24)
         header_box.pack_start(self.port_combo, False, False, 0)
 
         # Refresh Ports Button
         btn_refresh = Gtk.Button(label="🔄 Refresh")
+        btn_refresh.set_valign(Gtk.Align.CENTER)
         btn_refresh.connect("clicked", lambda w: self._refresh_ports())
         header_box.pack_start(btn_refresh, False, False, 0)
 
@@ -202,11 +247,13 @@ class JuraDiagApp(Gtk.Window):
         # Read Statistics Button
         self.btn_read = Gtk.Button(label="⚡ Read Statistics")
         self.btn_read.get_style_context().add_class("primary-btn")
+        self.btn_read.set_valign(Gtk.Align.CENTER)
         self.btn_read.connect("clicked", lambda w: self._on_read_clicked())
         header_box.pack_start(self.btn_read, False, False, 0)
 
         # Export Report Button
         self.btn_export = Gtk.Button(label="💾 Export Report")
+        self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
         header_box.pack_start(self.btn_export, False, False, 0)
 
@@ -314,26 +361,33 @@ class JuraDiagApp(Gtk.Window):
         ctrl_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self.btn_refresh_sensors = Gtk.Button(label="🔄 Refresh Live Sensors")
         self.btn_refresh_sensors.get_style_context().add_class("primary-btn")
+        self.btn_refresh_sensors.set_valign(Gtk.Align.CENTER)
         self.btn_refresh_sensors.connect("clicked", self._on_refresh_sensors_clicked)
         ctrl_bar.pack_start(self.btn_refresh_sensors, False, False, 0)
 
         self.spinner_sensors = Gtk.Spinner()
+        self.spinner_sensors.set_valign(Gtk.Align.CENTER)
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
         # Continuous Live Polling Toggle
-        self.chk_auto_poll = Gtk.CheckButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll = Gtk.ToggleButton(label="⏱️ Auto-Poll (2s)")
+        self.chk_auto_poll.get_style_context().add_class("toggle-btn")
+        self.chk_auto_poll.set_valign(Gtk.Align.CENTER)
         self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
-        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 4)
+        ctrl_bar.pack_start(self.chk_auto_poll, False, False, 0)
 
         self.lbl_sensors_status = Gtk.Label(label="Click 'Refresh Live Sensors' or enable Auto-Poll to monitor status.")
         self.lbl_sensors_status.set_xalign(0.0)
+        self.lbl_sensors_status.set_valign(Gtk.Align.CENTER)
         ctrl_bar.pack_start(self.lbl_sensors_status, True, True, 0)
 
         main_box.pack_start(ctrl_bar, False, False, 4)
 
-        # Live Status Summary Badges
-        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        badges_box.set_homogeneous(True)
+        # Live Status Summary Badges Grid (2-row responsive layout)
+        badges_grid = Gtk.Grid()
+        badges_grid.set_column_homogeneous(True)
+        badges_grid.set_row_spacing(6)
+        badges_grid.set_column_spacing(6)
 
         def make_sensor_card(title: str, default_val: str, default_sub: str = ""):
             c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -357,21 +411,28 @@ class JuraDiagApp(Gtk.Window):
 
         card_tank, self.lbl_live_tank, self.lbl_sub_tank = make_sensor_card("💧 Water Tank", "UNKNOWN", "Level Float")
         card_tray, self.lbl_live_tray, self.lbl_sub_tray = make_sensor_card("📥 Drip Tray", "UNKNOWN", "Microswitch")
+        card_beans, self.lbl_live_beans, self.lbl_sub_beans = make_sensor_card("🫘 Bean Hopper", "UNKNOWN", "Charge Sensor")
         card_state, self.lbl_live_state, self.lbl_sub_state = make_sensor_card("⚡ Machine State", "UNKNOWN", "Operating Status")
+        card_bu, self.lbl_live_bu, self.lbl_sub_bu = make_sensor_card("⚙️ Brew Unit", "UNKNOWN", "Encoder Pos")
         card_coffee, self.lbl_live_coffee_tb, self.lbl_sub_coffee_tb = make_sensor_card("☕ Coffee Heater (TB1)", "UNKNOWN", "Thermoblock 1")
         card_steam, self.lbl_live_steam_tb, self.lbl_sub_steam_tb = make_sensor_card("💨 Steam Heater (TB2)", "UNKNOWN", "Thermoblock 2")
         card_flow, self.lbl_live_flow, self.lbl_sub_flow = make_sensor_card("🌊 Water Flow", "0.0 ml/s", "Flowmeter Rate")
         card_filter, self.lbl_live_filter, self.lbl_sub_filter = make_sensor_card("🛡️ Water Filter", "UNKNOWN", "Hardness")
 
-        badges_box.pack_start(card_tank, True, True, 0)
-        badges_box.pack_start(card_tray, True, True, 0)
-        badges_box.pack_start(card_state, True, True, 0)
-        badges_box.pack_start(card_coffee, True, True, 0)
-        badges_box.pack_start(card_steam, True, True, 0)
-        badges_box.pack_start(card_flow, True, True, 0)
-        badges_box.pack_start(card_filter, True, True, 0)
+        # Row 0: Operational state & core mechanical sensors (5 columns)
+        badges_grid.attach(card_state, 0, 0, 1, 1)
+        badges_grid.attach(card_bu, 1, 0, 1, 1)
+        badges_grid.attach(card_tank, 2, 0, 1, 1)
+        badges_grid.attach(card_tray, 3, 0, 1, 1)
+        badges_grid.attach(card_beans, 4, 0, 1, 1)
 
-        main_box.pack_start(badges_box, False, False, 4)
+        # Row 1: Thermal & fluidics telemetry (4 columns, filter spans 2 columns)
+        badges_grid.attach(card_coffee, 0, 1, 1, 1)
+        badges_grid.attach(card_steam, 1, 1, 1, 1)
+        badges_grid.attach(card_flow, 2, 1, 1, 1)
+        badges_grid.attach(card_filter, 3, 1, 2, 1)
+
+        main_box.pack_start(badges_grid, False, False, 4)
 
         # Paned view for Diagnostics and Counters
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -793,15 +854,41 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_live_tray.set_text("INSERTED")
             self.lbl_sub_tray.set_text("Tray OK")
 
+        # Bean Hopper
+        if "bean_hopper" in switches:
+            sw = switches["bean_hopper"]
+            if sw["ok"]:
+                self.lbl_live_beans.set_text("BEANS OK")
+                self.lbl_sub_beans.set_text("Hopper Charged")
+            else:
+                self.lbl_live_beans.set_markup("<span color='#fab387'>FILL BEANS</span>")
+                self.lbl_sub_beans.set_text("Refill Coffee Beans")
+        else:
+            self.lbl_live_beans.set_text("BEANS OK")
+            self.lbl_sub_beans.set_text("Hopper OK")
+
         # Machine State
         if "machine_ready" in switches:
             sw = switches["machine_ready"]
             st = sw.get("status", "")
+            badge = sw.get("badge", "")
             if sw["ok"]:
                 self.lbl_live_state.set_markup("<span color='#a6e3a1'>READY TO BREW</span>")
                 self.lbl_sub_state.set_text("Appliance Ready")
             else:
-                if "Press Maintenance" in st or "Maintenance" in st:
+                if badge == "BREWING" or "Brewing" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>BREWING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "DISPENSING" or "Dispensing" in st or "Rinsing" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>DISPENSING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "MOVING" or "Brew Unit Active" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>MOVING</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif badge == "VALVE BUSY" or "Valve" in st:
+                    self.lbl_live_state.set_markup("<span color='#89dceb'>VALVE BUSY</span>")
+                    self.lbl_sub_state.set_text(st)
+                elif "Press Maintenance" in st or "Maintenance" in st:
                     self.lbl_live_state.set_markup("<span color='#fab387'>PRESS MAINTENANCE</span>")
                     if "Repeated No Flow" in st or "Filling Loop" in st:
                         self.lbl_sub_state.set_text("Filling Loop (Repeated No Flow)")
@@ -819,6 +906,9 @@ class JuraDiagApp(Gtk.Window):
                 elif "Grounds" in st:
                     self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
                     self.lbl_sub_state.set_text("Empty Grounds Container")
+                elif "Beans" in st or ("bean_hopper" in switches and not switches["bean_hopper"]["ok"]):
+                    self.lbl_live_state.set_markup("<span color='#fab387'>NOT READY</span>")
+                    self.lbl_sub_state.set_text("Fill Coffee Beans")
                 elif "Heating" in st:
                     self.lbl_live_state.set_markup("<span color='#f9e2af'>HEATING UP</span>")
                     self.lbl_sub_state.set_text("Heating Thermoblock")
@@ -837,6 +927,19 @@ class JuraDiagApp(Gtk.Window):
 
         # Thermoblock Heaters & Thermal Sensors
         telem = result.get("telemetry", {})
+
+        # Brew Unit Position (Encoder)
+        bu_pos = telem.get("bu_encoder_pos", 0)
+        bu_ref = telem.get("bu_encoder_upper", 0)
+        bu_short = telem.get("bu_position_short", "Home / Mill")
+        bu_pct = telem.get("bu_stroke_pct", 0)
+        bu_ok = telem.get("bu_init_ok", True)
+        if bu_pos > 0:
+            self.lbl_live_bu.set_text(f"{bu_pos} / {bu_ref}")
+            self.lbl_sub_bu.set_text(f"{bu_short} ({bu_pct}%)" if bu_ok else "Position Fault")
+        else:
+            self.lbl_live_bu.set_text("NOMINAL" if bu_ok else "FAULT")
+            self.lbl_sub_bu.set_text("Home Position OK" if bu_ok else "Check Brew Unit")
         if "heater_coffee_str" in telem:
             self.lbl_live_coffee_tb.set_text(telem["heater_coffee_str"])
             self.lbl_sub_coffee_tb.set_text(telem.get("heater_coffee_status", "Ready to Brew"))

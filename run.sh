@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# W.R.A.T. - WhiteRat Asynchronous Telemetry - Launcher Script
-# Universal Appliance Telemetry Engine (Jura Diagnostics Module)
+# SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics - Launcher Script
+# Appliance Diagnostics Engine (Jura Diagnostics Module)
 # Supports modern Jura coffee machines (Generation 7+ & Smart Connect protocol)
 # ==============================================================================
 

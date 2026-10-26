@@ -21,9 +21,10 @@ Orchestrates:
 Credits & Attribution:
 Built upon reverse-engineering research and protocol contributions by CM-P,
 Hajo Noerenberg (hn), Jutta-Proto, Ryan Alden, tinaught, makefu, AlexxIT,
-and the open-source coffee telemetry and home automation communities.
+Google Antigravity (Agy / DeepMind), and the open-source coffee telemetry and home automation communities.
 """
 
+import os
 import time
 import json
 import csv
@@ -35,7 +36,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.3.4"
+__version__ = "0.4.1"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -142,6 +143,59 @@ def evaluate_thermoblock_status(temp_c: Optional[float], is_steam: bool = False)
 
 
 _last_flowmeter_samples: Dict[str, Tuple[int, float, float]] = {}
+_last_bu_samples: Dict[str, Tuple[int, float, int]] = {}
+
+
+def evaluate_brew_unit_position(
+    pos: int,
+    upper_ref: int,
+    mill_target: int = 0,
+    init_ok: bool = True,
+    delta_ticks: int = 0
+) -> Tuple[str, str, int]:
+    """
+    Dynamically evaluate the mechanical zone, short card subtitle, and stroke
+    percentage (0-100%) of the Brew Unit from live encoder ticks:
+    - Lower / Mill (Home) Target: RE:0041 (~226-230 ticks) -> 0% stroke
+    - Pre-Brew / Tamping Travel: RE:0042 (~250-450 ticks)
+    - Brewing / Compression Chamber: RE:0043/RE:0044 (~460-610 ticks)
+    - Upper Reference / Eject & Rinse: HZ[1] (~647-648 ticks) -> 100% stroke
+    """
+    if not init_ok:
+        return "Init / Position Fault", "Position Fault", 0
+    if pos <= 0:
+        return "Standby / Unknown", "Standby", 0
+
+    eff_target = mill_target if mill_target > 0 else 230
+    eff_upper = upper_ref if upper_ref > eff_target else 648
+    span = max(1, eff_upper - eff_target)
+    stroke_pct = max(0, min(100, round(((pos - eff_target) / span) * 100)))
+
+    if abs(pos - eff_target) <= 16:
+        zone_full = "Home / Mill Position"
+        zone_short = "Home / Mill"
+        stroke_pct = 0
+    elif pos < eff_target - 16:
+        zone_full = "Lower Limit / Bottom"
+        zone_short = "Lower Limit"
+    elif pos >= eff_upper - 24:
+        zone_full = "Upper / Eject & Rinse"
+        zone_short = "Upper / Eject"
+        if abs(pos - eff_upper) <= 12:
+            stroke_pct = 100
+    elif pos >= eff_target + int(0.55 * span):
+        zone_full = "Brewing / Compression"
+        zone_short = "Brewing / Compress"
+    else:
+        zone_full = "Tamping / Pre-Brew Travel"
+        zone_short = "Tamping / Travel"
+
+    if abs(delta_ticks) >= 4:
+        arrow = "▲" if delta_ticks > 0 else "▼"
+        zone_full = f"Moving {arrow} ({zone_full})"
+        zone_short = f"Moving {arrow} {zone_short}"
+
+    return zone_full, zone_short, stroke_pct
 
 
 def query_live_sensors(
@@ -207,19 +261,39 @@ def query_live_sensors(
             heater_ntc_raw = 0
             steam_ntc_raw = 0
             flow_pulses_raw = 0
-            ambient_ntc_raw = 0
+            bu_encoder_upper_raw = 0
+            bu_encoder_pos_raw = 0
             rotary_pos = "0"
             grounds_full = False
+            beans_empty = False
+            beans_ok = True
+            bu_init_ok = True
+            mv_init_ok = True
+            mv_busy = False
+            heater_ready_flag = True
+            button_matrix_hex = "0000"
+            aux_inputs_bits = "00"
+            cake_thickness_ticks = 0
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
                 parts = payload.split(",")
 
+                if len(parts) > 0 and len(parts[0]) >= 7:
+                    bu_init_ok = (parts[0][1] == "1")
+                    mv_busy = (parts[0][2] == "1")
+                    heater_ready_flag = (parts[0][5] == "1")
+                    mv_init_ok = (parts[0][6] == "1")
+                if len(parts) > 1:
+                    try:
+                        bu_encoder_upper_raw = int(parts[1], 16)
+                    except ValueError:
+                        bu_encoder_upper_raw = 0
                 if len(parts) > 2:
                     try:
-                        ambient_ntc_raw = int(parts[2], 16)
+                        bu_encoder_pos_raw = int(parts[2], 16)
                     except ValueError:
-                        ambient_ntc_raw = 0
+                        bu_encoder_pos_raw = 0
                 if len(parts) > 3:
                     try:
                         flow_pulses_raw = int(parts[3], 16)
@@ -237,6 +311,14 @@ def query_live_sensors(
                         steam_ntc_raw = 0
                 if len(parts) > 6:
                     rotary_pos = parts[6]
+                if len(parts) > 7 and len(parts[7]) >= 6:
+                    aux_inputs_bits = parts[7][4:6]
+                if len(parts) > 8 and parts[8]:
+                    button_matrix_hex = parts[8]
+                    try:
+                        cake_thickness_ticks = int(parts[8], 16)
+                    except ValueError:
+                        cake_thickness_ticks = 0
 
                 # Physical Microswitches & Cuts:
                 # In Jura telemetry, parts[7] and parts[9] convey live microswitch cuts:
@@ -294,7 +376,6 @@ def query_live_sensors(
             cycle_volume_ml = round(flow_pulses_raw / 2.366, 1)
 
             # Decode temperatures in Celsius (0.1 °C resolution)
-            temp_ambient = decode_jura_temperature(ambient_ntc_raw)
             temp_coffee = decode_jura_temperature(heater_ntc_raw)
             temp_steam = decode_jura_temperature(steam_ntc_raw)
 
@@ -318,6 +399,10 @@ def query_live_sensors(
             total_fm_timeouts = 0
             fm_intake_timeouts = 0
             fm_rinse_timeouts = 0
+            bu_mill_target = getattr(conn, "_cached_bu_mill_target", 0)
+            bu_init_count = 0
+            loader_version = ""
+            display_firmware = ""
 
             if not fast_poll:
                 # Query hardware fault register RE:0028 (fast, ~350ms)
@@ -334,6 +419,49 @@ def query_live_sensors(
                 if ic_resp and ic_resp.startswith("ic:"):
                     results["raw_ic"] = ic_resp
 
+                # Query Brew Unit Grind/Mill Target Position (RE:0041) & Init Counter (RE:0056)
+                r41 = conn.query_ascii("RE:0041")
+                if r41 and r41.startswith("re:"):
+                    try:
+                        bu_mill_target = int(r41[3:], 16)
+                        setattr(conn, "_cached_bu_mill_target", bu_mill_target)
+                    except ValueError:
+                        pass
+
+                r56 = conn.query_ascii("RE:0056")
+                if r56 and r56.startswith("re:"):
+                    try:
+                        bu_init_count = int(r56[3:], 16)
+                    except ValueError:
+                        pass
+
+                tl_resp = conn.query_ascii("TL:")
+                if tl_resp and tl_resp.startswith("tl:"):
+                    loader_version = tl_resp[3:].strip()
+
+                ty_disp_resp = conn.query_ascii("TY$:")
+                if ty_disp_resp and ty_disp_resp.startswith("ty$:"):
+                    display_firmware = ty_disp_resp[4:].strip()
+
+                # Optical Bean Hopper Sensor (AS: Check Sensor)
+                as_resp = conn.query_ascii("AS:")
+                if as_resp and as_resp.startswith("as:"):
+                    results["raw_as"] = as_resp
+                    as_parts = as_resp[3:].split(",")
+                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
+                        try:
+                            off_adc = int(as_parts[0][4:8], 16)
+                            on_adc = int(as_parts[1][4:8], 16)
+                            # On Jura optical sensor:
+                            # Reflected IR when empty > 1680 ADC
+                            # Absorbed IR when beans present <= 1660 ADC
+                            beans_empty = (on_adc > 1680)
+                            beans_ok = not beans_empty
+                            setattr(conn, "_cached_beans_ok", beans_ok)
+                            setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
+                        except ValueError:
+                            pass
+
                 # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
                 if r1b4 and r1b4.startswith("re:"):
@@ -345,8 +473,27 @@ def query_live_sensors(
                         pass
                 total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
             else:
+                cached_beans = getattr(conn, "_cached_beans_ok", None)
+                if cached_beans is not None:
+                    beans_ok = cached_beans
+                    beans_empty = not beans_ok
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
+
+            # Evaluate dynamic Brew Unit mechanical position & movement delta
+            prev_bu = _last_bu_samples.get(port_key)
+            bu_delta_ticks = 0
+            if prev_bu is not None:
+                prev_bu_pos, prev_bu_ts, prev_bu_target = prev_bu
+                if not bu_mill_target and prev_bu_target:
+                    bu_mill_target = prev_bu_target
+                if (now_ts - prev_bu_ts) < 10.0 and prev_bu_pos > 0 and bu_encoder_pos_raw > 0:
+                    bu_delta_ticks = bu_encoder_pos_raw - prev_bu_pos
+            _last_bu_samples[port_key] = (bu_encoder_pos_raw, now_ts, bu_mill_target)
+
+            bu_zone_full, bu_zone_short, bu_stroke_pct = evaluate_brew_unit_position(
+                bu_encoder_pos_raw, bu_encoder_upper_raw, bu_mill_target, bu_init_ok, bu_delta_ticks
+            )
 
             # 3. Comprehensive Machine Operational State & Physical Evaluation
             # Priority detection: Microswitches, Safety Trips, Temperatures, Idle
@@ -357,7 +504,37 @@ def query_live_sensors(
             is_busy = (len(parts) > 0 and len(parts[0]) > 0 and parts[0][0] != "0")
             temp_coffee_val = temp_coffee
 
-            if not tray_ok:
+            if flow_ml_s > 0.0 and bu_stroke_pct >= 45:
+                ready_ok = False
+                ready_status = f"Brewing / Extracting ({flow_ml_s:.1f} ml/s)"
+                ready_badge = "BREWING"
+                ready_icon = "☕"
+            elif bu_stroke_pct >= 45:
+                ready_ok = False
+                ready_status = f"Brewing / Compressing ({bu_stroke_pct}% stroke)"
+                ready_badge = "BREWING"
+                ready_icon = "☕"
+            elif flow_ml_s > 0.0:
+                ready_ok = False
+                ready_status = f"Dispensing / Rinsing ({flow_ml_s:.1f} ml/s)"
+                ready_badge = "DISPENSING"
+                ready_icon = "🌊"
+            elif abs(bu_delta_ticks) >= 4 or bu_stroke_pct >= 15:
+                ready_ok = False
+                ready_status = f"Brew Unit Active ({bu_zone_short})"
+                ready_badge = "MOVING"
+                ready_icon = "⚙️"
+            elif mv_busy:
+                ready_ok = False
+                ready_status = "Positioning Multiway Valve"
+                ready_badge = "VALVE BUSY"
+                ready_icon = "🔀"
+            elif is_busy:
+                ready_ok = False
+                ready_status = "Busy (Operation in Progress)"
+                ready_badge = "BUSY"
+                ready_icon = "⏳"
+            elif not tray_ok:
                 ready_ok = False
                 ready_status = "Not Ready (Drip Tray Missing)"
                 ready_badge = "MISSING"
@@ -372,11 +549,11 @@ def query_live_sensors(
                 ready_status = "Not Ready (Empty Grounds Container)"
                 ready_badge = "FULL"
                 ready_icon = "🗑️"
-            elif is_busy:
+            elif not beans_ok:
                 ready_ok = False
-                ready_status = "Busy (Operation in Progress)"
-                ready_badge = "BUSY"
-                ready_icon = "⏳"
+                ready_status = "Not Ready (Fill Beans)"
+                ready_badge = "FILL BEANS"
+                ready_icon = "🫘"
             elif temp_coffee_val is not None and temp_coffee_val < 80.0:
                 ready_ok = False
                 ready_status = f"Heating Up ({temp_coffee_val:.1f} °C)"
@@ -449,6 +626,14 @@ def query_live_sensors(
                     "icon": "📥"
                 },
                 {
+                    "id": "bean_hopper",
+                    "name": "Bean Hopper / Charge Sensor",
+                    "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
+                    "ok": beans_ok,
+                    "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "icon": "🫘"
+                },
+                {
                     "id": "hydraulic_system",
                     "name": "Hydraulic System & Flowmeter",
                     "status": hyd_status,
@@ -463,6 +648,14 @@ def query_live_sensors(
                     "ok": ready_ok,
                     "badge": ready_badge,
                     "icon": ready_icon
+                },
+                {
+                    "id": "brew_unit_pos",
+                    "name": "Brew Unit Position (Encoder)",
+                    "status": f"{bu_zone_full} ({bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks, {bu_stroke_pct}% stroke{f', Target: {bu_mill_target}' if bu_mill_target else ''})",
+                    "ok": bu_init_ok,
+                    "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}" if bu_encoder_pos_raw > 0 else ("OK" if bu_init_ok else "FAULT"),
+                    "icon": "⚙️"
                 },
                 {
                     "id": "claris_filter",
@@ -525,6 +718,51 @@ def query_live_sensors(
                     "unit": "ml/s"
                 }
             ]
+            if bu_encoder_pos_raw > 0:
+                mill_str = f" | Mill Target (RE:0041): {bu_mill_target} ticks (0x{bu_mill_target:04X})" if bu_mill_target else ""
+                sensor_list.append({
+                    "id": "bu_encoder",
+                    "name": "Live Brew Unit Encoder",
+                    "status": f"{bu_zone_short} ({bu_encoder_pos_raw} ticks)",
+                    "ok": bu_init_ok,
+                    "badge": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw}",
+                    "details": f"Zone: {bu_zone_full} ({bu_stroke_pct}% stroke) | Current: {bu_encoder_pos_raw} ticks (0x{bu_encoder_pos_raw:04X}){mill_str} | Upper Ref: {bu_encoder_upper_raw} ticks (0x{bu_encoder_upper_raw:04X}) | Init Flag: {'OK' if bu_init_ok else 'Fault'}",
+                    "icon": "⚙️",
+                    "value": bu_encoder_pos_raw,
+                    "unit": "ticks"
+                })
+            sensor_list.append({
+                "id": "mv_live_state",
+                "name": "Live Multiway Valve State",
+                "status": "Moving / Positioning" if mv_busy else ("Initialized & Idle" if mv_init_ok else "Not Initialized"),
+                "ok": mv_init_ok,
+                "badge": "MOVING" if mv_busy else ("READY" if mv_init_ok else "UNINIT"),
+                "details": f"Multiway valve init flag (HZ[0][6]): {'1 (OK)' if mv_init_ok else '0'} | Busy flag (HZ[0][2]): {'1 (Moving)' if mv_busy else '0 (Idle)'}",
+                "icon": "🔀"
+            })
+            sensor_list.append({
+                "id": "panel_inputs",
+                "name": "Live Front Panel & Aux Inputs",
+                "status": f"Rotary: {rotary_pos} | Keys: 0x{button_matrix_hex} | Puck: {cake_thickness_ticks} ticks",
+                "ok": True,
+                "badge": "IDLE" if button_matrix_hex == "0000" else f"KEY {button_matrix_hex}",
+                "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Puck measurement: {cake_thickness_ticks} ticks | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
+                "icon": "🎛️"
+            })
+            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            if cached_adcs:
+                off_adc, on_adc = cached_adcs
+                sensor_list.append({
+                    "id": "optical_bean_sensor",
+                    "name": "Optical Bean Hopper Sensor",
+                    "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
+                    "ok": beans_ok,
+                    "badge": "NOMINAL" if beans_ok else "EMPTY",
+                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {on_adc - off_adc} counts | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
+                    "icon": "🫘",
+                    "value": on_adc,
+                    "unit": "ADC"
+                })
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -600,9 +838,25 @@ def query_live_sensors(
                 "heater_steam_raw": steam_ntc_raw,
                 "heater_steam_status": steam_status,
                 "heater_steam_str": (f"{temp_steam:.1f} °C" if temp_steam is not None else "Installed (Standby)") if is_dual_heater else "Not Installed (Single Heater Model)",
-                "ambient_temp_c": temp_ambient,
-                "ambient_temp_raw": ambient_ntc_raw,
-                "ambient_temp_str": f"{temp_ambient:.1f} °C" if temp_ambient is not None else "N/A",
+                "bu_encoder_pos": bu_encoder_pos_raw,
+                "bu_encoder_upper": bu_encoder_upper_raw,
+                "bu_mill_target": bu_mill_target,
+                "bu_encoder_str": f"{bu_encoder_pos_raw} / {bu_encoder_upper_raw} ticks" if bu_encoder_pos_raw > 0 else "N/A",
+                "bu_position_state": bu_zone_full,
+                "bu_position_short": bu_zone_short,
+                "bu_stroke_pct": bu_stroke_pct,
+                "bu_delta_ticks": bu_delta_ticks,
+                "bu_init_ok": bu_init_ok,
+                "beans_ok": beans_ok,
+                "mv_init_ok": mv_init_ok,
+                "mv_busy": mv_busy,
+                "heater_ready_flag": heater_ready_flag,
+                "machine_state_badge": ready_badge,
+                "machine_state_status": ready_status,
+                "cake_thickness_ticks": cake_thickness_ticks,
+                "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
+                "button_matrix": button_matrix_hex,
+                "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
                 "rotary_switch": rotary_pos,
                 "flow_pulses": flow_pulses_raw,
@@ -617,6 +871,11 @@ def query_live_sensors(
                 results["telemetry"]["total_fm_timeouts"] = total_fm_timeouts
                 results["telemetry"]["fm_intake_timeouts"] = fm_intake_timeouts
                 results["telemetry"]["fm_rinse_timeouts"] = fm_rinse_timeouts
+                results["telemetry"]["bu_init_count"] = bu_init_count
+                if loader_version:
+                    results["telemetry"]["loader_version"] = loader_version
+                if display_firmware:
+                    results["telemetry"]["display_firmware"] = display_firmware
             # Append only live physical lockouts to active alerts (historical RE:0028 faults stay in sensors/diagnostics)
             if not tray_ok:
                 results["alerts"].append({"name": "Drip Tray Missing", "details": "Insert drip tray / grounds drawer", "blocking": True})
@@ -624,6 +883,8 @@ def query_live_sensors(
                 results["alerts"].append({"name": "Water Tank Low / Empty", "details": "Refill water tank", "blocking": True})
             if grounds_full:
                 results["alerts"].append({"name": "Grounds Container Full", "details": "Empty coffee grounds container", "blocking": True})
+            if not beans_ok:
+                results["alerts"].append({"name": "Fill Beans", "details": "Refill coffee bean hopper", "blocking": True})
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
@@ -1251,7 +1512,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"W.R.A.T. Telemetry Suite v{__version__} (WhiteRat Asynchronous Telemetry - Jura Module)")
+        out.append(f"SPECTRA Diagnostics Suite v{__version__} (Hardware Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")
@@ -1374,8 +1635,16 @@ class JuraStatsSession:
                     out.append(f"   * Steam Thermoblock (TB2)       : {s_str:<12} [{s_stat}]")
                 else:
                     out.append(f"   * Steam Thermoblock (TB2)       : Not Installed (Single Heater Model)")
-                if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
-                    out.append(f"   * Water Intake / Ambient Sensor : {telem['ambient_temp_str']}")
+                if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
+                    out.append(f"   * Brew Unit Encoder (Pos / Ref) : {telem['bu_encoder_str']}")
+                if "bu_mill_target" in telem:
+                    out.append(f"   * Brew Unit Mill Target (RE:0041): {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
+                if "bu_init_count" in telem:
+                    out.append(f"   * Brew Unit Init Count (RE:0056): {telem['bu_init_count']} cycles")
+                if "loader_version" in telem:
+                    out.append(f"   * Main Board Bootloader (TL:)   : {telem['loader_version']}")
+                if "display_firmware" in telem:
+                    out.append(f"   * Display / Sub-MCU (TY$:)      : {telem['display_firmware']}")
                 out.append("")
 
             if ls.get("switches"):
@@ -1428,3 +1697,219 @@ class JuraStatsSession:
             writer.writerow(["Alert", a.get("bit", 0), a["name"], "ACTIVE", "BLOCKING" if a.get("blocking") else "NOTICE"])
 
         return output.getvalue()
+
+
+def generate_eeprom_diff_report(
+    live_dump: Dict[str, Any],
+    baseline_source: Any,
+    label: str = "Machine"
+) -> str:
+    """
+    Generate an ASCII diff report comparing live machine EEPROM/telemetry
+    against a baseline dump (file path or dictionary) or a model specification.
+    """
+    baseline_data = {}
+    baseline_spec = None
+    baseline_name = "Baseline"
+
+    if isinstance(baseline_source, str):
+        # File path or Model Name (e.g. EF518)
+        if os.path.exists(baseline_source):
+            baseline_name = os.path.basename(baseline_source)
+            try:
+                with open(baseline_source, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if "eeprom" in loaded or "hardware" in loaded:
+                    baseline_data = loaded
+            except Exception as e:
+                return f"[-] Failed to load baseline JSON from {baseline_source}: {e}"
+        else:
+            # Check if model spec exists
+            spec = profiles_db.get_model_spec(baseline_source)
+            if spec:
+                baseline_data = spec
+                baseline_spec = spec
+                baseline_name = f"Model Spec: {spec.get('model_family', baseline_source)}"
+            else:
+                return f"[-] Baseline '{baseline_source}' not found (provide a valid JSON dump path or model code like EF518)."
+    elif isinstance(baseline_source, dict):
+        baseline_data = baseline_source
+        baseline_name = baseline_data.get("model_family", "Baseline Dictionary")
+
+    live_eeprom = live_dump.get("eeprom", {})
+    base_eeprom = baseline_data.get("eeprom", {})
+
+    lines = []
+    lines.append("=" * 82)
+    lines.append(f"SPECTRA EEPROM & TELEMETRY AUDIT DIFF — {label}")
+    lines.append(f"Live Interrogation vs. Baseline: {baseline_name}")
+    lines.append("=" * 82)
+
+    # 1. Telemetry & Firmware Gateways
+    lines.append("\n[1. SYSTEM IDENTIFIERS & GATEWAYS]")
+    lines.append(f"{'Gateway':<10} | {'Baseline Value':<28} | {'Live Machine Value':<28} | {'Status'}")
+    lines.append("-" * 82)
+
+    gateways = [
+        ("TY:", "Main Firmware"),
+        ("TL:", "Main Bootloader"),
+        ("TY$:", "Display Firmware"),
+        ("TL$:", "Display Bootloader"),
+        ("CS$:", "Display Checksum"),
+        ("IC:", "Hardware Code"),
+        ("AS:", "Optical Sensor"),
+        ("HZ:", "Telemetry Frame")
+    ]
+    for gw, desc in gateways:
+        b_val = baseline_data.get(gw, "N/A")
+        l_val = live_dump.get(gw, "N/A")
+        if b_val is None: b_val = "N/A"
+        if l_val is None: l_val = "N/A"
+        match = (b_val == l_val) if (b_val != "N/A" and l_val != "N/A") else None
+        st = "[MATCH]" if match else ("[DIFFERENT]" if match is False else "[UNVERIFIED]")
+        lines.append(f"{gw:<10} | {str(b_val):<28} | {str(l_val):<28} | {st}")
+
+    # 2. Known Parameter Mapping & Comparison
+    param_map = {
+        "0001": ("Espresso 1 Cup", "cups", "counter"),
+        "0002": ("Coffee 1 Cup", "cups", "counter"),
+        "0004": ("Espresso 2 Cup", "cycles", "counter"),
+        "0005": ("Coffee 2 Cup", "cycles", "counter"),
+        "0006": ("Powder Coffee", "cups", "counter"),
+        "0007": ("Rinsing Operations", "cycles", "counter"),
+        "0008": ("Tablet Cleanings", "cycles", "counter"),
+        "0009": ("Descaling Programs", "cycles", "counter"),
+        "000A": ("Grinder Run Duration", "seconds", "counter"),
+        "000D": ("Coffees Since Descale", "cups", "diag"),
+        "000F": ("Coffees Before Cleaning", "cups", "diag"),
+        "0013": ("Milk Preparations", "cycles", "counter"),
+        "0014": ("Hot Water Portions", "portions", "counter"),
+        "0015": ("Service Counter", "preparations", "counter"),
+        "0028": ("Safety Fault Latch", "hex", "fault"),
+        "0031": ("Electronic Serial Counter", "number", "id"),
+        "0032": ("Production Date", "date", "id"),
+        "0040": ("BU Upper Stop Limit", "ticks", "calibration"),
+        "0041": ("BU Mill Target (Home)", "ticks", "calibration"),
+        "0042": ("BU Pre-Brew Travel 1", "ticks", "calibration"),
+        "0043": ("BU Compression Chamber", "ticks", "calibration"),
+        "0044": ("BU Pre-Brew Travel 2", "ticks", "calibration"),
+        "0055": ("Water Hardness Level", "level", "config"),
+        "0056": ("BU Zero Init Cycles", "cycles", "counter"),
+        "00C3": ("Configured Water Hardness", "°dH", "config"),
+        "00DA": ("Country Code", "ascii", "id"),
+        "01B0": ("Encoder & TB1 Short", "events", "fault_counter"),
+        "01B1": ("TB1 Open & BU Pos Error", "events", "fault_counter"),
+        "01B2": ("BU Init & Descalc Aborts", "events", "fault_counter"),
+        "01B4": ("Flowmeter Timeouts", "events", "fault_counter"),
+    }
+
+    # Add custom registers from spec if present
+    spec_custom = baseline_data.get("custom_registers", {})
+    for reg, c_info in spec_custom.items():
+        r_up = reg.upper()
+        if r_up not in param_map:
+            param_map[r_up] = (c_info.get("name", f"Custom {r_up}"), "raw", "custom")
+
+    lines.append("\n[2. TELEMETRY COUNTERS, CALIBRATION & HARDWARE SETTINGS]")
+    lines.append(f"{'Address':<7} | {'Parameter Description':<27} | {'Baseline':<14} | {'Live':<14} | {'Delta':<10} | {'Status'}")
+    lines.append("-" * 92)
+
+    for addr in sorted(param_map.keys()):
+        p_name, unit, kind = param_map[addr]
+        l_hex = live_eeprom.get(addr, "0000")
+        l_val = int(l_hex, 16)
+
+        # Baseline value resolution
+        b_val = None
+        b_str = "N/A"
+        if base_eeprom and addr in base_eeprom:
+            b_hex = base_eeprom[addr]
+            b_val = int(b_hex, 16)
+            b_str = f"{b_val}"
+        elif "hardware" in baseline_data and "bu_calibration" in baseline_data["hardware"]:
+            # Check calibration targets
+            bu_c = baseline_data["hardware"]["bu_calibration"]
+            for target_k, t_reg in bu_c.get("registers", {}).items():
+                if t_reg.upper() == addr:
+                    t_val = bu_c.get(f"{target_k}_ticks") or bu_c.get(f"{target_k}_target_ticks")
+                    if t_val:
+                        b_val = t_val
+                        b_str = f"{b_val} (Spec)"
+
+        l_str = f"{l_val}"
+        if kind == "fault":
+            l_str = f"0x{l_hex}"
+            b_str = f"0x{b_val:04X}" if b_val is not None else "0x0000 (Spec)"
+        elif kind == "id" and addr == "00DA":
+            try:
+                l_str = "".join(chr((l_val >> 8) & 0xFF) + chr(l_val & 0xFF)).strip()
+                if b_val is not None:
+                    b_str = "".join(chr((b_val >> 8) & 0xFF) + chr(b_val & 0xFF)).strip()
+            except Exception:
+                pass
+
+        delta_str = "-"
+        status = "[MATCH]"
+
+        if b_val is not None:
+            if kind in ("counter", "diag", "fault_counter"):
+                diff = l_val - b_val
+                if diff > 0:
+                    delta_str = f"+{diff}"
+                    status = "[INCREMENTED]" if kind == "counter" else "[CHANGED]"
+                elif diff < 0:
+                    delta_str = f"{diff}"
+                    status = "[DECREASED]"
+                else:
+                    delta_str = "0"
+                    status = "[MATCH]"
+            elif kind == "calibration":
+                diff = l_val - b_val
+                if diff != 0:
+                    delta_str = f"{diff:+d} ticks"
+                    status = "[DRIFT]" if abs(diff) > 8 else "[NOMINAL]"
+                else:
+                    delta_str = "0"
+                    status = "[MATCH]"
+            elif kind == "fault":
+                if l_val != b_val:
+                    delta_str = f"^0x{l_val ^ b_val:04X}"
+                    status = "[FAULT TRIP]" if l_val > b_val else "[CLEARED]"
+                else:
+                    delta_str = "0"
+                    status = "[MATCH]"
+            else:
+                if l_val != b_val:
+                    delta_str = "MODIFIED"
+                    status = "[CHANGED]"
+                else:
+                    delta_str = "0"
+                    status = "[MATCH]"
+        else:
+            status = "[RECORDED]"
+
+        lines.append(f"0x{addr:<5} | {p_name:<27} | {b_str:<14} | {l_str:<14} | {delta_str:<10} | {status}")
+
+    # 3. Memory Divergence Summary
+    if base_eeprom:
+        divergent = []
+        for addr, l_hex in sorted(live_eeprom.items()):
+            if addr not in param_map:
+                b_hex = base_eeprom.get(addr, "0000")
+                if l_hex != b_hex and (int(l_hex, 16) != 0 or int(b_hex, 16) != 0):
+                    divergent.append((addr, b_hex, l_hex, int(b_hex, 16), int(l_hex, 16)))
+
+        if divergent:
+            lines.append(f"\n[3. OTHER DIVERGENT UNMAPPED REGISTERS ({len(divergent)} addresses)]")
+            lines.append(f"{'Address':<7} | {'Baseline Hex (Dec)':<20} | {'Live Hex (Dec)':<20} | {'Delta'}")
+            lines.append("-" * 72)
+            for addr, bh, lh, bv, lv in divergent[:25]:
+                d = lv - bv
+                lines.append(f"0x{addr:<5} | 0x{bh} ({bv:5d})        | 0x{lh} ({lv:5d})        | {d:+d}")
+            if len(divergent) > 25:
+                lines.append(f"   ... and {len(divergent) - 25} more divergent registers.")
+
+    lines.append("=" * 82)
+    lines.append("END OF EEPROM DIFF REPORT")
+    lines.append("=" * 82)
+    return "\n".join(lines)

@@ -219,6 +219,14 @@ class JuraSerialConnection:
             time.sleep(0.02)
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"
+            elif cmd_clean == "TL:":
+                return "tl:R8Cx Loader V01.00"
+            elif cmd_clean == "TY$:":
+                return f"ty$:{self.mock_machine.model_ef.replace('M', 'D')}"
+            elif cmd_clean == "TL$:":
+                return "tl$:SubLoader V01.00"
+            elif cmd_clean == "CS$:":
+                return "cs$:1A2B"
             elif cmd_clean == "IC:":
                 return "ic:230A"
             elif cmd_clean == "RT:0000":
@@ -229,6 +237,8 @@ class JuraSerialConnection:
                 return "rt:00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E"
             elif cmd_clean == "RT:0030":
                 return "rt:466000332EBE2996000000000000000000001E6F046E5028180F001401040276"
+            elif cmd_clean == "RT:0040":
+                return "rt:050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
             elif cmd_clean == "RE:0030":
                 return "re:4660"
             elif cmd_clean == "RE:0031":
@@ -254,6 +264,9 @@ class JuraSerialConnection:
                 else:
                     # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
                     return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
+            elif cmd_clean == "AS:":
+                # Optical Bean Hopper Sensor (Ambient ADC: 0x0645 = 1605, Reflected IR ADC: 0x061C = 1564 -> Beans OK)
+                return "as:077206450000,0772061C0001"
             elif cmd_clean == "RE:0028":
                 return "re:0000"
             elif cmd_clean == "RE:0029":

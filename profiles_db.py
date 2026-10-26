@@ -10,6 +10,7 @@ import re
 import json
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
+DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
 
 # Default fallback profile if machine model is unknown
 DEFAULT_PROFILE = {
@@ -51,6 +52,7 @@ DEFAULT_PROFILE = {
 }
 
 _PROFILES_CACHE = None
+_MODEL_SPECS_CACHE = None
 
 def load_profiles() -> dict:
     global _PROFILES_CACHE
@@ -62,48 +64,111 @@ def load_profiles() -> dict:
             _PROFILES_CACHE = {}
     return _PROFILES_CACHE
 
+def load_model_specs() -> dict:
+    """Load all structured model specification overrides from docs/models/*.json."""
+    global _MODEL_SPECS_CACHE
+    if _MODEL_SPECS_CACHE is not None:
+        return _MODEL_SPECS_CACHE
+
+    specs = {}
+    candidates = [
+        DOCS_MODELS_DIR,
+        os.path.join(os.path.dirname(__file__), "..", "docs", "models"),
+        os.path.join(os.getcwd(), "docs", "models")
+    ]
+    for d in candidates:
+        if os.path.exists(d):
+            import glob
+            for fpath in glob.glob(os.path.join(d, "*.json")):
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    ef = data.get("ef_code")
+                    if ef:
+                        specs[ef.upper()] = data
+                    for art in data.get("article_numbers", []):
+                        specs[str(art)] = data
+                except Exception:
+                    pass
+            break
+    _MODEL_SPECS_CACHE = specs
+    return _MODEL_SPECS_CACHE
+
+def get_model_spec(ef_code_or_art: str) -> Optional[dict]:
+    """Retrieve detailed model specification if available in docs/models/."""
+    specs = load_model_specs()
+    if not specs or not ef_code_or_art:
+        return None
+    raw = str(ef_code_or_art).strip().upper()
+    if raw in specs:
+        return specs[raw]
+    m = re.search(r'(EF\w+)', raw)
+    if m and m.group(1) in specs:
+        return specs[m.group(1)]
+    simplified = re.sub(r'V\d+$', '', raw)
+    if simplified in specs:
+        return specs[simplified]
+    for k, v in specs.items():
+        if k in raw or raw in k:
+            return v
+    return None
+
 def find_profile(raw_model_or_ef: str) -> dict:
     """
     Match an EF code (e.g. 'EF536M V02.01', '3C16EF536M V02.01', 'EF1092', 'EF545')
     to the best matching machine profile. Longest matching prefix wins.
+    Automatically enriches matched profile with model specification from docs/models/ if present.
     """
     profiles = load_profiles()
-    if not profiles:
-        return DEFAULT_PROFILE
+    matched_profile = None
 
-    # Extract EF code from string if prefixed
-    m = re.search(r'(EF\w+)', raw_model_or_ef.upper())
-    target = m.group(1) if m else raw_model_or_ef.strip().upper()
+    if profiles:
+        # Extract EF code from string if prefixed
+        m = re.search(r'(EF\w+)', raw_model_or_ef.upper())
+        target = m.group(1) if m else raw_model_or_ef.strip().upper()
 
-    # Exact match first
-    if target in profiles:
-        return profiles[target]
+        # Exact match first
+        if target in profiles:
+            matched_profile = dict(profiles[target])
 
-    # Try removing suffixes like V2, _C, PP, etc.
-    simplified = re.sub(r'V\d+$', '', target)
-    simplified = re.sub(r'_C$', '', simplified)
-    simplified = re.sub(r'(COFFEEONLY|PP|UL|ULV\d+)$', '', simplified)
-    if simplified in profiles:
-        return profiles[simplified]
+        # Try removing suffixes like V2, _C, PP, etc.
+        if matched_profile is None:
+            simplified = re.sub(r'V\d+$', '', target)
+            simplified = re.sub(r'_C$', '', simplified)
+            simplified = re.sub(r'(COFFEEONLY|PP|UL|ULV\d+)$', '', simplified)
+            if simplified in profiles:
+                matched_profile = dict(profiles[simplified])
 
-    # Longest prefix match
-    best_key = None
-    best_len = 0
-    for key in profiles:
-        if target.startswith(key.upper()) and len(key) > best_len:
-            best_key = key
-            best_len = len(key)
+        # Longest prefix match
+        if matched_profile is None:
+            best_key = None
+            best_len = 0
+            for key in profiles:
+                if target.startswith(key.upper()) and len(key) > best_len:
+                    best_key = key
+                    best_len = len(key)
+            if best_key:
+                matched_profile = dict(profiles[best_key])
 
-    if best_key:
-        return profiles[best_key]
+        # Check model family substring match
+        if matched_profile is None:
+            for key, p in profiles.items():
+                fam = p.get("model_family", "")
+                if fam and fam.upper() in target:
+                    matched_profile = dict(p)
+                    break
 
-    # Check model family substring match
-    for key, p in profiles.items():
-        fam = p.get("model_family", "")
-        if fam and fam.upper() in target:
-            return p
+    if matched_profile is None:
+        matched_profile = dict(DEFAULT_PROFILE)
 
-    return DEFAULT_PROFILE
+    # Dynamic Enrichment: Merge model-specific specifications from docs/models/*.json if available
+    spec = get_model_spec(raw_model_or_ef)
+    if spec:
+        for k in ("hardware", "custom_registers", "recipe_buttons", "article_numbers"):
+            if k in spec and k not in matched_profile:
+                matched_profile[k] = spec[k]
+
+    return matched_profile
 
 def get_product_name(profile: dict, code: int) -> str:
     """Find human-readable product name for a numeric product code."""

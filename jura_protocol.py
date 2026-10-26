@@ -14,7 +14,7 @@ Handles:
 Credits & Attribution:
 Built upon reverse-engineering research and protocol contributions by CM-P,
 Hajo Noerenberg (hn / cmd2jura), Jutta-Proto, makefu (jura-connect), AlexxIT,
-Otto Winter (ESPHome), and the open-source hardware community.
+Otto Winter (ESPHome), Google Antigravity (Agy / DeepMind), and the open-source hardware community.
 """
 
 import time

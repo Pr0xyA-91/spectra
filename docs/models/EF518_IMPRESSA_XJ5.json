@@ -1,0 +1,125 @@
+{
+  "model_family": "IMPRESSA XJ5 Professional GII",
+  "ef_code": "EF518M",
+  "display_ef": "EF518D",
+  "series": "IMPRESSA Professional X-Line",
+  "article_numbers": [
+    "13705",
+    "13583",
+    "13636"
+  ],
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": true,
+    "has_external_plumbing": true,
+    "has_milk_system": false,
+    "flowmeter_pulses_per_ml": 2.366,
+    "optical_hopper": {
+      "command": "AS:",
+      "empty_adc_threshold": 1710,
+      "nominal_adc_threshold": 1680,
+      "nominal_delta_max": 85,
+      "empty_delta_min": 95
+    },
+    "bu_calibration": {
+      "upper_limit_ticks": 1292,
+      "upper_reference_ticks": 650,
+      "compression_ticks": 520,
+      "prebrew_travel_ticks": 266,
+      "mill_target_ticks": 230,
+      "registers": {
+        "upper_limit": "0040",
+        "mill_target": "0041",
+        "prebrew_1": "0042",
+        "compression": "0043",
+        "prebrew_2": "0044"
+      }
+    }
+  },
+  "custom_registers": {
+    "0000": {
+      "name": "Filter_Ext_Watervolume",
+      "description": "Cumulative volume through external filtration (dl)"
+    },
+    "0003": {
+      "name": "Filter_Ext_Watervolumeafter",
+      "description": "Water drawn after external filter limit (dl)"
+    },
+    "0070": {
+      "name": "Filter_Ext_Rinsing",
+      "description": "Rinse water volume through external filter (dl)"
+    },
+    "0071": {
+      "name": "Filter_Ext_Limit_Rinsing",
+      "description": "External filter maximum rinse limit threshold (dl)"
+    },
+    "0076": {
+      "name": "Filter_Ext_Watervolume2",
+      "description": "Secondary external filter volume counter"
+    },
+    "008B": {
+      "name": "Filter_Ext_Limit_Water",
+      "description": "Warning threshold for external filter replacement"
+    },
+    "00B4": {
+      "name": "Espresso_1_2_Settings",
+      "description": "Front-Panel Buttons 1 & 2 aroma strength & pre-brew"
+    },
+    "00B5": {
+      "name": "Coffee_1_2_Settings",
+      "description": "Front-Panel Buttons 3 & 4 aroma strength & pre-brew"
+    },
+    "00B9": {
+      "name": "Espresso_1_2_Volume",
+      "description": "Dispensed water volume for Single & Double Espresso"
+    },
+    "00BA": {
+      "name": "Coffee_1_2_Volume",
+      "description": "Dispensed water volume for Single & Double Coffee"
+    },
+    "00BB": {
+      "name": "Hotwater_Volume",
+      "description": "Hot water portion volume"
+    },
+    "00A9": {
+      "name": "Hotwater_Settings",
+      "description": "Temperature and bypass valve setting for hot water"
+    }
+  },
+  "recipe_buttons": [
+    {
+      "button": 1,
+      "product": "1 Espresso",
+      "volume_reg": "00B9",
+      "volume_byte": "low",
+      "settings_reg": "00B4",
+      "settings_byte": "low"
+    },
+    {
+      "button": 2,
+      "product": "2 Espressi",
+      "volume_reg": "00B9",
+      "volume_byte": "high",
+      "settings_reg": "00B4",
+      "settings_byte": "high"
+    },
+    {
+      "button": 3,
+      "product": "1 Coffee",
+      "volume_reg": "00BA",
+      "volume_byte": "low",
+      "settings_reg": "00B5",
+      "settings_byte": "low"
+    },
+    {
+      "button": 4,
+      "product": "2 Coffees",
+      "volume_reg": "00BA",
+      "volume_byte": "high",
+      "settings_reg": "00B5",
+      "settings_byte": "high"
+    }
+  ]
+}

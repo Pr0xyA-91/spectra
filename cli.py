@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - WhiteRat Asynchronous Telemetry
+SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics
 Universal Appliance Telemetry & Diagnostics Engine (Jura Module)
 """
 
@@ -13,34 +13,34 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.3.4"
+__version__ = "0.4.1"
 
 
 def print_banner():
     banner = r"""
- __      __   __________     _____  ___________
-/  \    /  \  \______   \   /  _  \ \__    ___/
-\   \/\/   /   |       _/  /  /_\  \  |    |   
- \        /    |    |   \ /    |    \ |    |   
-  \__/\  /     |____|_  / \____|__  / |____|   
-       \/             \/          \/           
-      W.R.A.T. — WhiteRat Asynchronous Telemetry (v0.3.4)
-         Universal Diagnostics Engine [Jura Module]
+  ███████╗██████╗ ███████╗ ██████╗████████╗██████╗  █████╗ 
+  ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔══██╗
+  ███████╗██████╔╝█████╗  ██║        ██║   ██████╔╝███████║
+  ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══██║
+  ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║██║  ██║
+  ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝
+   — Universal Hardware Telemetry & Logic Board Diagnostics (v0.4.1) —
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="W.R.A.T. - WhiteRat Asynchronous Telemetry (v0.3.4)"
+        description="SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v0.4.1)"
     )
-    parser.add_argument("-V", "--version", action="version", version=f"W.R.A.T. {__version__} (WhiteRat Asynchronous Telemetry)")
+    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (Hardware Telemetry & Logic Board Diagnostics)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")
     parser.add_argument("--demo", action="store_true", help="Run with simulated demo machine (Jura S8)")
     parser.add_argument("--demo-model", choices=["S8", "E8", "Z10", "S8-SC"], default="S8", help="Model to simulate in demo mode")
     parser.add_argument("-s", "--sensors", "--live-sensors", action="store_true", help="Read and display live sensors, switches, and fault telemetry")
+    parser.add_argument("--diff", metavar="BASELINE", help="Compare machine memory against baseline specification (e.g. EF518) or a previous JSON dump")
     parser.add_argument("-o", "--export", help="Output file path to save diagnostic report (.txt, .json, .csv)")
     parser.add_argument("-f", "--format", choices=["text", "json", "csv"], default="text", help="Report format (default: text)")
     parser.add_argument("--list-ports", action="store_true", help="List detected serial ports and exit")
@@ -136,17 +136,30 @@ def main():
             else:
                 print(f"  💨 Steam Thermoblock (TB2)         : Not Installed (Single Heater Model)")
 
-            if "ambient_temp_str" in telem and telem["ambient_temp_str"] != "N/A":
-                raw_a = telem.get("ambient_temp_raw", 0)
-                print(f"  💧 Water Intake / Ambient Sensor   : {telem['ambient_temp_str']:<12} (ADC: 0x{raw_a:04X})")
+            if "bu_encoder_str" in telem and telem["bu_encoder_str"] != "N/A":
+                raw_pos = telem.get("bu_encoder_pos", 0)
+                raw_ref = telem.get("bu_encoder_upper", 0)
+                bu_st = telem.get("bu_position_state", "Home / Mill Position")
+                bu_pct = telem.get("bu_stroke_pct", 0)
+                print(f"  ⚙️ Brew Unit Encoder (Pos / Ref)   : {telem['bu_encoder_str']:<18} [{bu_st} | {bu_pct}%] (0x{raw_pos:04X} / 0x{raw_ref:04X})")
+            if "bu_mill_target" in telem:
+                print(f"  🎯 Brew Unit Mill Target (RE:0041) : {telem['bu_mill_target']} ticks (0x{telem['bu_mill_target']:04X})")
+            if "bu_init_count" in telem:
+                print(f"  🔄 Brew Unit Init Counter (RE:0056): {telem['bu_init_count']} cycles")
 
-            print("\n[SYSTEM SETTINGS & HYDRAULIC SENSORS]")
+            print("\n[SYSTEM SETTINGS, SUBSYSTEMS & HYDRAULIC SENSORS]")
+            if "loader_version" in telem:
+                print(f"  * Main Board Bootloader (TL:)      : {telem['loader_version']}")
+            if "display_firmware" in telem:
+                print(f"  * Display / Sub-MCU Firmware (TY$:): {telem['display_firmware']}")
             if "water_hardness_dh" in telem:
                 print(f"  * Configured Water Hardness        : {telem['water_hardness_dh']} °dH")
             if "filter_volume_liters" in telem:
                 print(f"  * Water Volume Through Filter      : {telem['filter_volume_liters']} Liters")
             if "rotary_switch" in telem:
                 print(f"  * Selection / Rotary Switch Position: {telem['rotary_switch']}")
+            if "button_matrix" in telem:
+                print(f"  * Front Panel Key Matrix / Aux Bits: 0x{telem['button_matrix']} / {telem.get('aux_inputs', '00')}")
 
         print("=" * 78 + "\n")
 
@@ -157,6 +170,37 @@ def main():
                 json.dump(sensors_data, f, indent=2, ensure_ascii=False)
             print(f"[+] Sensor telemetry saved to: {out_path}")
 
+        sys.exit(0)
+
+    # Automated EEPROM Baseline Diff Mode
+    if args.diff:
+        print(f"[*] Auditing and diffing machine against baseline: {args.diff}...")
+        conn = serial_io.JuraSerialConnection(target_port, baudrate=args.baud)
+        live_dump = {}
+        try:
+            # Read gateways
+            for gw in ["TY:", "TL:", "TY$:", "TL$:", "CS$:", "IC:", "HZ:", "AS:"]:
+                live_dump[gw] = conn.query_ascii(gw, timeout=0.8)
+            # Read EEPROM blocks
+            live_eeprom = {}
+            for addr in range(0x0000, 0x0200, 0x0010):
+                r = conn.query_ascii(f"RT:{addr:04X}", timeout=1.0)
+                if r and r.startswith("rt:"):
+                    payload = r[3:].strip()
+                    for w_idx in range(len(payload) // 4):
+                        live_eeprom[f"{addr + w_idx:04X}"] = payload[w_idx*4 : (w_idx+1)*4]
+            live_dump["eeprom"] = live_eeprom
+        finally:
+            conn.close()
+
+        diff_report = sc.generate_eeprom_diff_report(live_dump, args.diff, label=target_port)
+        print("\n" + diff_report)
+
+        if args.export:
+            out_path = os.path.abspath(args.export)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(diff_report)
+            print(f"[+] Diff report saved to: {out_path}")
         sys.exit(0)
 
     def log_handler(msg: str):
