@@ -100,9 +100,54 @@ class JuraSerialConnection:
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
+            self._init_mock_eeprom()
             self.is_open = True
         else:
             self._open_hardware_port()
+
+    def _init_mock_eeprom(self):
+        """Initialize complete 512-word simulated EEPROM for offline demo & developer differential testing."""
+        self._mock_eeprom = {i: 0x0000 for i in range(512)}
+        # Block seeds matching real machine captures
+        seeds = {
+            0x0000: "000010A747450000025F15F500000E1900A600266DFB00000000000000000000",
+            0x0010: "B0940000018700000001703A00000000000000000000000000000000000001FB",
+            0x0020: "00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E",
+            0x0030: "466000332EBE2996000000000000000000001E6F046E5028180F001401040276",
+            0x0040: "050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
+        }
+        for blk, hex_str in seeds.items():
+            for i in range(16):
+                w_hex = hex_str[i * 4: i * 4 + 4]
+                self._mock_eeprom[blk + i] = int(w_hex, 16)
+
+        # Pre-seed other known registers
+        self._mock_eeprom[0x0045] = 0x0048
+        self._mock_eeprom[0x0055] = 0x2801
+        self._mock_eeprom[0x00C3] = 0x1E32
+        self._mock_eeprom[0x00DA] = 0x435A
+        self._mock_eeprom[0x00DB] = 0x2F4C
+        self._mock_eeprom[0x00DC] = 0x2D8C
+        self._mock_eeprom[0x00E9] = 0x0000
+        self._mock_eeprom[0x00EA] = 0x0007
+        self._mock_eeprom[0x0015] = 0x703A
+        self._mock_eeprom[0x00B4] = 0x050A
+        self._mock_eeprom[0x00B5] = 0x040A
+        self._mock_eeprom[0x00B9] = 0x0050
+        self._mock_eeprom[0x00BA] = 0x0078
+        self._mock_eeprom[0x00BB] = 0x0096
+        self._mock_eeprom[0x00A9] = 0x0102
+
+    def set_mock_eeprom_word(self, addr: int, val: int):
+        """Developer/testing utility to update a simulated EEPROM register."""
+        if hasattr(self, "_mock_eeprom"):
+            self._mock_eeprom[addr & 0x01FF] = val & 0xFFFF
+
+    def get_mock_eeprom_word(self, addr: int) -> int:
+        """Developer/testing utility to inspect a simulated EEPROM register."""
+        if hasattr(self, "_mock_eeprom"):
+            return self._mock_eeprom.get(addr & 0x01FF, 0)
+        return 0
 
     def _open_hardware_port(self):
         is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith("COM")
@@ -259,34 +304,6 @@ class JuraSerialConnection:
                 return "cs$:1A2B"
             elif cmd_clean == "IC:":
                 return "ic:230A"
-            elif cmd_clean == "RT:0000":
-                return "rt:000010A747450000025F15F500000E1900A600266DFB00000000000000000000"
-            elif cmd_clean == "RT:0010":
-                return "rt:B0940000018700000001703A00000000000000000000000000000000000001FB"
-            elif cmd_clean == "RT:0020":
-                return "rt:00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E"
-            elif cmd_clean == "RT:0030":
-                return "rt:466000332EBE2996000000000000000000001E6F046E5028180F001401040276"
-            elif cmd_clean == "RT:0040":
-                return "rt:050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
-            elif cmd_clean == "RE:0030":
-                return "re:4660"
-            elif cmd_clean == "RE:0031":
-                return "re:0033"
-            elif cmd_clean == "RE:0032":
-                return "re:2EBE"
-            elif cmd_clean == "RE:0015":
-                return "re:703A"
-            elif cmd_clean == "RE:00DA":
-                return "re:435A"
-            elif cmd_clean == "RE:00DB":
-                return "re:2F4C"
-            elif cmd_clean == "RE:00DC":
-                return "re:2D8C"
-            elif cmd_clean == "RE:00E9":
-                return "re:0000"
-            elif cmd_clean == "RE:00EA":
-                return "re:0007"
             elif cmd_clean == "HZ:":
                 if "Z10" in self.port_name.upper():
                     # Dual heater demo model (Coffee: 94.2°C, Steam: 135.0°C)
@@ -300,22 +317,20 @@ class JuraSerialConnection:
             elif cmd_clean == "AS:":
                 # Optical Bean Hopper Sensor (Ambient ADC: 0x0645 = 1605, Reflected IR ADC: 0x061C = 1564 -> Beans OK)
                 return "as:077206450000,0772061C0001"
-            elif cmd_clean == "RE:0028":
-                return "re:0000"
-            elif cmd_clean == "RE:0029":
-                return "re:0010"
-            elif cmd_clean == "RE:0045":
-                return "re:0048"
-            elif cmd_clean == "RE:0055":
-                return "re:2801"
-            elif cmd_clean == "RE:00C3":
-                return "re:1E32"
-            elif cmd_clean in ("RE:01B0", "RE:01B1", "RE:01B2", "RE:01B3", "RE:01B4", "RE:01B5", "RE:01B6", "RE:0103"):
-                return "re:0000"
             elif cmd_clean.startswith("RT:"):
-                return "rt:0000000000000000000000000000000000000000000000000000000000000000"
+                try:
+                    blk = int(cmd_clean[3:], 16)
+                    words = [self._mock_eeprom.get(blk + i, 0) for i in range(16)]
+                    return "rt:" + "".join(f"{w:04X}" for w in words)
+                except Exception:
+                    return "rt:" + "0000" * 16
             elif cmd_clean.startswith("RE:"):
-                return "re:0000"
+                try:
+                    addr = int(cmd_clean[3:], 16)
+                    val = self._mock_eeprom.get(addr, 0)
+                    return f"re:{val:04X}"
+                except Exception:
+                    return "re:0000"
             return None
 
         self.drain_rx()

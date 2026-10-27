@@ -368,6 +368,12 @@ class JuraDiagApp(Gtk.Window):
         self.btn_read.set_valign(Gtk.Align.CENTER)
         self.btn_read.connect("clicked", lambda w: self._on_read_clicked())
 
+        # Memory Mapper Developer Tool Button
+        self.btn_mapper = Gtk.Button(label="🔬 Memory Mapper")
+        self.btn_mapper.set_tooltip_text("Developer Memory Mapper & Differential Scope Tool")
+        self.btn_mapper.set_valign(Gtk.Align.CENTER)
+        self.btn_mapper.connect("clicked", lambda w: self._on_mapper_clicked())
+
         # Service Report Button
         self.btn_service_report = Gtk.Button(label="🖨️ Service Receipt")
         self.btn_service_report.set_tooltip_text("Generate Branded Customer Service PDF/HTML Inspection Certificate")
@@ -395,7 +401,7 @@ class JuraDiagApp(Gtk.Window):
         self._header_compact = is_compact
 
         for w in [self.brand_box, self.status_pill, self.lbl_port, self.port_combo, self.btn_refresh,
-                  self.header_spacer, self.btn_read, self.btn_service_report, self.btn_export, self.btn_about]:
+                  self.header_spacer, self.btn_read, self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
             if w.get_parent():
                 self.header_grid.remove(w)
 
@@ -408,9 +414,10 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.btn_refresh, 4, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 5, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 6, 0, 1, 1)
-            self.header_grid.attach(self.btn_service_report, 7, 0, 1, 1)
-            self.header_grid.attach(self.btn_export, 8, 0, 1, 1)
-            self.header_grid.attach(self.btn_about, 9, 0, 1, 1)
+            self.header_grid.attach(self.btn_mapper, 7, 0, 1, 1)
+            self.header_grid.attach(self.btn_service_report, 8, 0, 1, 1)
+            self.header_grid.attach(self.btn_export, 9, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 10, 0, 1, 1)
             self.sub_title.set_visible(True)
         else:
             # 2-row layout: Row 0 Title + Status + Actions, Row 1 Ports
@@ -418,9 +425,10 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 2, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 3, 0, 1, 1)
-            self.header_grid.attach(self.btn_service_report, 4, 0, 1, 1)
-            self.header_grid.attach(self.btn_export, 5, 0, 1, 1)
-            self.header_grid.attach(self.btn_about, 6, 0, 1, 1)
+            self.header_grid.attach(self.btn_mapper, 4, 0, 1, 1)
+            self.header_grid.attach(self.btn_service_report, 5, 0, 1, 1)
+            self.header_grid.attach(self.btn_export, 6, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 7, 0, 1, 1)
 
             self.header_grid.attach(self.lbl_port, 0, 1, 1, 1)
             self.header_grid.attach(self.port_combo, 1, 1, 2, 1)
@@ -428,6 +436,24 @@ class JuraDiagApp(Gtk.Window):
             self.sub_title.set_visible(False)
 
         self.header_grid.show_all()
+
+    def _on_mapper_clicked(self):
+        try:
+            import memory_mapper
+            active_port = self.selected_port or self.port_combo.get_active_text() or ""
+            win = memory_mapper.MemoryMapperWindow(parent_app=self, initial_port=active_port)
+            win.show_all()
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Failed to launch Memory Mapper"
+            )
+            dialog.format_secondary_text(str(e))
+            dialog.run()
+            dialog.destroy()
 
     def _on_about_clicked(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True)

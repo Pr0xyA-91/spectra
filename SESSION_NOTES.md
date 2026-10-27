@@ -312,3 +312,35 @@ conn.close()
   - Cross-platform certificate viewing: uses `os.startfile` on Windows, `open` on macOS, and `xdg-open` on Linux.
 * **Validation**:
   - Created `test_security_and_optimizations.py` across all 3 repositories (67/67 unit tests passing).
+
+## 12. Developer Memory Mapper & Differential Logic Scope (Session 2026-10-27)
+* **Architecture & Concept**:
+  - Purpose-built developer tool (`memory_mapper.py`) for reverse-engineering unknown appliance registers and observing memory deltas during physical switch / menu manipulations.
+  - Full 512-word EEPROM memory space (`0x0000`..`0x01FF`, 1,024 bytes) interrogation via 32 fast block reads (`RT:`), with individual word fallback (`RE:`).
+  - Also captures volatile state (`HZ:` heating/pump telemetry, `AS:` optical sensor ADCs, and front-panel gateways `TY:`, `TL:`, `TY$:`, `TL$:`, `CS$:`, `IC:`).
+* **Traffic-Light Register Classification**:
+  - 🟢 **Mapped**: Invariant platform registers (universal counters, calibrations, error logs) or model-specific mappings.
+  - 🟠 **Theoretical**: Registers documented in legacy service notes or reverse engineering heuristics (volume settings, aroma strengths, filter thresholds).
+  - 🔴 **Unknown**: Active non-zero values on the connected hardware requiring investigation.
+  - ⚪ **Blank**: Unprogrammed or zero space (`0x0000`).
+* **Live Differential Scope ("What Changed?" Mode)**:
+  - Captures baseline snapshot (`capture_baseline`).
+  - Real-time comparison identifies all modified registers, computing exact delta values ($\Delta = \text{current} - \text{baseline}$).
+  - 16-bit binary inspector reveals exact bit-flip transitions (`b15` .. `b0`).
+  - Noise masking suppresses natural NTC thermoblock temperature jitter ($\pm 1..2^\circ\text{C}$) and 1Hz heartbeat counter in volatile feeds.
+* **Community Model Knowledge Persistence ("Filling the Blanks")**:
+  - Identifies appliance via `TY:` / `TY$:` gateway interrogation to match `EF_CODE` (e.g. `EF518M`).
+  - Automatically loads or initializes `docs/models/<EF>_<NAME>.json`.
+  - Inline mapping interface (`map_register` in CLI and GUI) allows developers to define register name, description, category, and units.
+  - Persists directly to JSON with atomic write and invalidates the profiles cache, updating the universal database in real time for community benefit.
+* **Strict Physical Safety Invariant**:
+  - Enforces read-only command policy (`SAFE_READ_PREFIXES`).
+  - Prohibits any write command (`WE:`, `WT:`, `DA:`, `@tw:`), raising immediate `PermissionError` to guarantee physical appliance safety.
+* **Dual Operation**:
+  - **Terminal CLI**: Headless / SSH interactive REPL (`python3 memory_mapper.py --cli [--diff] [--watch]`).
+  - **GTK Desktop GUI**: Modern dark window (`MemoryMapperWindow`) accessible from SPECTRA's header toolbar (`🔬 Memory Mapper`) or standalone (`python3 memory_mapper.py --gui`).
+* **Mock EEPROM Simulation Support**:
+  - Enhanced `serial_io.py`'s `is_demo` mode to host a complete 512-word simulated EEPROM with runtime register modification utility (`set_mock_eeprom_word`), enabling full offline developer differential testing.
+* **Test Suite Expansion**:
+  - Created `test_memory_mapper.py` covering classification, sweep reconstruction, baseline diffing, bit-flip detection, JSON persistence, and safety invariants.
+  - Expanded unit test coverage to 82 unit tests across all 3 repositories (22 in `spectra`, 30 in `spectra-mm`, 30 in `spectra-win` — 100% passing).
