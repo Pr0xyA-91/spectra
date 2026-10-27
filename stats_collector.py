@@ -482,17 +482,17 @@ def query_live_sensors(
                                 delta = on_adc - off_adc
                                 # Calibrated Jura optical hopper sensor threshold:
                                 # Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-                                # Absorption by coffee beans (Hopper Charged): delta <= 93 counts -> Beans OK
-                                # Bare prism specular reflection (Hopper Empty): delta >= 96 counts -> Fill Beans
-                                # Boundary hysteresis band (94-95 counts): latch previous state to prevent flickering
-                                if delta <= 93:
+                                # Absorption by coffee beans (Hopper Charged): delta <= 89 counts -> Beans OK
+                                # Bare prism specular reflection (Hopper Empty): delta >= 92 counts -> Fill Beans
+                                # Boundary hysteresis band (90-91 counts): latch previous state to prevent flickering
+                                if delta <= 89:
                                     beans_empty = False
                                     beans_ok = True
-                                elif delta >= 96:
+                                elif delta >= 92:
                                     beans_empty = True
                                     beans_ok = False
                                 else:
-                                    beans_ok = cached_beans if cached_beans is not None else True
+                                    beans_ok = cached_beans if cached_beans is not None else False
                                     beans_empty = not beans_ok
 
                                 setattr(conn, "_cached_beans_ok", beans_ok)

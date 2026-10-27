@@ -422,6 +422,27 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         sw_sb = {s["id"]: s for s in res_sb["switches"]}
         self.assertTrue(sw_sb["bean_hopper"]["ok"])
 
+        # Case 3: Empty hopper bare prism reflection (off=1540, on=1632 -> delta=92 counts)
+        # Calibrated threshold: delta >= 92 counts -> Fill Beans (blocking readiness)
+        conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077306040000,077306600001"  # 0x0604=1540, 0x0660=1632 -> delta=92
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+            return ""
+        conn_empty.query_ascii = mock_empty
+
+        res_emp = sc.query_live_sensors("mock_empty", conn=conn_empty, fast_poll=True)
+        self.assertFalse(res_emp["telemetry"]["beans_ok"])
+        sw_emp = {s["id"]: s for s in res_emp["switches"]}
+        self.assertFalse(sw_emp["bean_hopper"]["ok"])
+        self.assertEqual(sw_emp["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertFalse(sw_emp["machine_ready"]["ok"])
+        self.assertEqual(sw_emp["machine_ready"]["badge"], "FILL BEANS")
+        self.assertTrue(any(a["name"] == "Fill Beans" for a in res_emp["alerts"]))
+
 
     def test_ascii_and_smart_connect_counter_mapping(self):
         """Test that ASCII EEPROM mode and Smart Connect mode map maintenance and beverage labels accurately."""

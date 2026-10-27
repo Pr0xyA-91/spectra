@@ -119,9 +119,9 @@ conn.close()
   - `Group 0` (`0000`): Ambient light reading with IR LED off (`~1360–1620` ADC counts; up to `2240` counts when hopper lid open in bright light).
   - `Group 1` (`0001`): Reflected infrared light reading with IR LED pulsed on.
   - **Ambient Compensation**: `on_adc` contains ambient DC offset. True reflection is `delta = (on_adc - off_adc)`. Never gate bean status on raw `on_adc >= 1700`, which falsely triggers under room light.
-  - **Empty Hopper (Reflective)**: When the hopper is empty, IR pulse reflects cleanly off bare prism $\rightarrow$ delta $\Delta \ge 96$ counts (typically $97$–$104$).
-  - **Hopper Charged (Absorption)**: Dark coffee beans bury prism and absorb/scatter IR $\rightarrow$ delta $\Delta \le 93$ counts (typically $84$–$92$).
-  - **Debounce / Hysteresis Band**: A 2-count hysteresis band ($94 \le \Delta \le 95$) latches previous state to completely prevent flickering or oscillation at threshold boundaries.
+  - **Empty Hopper (Reflective)**: When the hopper is empty, IR pulse reflects cleanly off bare prism $\rightarrow$ delta $\Delta \ge 92$ counts (typically $92$–$104$).
+  - **Hopper Charged (Absorption)**: Dark coffee beans bury prism and absorb/scatter IR $\rightarrow$ delta $\Delta \le 89$ counts (typically $83$–$89$).
+  - **Debounce / Hysteresis Band**: A 2-count hysteresis band ($90 \le \Delta \le 91$) latches previous state to completely prevent flickering or oscillation at threshold boundaries.
 * **Puck Thickness / Cake Measurement (`HZ[8]`)**:
   - `HZ[8]` (historically labeled key matrix) reports the live compressed cake thickness in encoder ticks:
   - `0x000E` (`14` dec ticks): Grinder ran empty / puck too thin threshold (triggers machine "Fill Beans" prompt).
