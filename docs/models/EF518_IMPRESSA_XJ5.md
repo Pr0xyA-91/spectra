@@ -75,18 +75,17 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
   * `Group 0` (`0000`): Ambient light reading when IR LED is off (`~1360–1614` ADC counts).
   * `Group 1` (`0001`): Reflected infrared light reading when IR LED is pulsed on (`~1445–1792` ADC counts).
 
-#### Calibration & State Thresholds
-* **Empty Hopper (Reflective)**:
-  * Infrared pulse reflects cleanly off the bare optical prism back into the photodiode.
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ rises to **$\ge +92$ counts** (calibrated empty values: $+92$ to $+104$ counts across empty hopper states; up to $+119$ counts when hopper lid is open under room light).
-  * Appliance indicates: *"Doplňte kávová zrna"* / *"Fill beans"*.
-* **Hopper Charged (Absorption)**:
-  * Dark coffee beans bury the prism, absorbing and scattering the infrared pulse away from the photodiode.
-  * Net delta $\Delta$ drops down to **$\le +89$ counts** (calibrated charged values: $+83$ to $+89$ counts across thermal cycles).
-  * Appliance indicates: *"Ready to brew"*.
-* **Ambient Light Compensation & Hysteresis**:
-  * Raw `ON_ADC` incorporates ambient room light (which can exceed $1,750$ or $2,300$ counts with lid open in bright environments even when beans are present). Evaluation strictly relies on ambient-subtracted $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ to prevent ambient false empty alerts.
-  * A Schmitt trigger hysteresis window ($+90$ to $+91$ counts) latches the verified state, completely eliminating rapid boundary oscillations. Standby floating ADC noise ($> 3,500$ counts) is filtered.
+#### Multi-Layer Detection Architecture
+* **Firmware Lockout Register (`HZ[0][3]`)**:
+  * Primary source of truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
+  * Bit `3` of `parts[0]` reflects the machine CPU's internal debounced bean hopper state:
+    * `parts[0][3] == "0"`: Appliance displays *"Ready"* / *"Ready to brew"*.
+    * `parts[0][3] == "1"`: Appliance displays *"Doplňte kávová zrna"* / *"Fill beans"*.
+* **Grind Dose Cake Measurement (`HZ[8]`)**:
+  * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle.
+* **Optical Analog Calibration (`AS:`)**:
+  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ provides continuous photodiode telemetry for the Digital Twin and Component Inspector.
+  * Bare optical prism total reflection ($\Delta \ge +102$ counts) acts as optical empty safety verification. Standby floating noise ($> 3,500$ ADC) is filtered out.
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:

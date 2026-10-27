@@ -278,14 +278,18 @@ def query_live_sensors(
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
             cake_thickness_ticks = 0
+            hz_bean_empty = False
+            has_hz_status = False
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
                 parts = payload.split(",")
 
                 if len(parts) > 0 and len(parts[0]) >= 7:
+                    has_hz_status = True
                     bu_init_ok = (parts[0][1] == "1")
                     mv_busy = (parts[0][2] == "1")
+                    hz_bean_empty = (parts[0][3] == "1")
                     heater_ready_flag = (parts[0][5] == "1")
                     mv_init_ok = (parts[0][6] == "1")
                 if len(parts) > 1:
@@ -479,23 +483,6 @@ def query_live_sensors(
                             on_adc = int(as_parts[1][4:8], 16)
                             # Reject floating / invalid ADCs (e.g. machine in standby or unpowered sensor bus)
                             if 0 < off_adc < 3500 and 0 < on_adc < 3500:
-                                delta = on_adc - off_adc
-                                # Calibrated Jura optical hopper sensor threshold:
-                                # Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-                                # Absorption by coffee beans (Hopper Charged): delta <= 89 counts -> Beans OK
-                                # Bare prism specular reflection (Hopper Empty): delta >= 92 counts -> Fill Beans
-                                # Boundary hysteresis band (90-91 counts): latch previous state to prevent flickering
-                                if delta <= 89:
-                                    beans_empty = False
-                                    beans_ok = True
-                                elif delta >= 92:
-                                    beans_empty = True
-                                    beans_ok = False
-                                else:
-                                    beans_ok = cached_beans if cached_beans is not None else False
-                                    beans_empty = not beans_ok
-
-                                setattr(conn, "_cached_beans_ok", beans_ok)
                                 setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
                                 setattr(conn, "_last_as_ts", now_ts)
                                 setattr(conn, "_as_supported", True)
@@ -508,13 +495,30 @@ def query_live_sensors(
                     setattr(conn, "_as_fail_count", fail_cnt)
                     if fail_cnt >= 3 and getattr(conn, "_as_supported", None) is None:
                         setattr(conn, "_as_supported", False)
-            elif cached_beans is not None:
-                # Between AS: polling samples, hold verified sensor status steadily (no oscillation)
-                beans_ok = cached_beans
-                beans_empty = not beans_ok
+
+            # Evaluate bean hopper level:
+            # Multi-layer safety verification:
+            # 1. Firmware Bean Lockout: parts[0][3] directly reflects CPU hopper alert on HZ bus ("Fill Beans")
+            # 2. Puck Compression: cake thickness <= 14 encoder ticks indicates grinder ran empty
+            # 3. Bare Prism Reflection: optical delta >= 102 counts indicates hopper is bare/uncovered
+            optical_empty = False
+            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            if cached_adcs:
+                off_adc, on_adc = cached_adcs
+                delta = on_adc - off_adc
+                if delta >= 102:
+                    optical_empty = True
+
+            puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
+
+            if hz_bean_empty or puck_empty or optical_empty:
+                beans_empty = True
+                beans_ok = False
             else:
-                beans_ok = True
                 beans_empty = False
+                beans_ok = True
+
+            setattr(conn, "_cached_beans_ok", beans_ok)
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
             prev_bu = _last_bu_samples.get(port_key)
