@@ -78,7 +78,9 @@ class JuraSerialConnection:
     """Universal serial transceiver interface for Jura diagnostics."""
 
     def __init__(self, port_name: str, baudrate: int = 9600, timeout: float = 1.5):
-        self.port_name = port_name
+        clean_port = port_name.split()[0] if port_name and port_name.upper().startswith("COM") else port_name
+        self.port_name = clean_port
+        self.raw_port_label = port_name
         self.baudrate = baudrate
         self.timeout = timeout
         self.is_demo = "DEMO" in port_name.upper() or port_name.lower() in ("mock", "demo")
@@ -103,7 +105,8 @@ class JuraSerialConnection:
             self._open_hardware_port()
 
     def _open_hardware_port(self):
-        if not os.path.exists(self.port_name):
+        is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith("COM")
+        if not is_windows and not os.path.exists(self.port_name):
             raise FileNotFoundError(f"Serial port {self.port_name} does not exist.")
 
         # Prefer native POSIX termios on Linux
@@ -137,7 +140,10 @@ class JuraSerialConnection:
                 return
             except Exception as e:
                 if self.fd is not None:
-                    os.close(self.fd)
+                    try:
+                        os.close(self.fd)
+                    except OSError:
+                        pass
                     self.fd = None
                 if not HAS_PYSERIAL:
                     raise IOError(f"Failed to configure serial port {self.port_name}: {e}")
@@ -324,6 +330,8 @@ class JuraSerialConnection:
             chunk = self.read(max_bytes=256, timeout_sec=0.05)
             if chunk:
                 rx.extend(chunk)
+                if len(rx) > 4096:
+                    break
                 if b"\r\n" in rx:
                     lines = [l.strip().decode("latin1", errors="ignore") for l in rx.split(b"\r\n")]
                     complete_lines = lines[:-1]
