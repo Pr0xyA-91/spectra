@@ -45,7 +45,7 @@ class DigitalTwinWidget(Gtk.DrawingArea):
         # State tracking
         self.telemetry: Dict[str, Any] = {}
         self.switches: Dict[str, Any] = {}
-        self.selected_node_id: str = "tb1"
+        self.selected_node_id: Optional[str] = None
         self.hovered_node_id: Optional[str] = None
 
         # Virtual canvas coordinate space
@@ -150,27 +150,50 @@ class DigitalTwinWidget(Gtk.DrawingArea):
             cr.line_to(self.VIRTUAL_W, y)
         cr.stroke()
 
-        # Extract live values
-        tank_ok = self.switches.get("water_tank", {}).get("ok", True)
-        tray_ok = self.switches.get("drip_tray", {}).get("ok", True)
-        beans_ok = self.switches.get("bean_hopper", {}).get("ok", True)
-        flow_rate = float(self.telemetry.get("flow_rate_ml_s", 0.0))
-        is_flowing = flow_rate > 0.0
+        # Check if telemetry has been read
+        has_data = bool(self.telemetry or self.switches)
 
-        # Heaters
-        tb1_str = self.telemetry.get("heater_coffee_str", "92.4 °C")
-        tb2_str = self.telemetry.get("heater_steam_str", "135.0 °C")
-        is_dual = self.telemetry.get("is_dual_heater", True)
+        # Extract live values if available
+        if has_data:
+            tank_ok = self.switches.get("water_tank", {}).get("ok")
+            tray_ok = self.switches.get("drip_tray", {}).get("ok")
+            beans_ok = self.switches.get("bean_hopper", {}).get("ok")
+            flow_rate = float(self.telemetry.get("flow_rate_ml_s", 0.0))
+            is_flowing = flow_rate > 0.0
 
-        bu_pos = self.telemetry.get("bu_encoder_pos", 1420)
-        bu_short = self.telemetry.get("bu_position_short", "Brew Pos")
+            tb1_str = self.telemetry.get("heater_coffee_str", "---")
+            is_dual = self.telemetry.get("is_dual_heater", False)
+            tb2_str = self.telemetry.get("heater_steam_str", "N/A") if is_dual else "N/A"
+
+            bu_pos = self.telemetry.get("bu_encoder_pos", "---")
+            bu_short = self.telemetry.get("bu_position_short", "---")
+            tb1_ready = self.telemetry.get("heater_ready_flag", True)
+            mv_busy = self.telemetry.get("mv_busy", False)
+            mv_init = self.telemetry.get("mv_init_ok", True)
+        else:
+            tank_ok = None
+            tray_ok = None
+            beans_ok = None
+            flow_rate = 0.0
+            is_flowing = False
+            tb1_str = "---"
+            is_dual = False
+            tb2_str = "---"
+            bu_pos = "---"
+            bu_short = "Awaiting Data"
+            tb1_ready = None
+            mv_busy = False
+            mv_init = None
 
         # 1. Hydraulic Pipes (Paths between components)
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
         cr.set_line_join(cairo.LINE_JOIN_ROUND)
 
         # Tank -> Flowmeter (Cold water)
-        cr.set_source_rgb(0.455, 0.780, 0.925)  # #74c7ec
+        if has_data:
+            cr.set_source_rgb(0.455, 0.780, 0.925)  # #74c7ec
+        else:
+            cr.set_source_rgb(0.180, 0.192, 0.267)  # Dimmed
         cr.set_line_width(4.0)
         cr.move_to(115, 115)
         cr.line_to(165, 115)
@@ -187,21 +210,30 @@ class DigitalTwinWidget(Gtk.DrawingArea):
         cr.stroke()
 
         # Ceramic Valve -> TB1 (Coffee Boiler)
-        cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+        if has_data:
+            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+        else:
+            cr.set_source_rgb(0.180, 0.192, 0.267)
         cr.move_to(440, 100)
         cr.line_to(440, 75)
         cr.line_to(490, 75)
         cr.stroke()
 
         # Ceramic Valve -> TB2 (Steam Boiler)
-        cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387
+        if has_data and is_dual:
+            cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387
+        else:
+            cr.set_source_rgb(0.180, 0.192, 0.267)
         cr.move_to(440, 130)
         cr.line_to(440, 155)
         cr.line_to(490, 155)
         cr.stroke()
 
         # TB1 -> Brew Unit (Hot Brew Line)
-        cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+        if has_data:
+            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+        else:
+            cr.set_source_rgb(0.180, 0.192, 0.267)
         cr.move_to(595, 75)
         cr.line_to(615, 75)
         cr.line_to(615, 120)
@@ -209,7 +241,10 @@ class DigitalTwinWidget(Gtk.DrawingArea):
         cr.stroke()
 
         # Brew Unit -> Dispenser Spout (Coffee output)
-        cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1
+        if has_data:
+            cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1
+        else:
+            cr.set_source_rgb(0.180, 0.192, 0.267)
         cr.move_to(672, 165)
         cr.line_to(672, 190)
         cr.line_to(462, 190)
@@ -225,48 +260,88 @@ class DigitalTwinWidget(Gtk.DrawingArea):
             self._draw_arrow(cr, 620, 120, 0)
 
         # 2. Draw Nodes
-        self._draw_node_card(cr, "tank", 35, 75, 80, 85, "WATER TANK", "NOMINAL" if tank_ok else "EMPTY",
-                             "Float OK" if tank_ok else "Refill Tank", ok=tank_ok, primary_color=(0.537, 0.863, 0.922))
+        if has_data:
+            if tank_ok is True:
+                tank_val, tank_sub = "PRESENT", "Water Level OK"
+            elif tank_ok is False:
+                tank_val, tank_sub = "EMPTY", "Refill Tank"
+            else:
+                tank_val, tank_sub = "---", "Awaiting read"
+            self._draw_node_card(cr, "tank", 35, 75, 80, 85, "WATER TANK",
+                                 tank_val, tank_sub,
+                                 ok=tank_ok, primary_color=(0.537, 0.863, 0.922))
 
-        self._draw_node_card(cr, "flowmeter", 165, 85, 65, 65, "FLOWMETER",
-                             f"{flow_rate:.1f} ml/s", "Nominal" if flow_rate > 0 else "Idle",
-                             ok=True, primary_color=(0.537, 0.706, 0.980))
+            self._draw_node_card(cr, "flowmeter", 165, 85, 65, 65, "FLOWMETER",
+                                 f"{flow_rate:.1f} ml/s",
+                                 f"{self.telemetry.get('flow_pulses', 0)} pulses",
+                                 ok=True, primary_color=(0.537, 0.706, 0.980))
 
-        self._draw_node_card(cr, "pump", 270, 75, 85, 75, "ULKA PUMP", "15 BAR",
-                             "Pumping" if is_flowing else "Standby", ok=True, primary_color=(0.796, 0.651, 0.969))
+            self._draw_node_card(cr, "pump", 270, 75, 85, 75, "PUMP",
+                                 "ACTIVE" if is_flowing else "STANDBY",
+                                 "Dispensing" if is_flowing else "Standby",
+                                 ok=True, primary_color=(0.796, 0.651, 0.969))
 
-        self._draw_node_card(cr, "valve", 395, 85, 60, 60, "VALVE", "COFFEE",
-                             "Ceramic", ok=True, primary_color=(0.976, 0.886, 0.686))
+            self._draw_node_card(cr, "valve", 395, 85, 60, 60, "VALVE",
+                                 "MOVING" if mv_busy else "COFFEE",
+                                 "Ceramic", ok=mv_init, primary_color=(0.976, 0.886, 0.686))
 
-        self._draw_node_card(cr, "tb1", 490, 45, 105, 60, "HEATER 1 (TB1)", tb1_str,
-                             "Ready to Brew", ok=True, primary_color=(0.953, 0.545, 0.659))
+            self._draw_node_card(cr, "tb1", 490, 45, 105, 60, "HEATER 1 (TB1)", tb1_str,
+                                 self.telemetry.get("heater_coffee_status", "Active"),
+                                 ok=tb1_ready, primary_color=(0.953, 0.545, 0.659))
 
-        self._draw_node_card(cr, "tb2", 490, 125, 105, 60, "HEATER 2 (TB2)", tb2_str if is_dual else "N/A",
-                             "Standby" if is_dual else "Single Heater", ok=is_dual, primary_color=(0.980, 0.702, 0.529))
+            self._draw_node_card(cr, "tb2", 490, 125, 105, 60, "HEATER 2 (TB2)",
+                                 tb2_str if is_dual else "N/A",
+                                 "Standby" if is_dual else "Single Heater",
+                                 ok=is_dual if is_dual else None, primary_color=(0.980, 0.702, 0.529))
 
-        self._draw_node_card(cr, "bu", 630, 80, 85, 85, "BREW UNIT", f"{bu_pos}",
-                             bu_short, ok=True, primary_color=(0.651, 0.890, 0.631))
+            bu_val = f"{bu_pos} ticks" if isinstance(bu_pos, int) else f"{bu_pos}"
+            self._draw_node_card(cr, "bu", 630, 80, 85, 85, "BREW UNIT", bu_val,
+                                 bu_short, ok=self.telemetry.get("bu_init_ok", True),
+                                 primary_color=(0.651, 0.890, 0.631))
 
-        # Bottom Subsystem Cards
-        self._draw_node_card(cr, "tray", 35, 205, 155, 60, "DRIP TRAY & GROUNDS",
-                             "INSERTED" if tray_ok else "REMOVED",
-                             "Clean contacts" if tray_ok else "Insert Drip Tray", ok=tray_ok)
+            if tray_ok is True:
+                tray_val, tray_sub = "INSERTED", "Tray Inserted"
+            elif tray_ok is False:
+                tray_val, tray_sub = "REMOVED", "Insert Drip Tray"
+            else:
+                tray_val, tray_sub = "---", "Awaiting read"
+            self._draw_node_card(cr, "tray", 35, 205, 155, 60, "DRIP TRAY & GROUNDS",
+                                 tray_val, tray_sub, ok=tray_ok)
 
-        self._draw_node_card(cr, "beans", 210, 205, 155, 60, "AROMA+ GRINDER",
-                             "BEANS OK" if beans_ok else "FILL BEANS",
-                             "Hopper Charged" if beans_ok else "Refill Coffee Beans", ok=beans_ok)
+            if beans_ok is True:
+                beans_val, beans_sub = "BEANS OK", "Hopper Charged"
+            elif beans_ok is False:
+                beans_val, beans_sub = "FILL BEANS", "Refill Coffee Beans"
+            else:
+                beans_val, beans_sub = "---", "Awaiting read"
+            self._draw_node_card(cr, "beans", 210, 205, 155, 60, "BEAN HOPPER",
+                                 beans_val, beans_sub, ok=beans_ok)
 
-        self._draw_node_card(cr, "spout", 385, 205, 155, 60, "DISPENSER SPOUT",
-                             "ATTACHED", "Dual Outlet (110mm)", ok=True)
+            self._draw_node_card(cr, "spout", 385, 205, 155, 60, "DISPENSER SPOUT",
+                                 "ATTACHED", "Dual Outlet", ok=True)
 
-        self._draw_node_card(cr, "mcu", 560, 205, 155, 60, "MCU & OPTICAL BUS",
-                             "ONLINE", "UART 9600 8N1", ok=True, primary_color=(0.537, 0.706, 0.980))
+            mcu_sub = str(self.telemetry.get("display_firmware", self.telemetry.get("loader_version", "UART 9600 8N1")))
+            self._draw_node_card(cr, "mcu", 560, 205, 155, 60, "MCU & OPTICAL BUS",
+                                 "ONLINE", mcu_sub, ok=True, primary_color=(0.537, 0.706, 0.980))
+        else:
+            # Unread / empty initial state - NO hardcoded values
+            self._draw_node_card(cr, "tank", 35, 75, 80, 85, "WATER TANK", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "flowmeter", 165, 85, 65, 65, "FLOWMETER", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "pump", 270, 75, 85, 75, "PUMP", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "valve", 395, 85, 60, 60, "VALVE", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "tb1", 490, 45, 105, 60, "HEATER 1 (TB1)", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "tb2", 490, 125, 105, 60, "HEATER 2 (TB2)", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "bu", 630, 80, 85, 85, "BREW UNIT", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "tray", 35, 205, 155, 60, "DRIP TRAY & GROUNDS", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "beans", 210, 205, 155, 60, "BEAN HOPPER", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "spout", 385, 205, 155, 60, "DISPENSER SPOUT", "---", "Awaiting read", ok=None)
+            self._draw_node_card(cr, "mcu", 560, 205, 155, 60, "MCU & OPTICAL BUS", "---", "Awaiting read", ok=None)
 
         # Legend / Guide Banner
         cr.set_source_rgba(0.651, 0.678, 0.784, 0.8)  # #a6adc8
         cr.set_font_size(10)
         cr.move_to(35, 295)
-        cr.show_text("● Click any component above to inspect live electrical impedance, duty cycle, and microswitch debounce telemetry.")
+        cr.show_text("● Click any component above to inspect live reported hardware telemetry.")
 
         cr.restore()
         return True
@@ -312,45 +387,51 @@ class DigitalTwinWidget(Gtk.DrawingArea):
         if is_selected:
             cr.set_source_rgb(0.537, 0.706, 0.980)  # #89b4fa
             cr.set_line_width(2.0)
-        elif not ok:
-            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+        elif ok is False:
+            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8 (Alert/Red)
             cr.set_line_width(1.8)
         elif is_hovered:
             cr.set_source_rgb(0.455, 0.780, 0.925)  # #74c7ec
             cr.set_line_width(1.5)
-        else:
+        elif ok is True:
             cr.set_source_rgb(0.212, 0.227, 0.310)  # #363a4f
+            cr.set_line_width(1.0)
+        else:
+            # ok is None (neutral / unread)
+            cr.set_source_rgb(0.165, 0.176, 0.245)
             cr.set_line_width(1.0)
         cr.stroke()
 
         # Title Label
         cr.set_font_size(8.5)
-        if primary_color:
-            cr.set_source_rgb(*primary_color)
-        elif not ok:
+        if ok is False:
             cr.set_source_rgb(0.953, 0.545, 0.659)
+        elif primary_color and ok is not None:
+            cr.set_source_rgb(*primary_color)
         else:
-            cr.set_source_rgb(0.651, 0.678, 0.784)  # #a6adc8
+            cr.set_source_rgb(0.550, 0.580, 0.680)
         cr.move_to(x + 7, y + 13)
         cr.show_text(title[:18])
 
         # Value Label
         cr.set_font_size(12)
-        if not ok:
+        if ok is False:
             cr.set_source_rgb(0.953, 0.545, 0.659)
-        elif primary_color:
-            cr.set_source_rgb(0.804, 0.839, 0.957)  # #cdd6f4
+        elif ok is None:
+            cr.set_source_rgb(0.424, 0.439, 0.525)  # #6c7086 (Gray placeholder)
         else:
-            cr.set_source_rgb(0.804, 0.839, 0.957)
+            cr.set_source_rgb(0.804, 0.839, 0.957)  # #cdd6f4
         cr.move_to(x + 7, y + 31)
         cr.show_text(val[:14])
 
         # Subtitle Label
         cr.set_font_size(8.5)
-        if not ok:
-            cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387
+        if ok is False:
+            cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387 (amber)
+        elif ok is True:
+            cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1 (green)
         else:
-            cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1
+            cr.set_source_rgb(0.424, 0.439, 0.525)  # #6c7086 (gray)
         cr.move_to(x + 7, y + 46)
         cr.show_text(sub[:20])
 
@@ -375,20 +456,35 @@ class OscilloscopeWidget(Gtk.DrawingArea):
         self.tb1_data = collections.deque(maxlen=max_samples)
         self.tb2_data = collections.deque(maxlen=max_samples)
         self.flow_data = collections.deque(maxlen=max_samples)
-
-        # Seed with initial resting telemetry
-        for _ in range(max_samples):
-            self.tb1_data.append(92.4)
-            self.tb2_data.append(135.0)
-            self.flow_data.append(0.0)
+        self.has_tb2 = True
 
         self.connect("draw", self._on_draw)
 
     def push_sample(self, tb1: Optional[float], tb2: Optional[float], flow: Optional[float]):
         """Append a live telemetry point to the rolling buffer and queue redraw."""
-        self.tb1_data.append(tb1 if tb1 is not None else (self.tb1_data[-1] if self.tb1_data else 92.0))
-        self.tb2_data.append(tb2 if tb2 is not None else (self.tb2_data[-1] if self.tb2_data else 135.0))
-        self.flow_data.append(flow if flow is not None else 0.0)
+        if tb1 is not None:
+            self.tb1_data.append(float(tb1))
+        elif self.tb1_data:
+            self.tb1_data.append(self.tb1_data[-1])
+
+        if tb2 is not None:
+            self.has_tb2 = True
+            self.tb2_data.append(float(tb2))
+        else:
+            self.has_tb2 = False
+
+        if flow is not None:
+            self.flow_data.append(float(flow))
+        elif self.flow_data:
+            self.flow_data.append(self.flow_data[-1])
+
+        self.queue_draw()
+
+    def clear(self):
+        """Clear all rolling buffers."""
+        self.tb1_data.clear()
+        self.tb2_data.clear()
+        self.flow_data.clear()
         self.queue_draw()
 
     def _on_draw(self, widget, cr: cairo.Context) -> bool:
@@ -443,11 +539,33 @@ class OscilloscopeWidget(Gtk.DrawingArea):
 
         # Helper to convert sample index to x
         n_pts = len(self.tb1_data)
-        if n_pts < 2:
+        if n_pts == 0:
+            # Empty state HUD header
+            cr.set_font_size(9.5)
+            cr.set_source_rgb(0.953, 0.545, 0.659)
+            cr.move_to(pad_left, 12)
+            cr.show_text("■ TB1: ---")
+
+            cr.set_source_rgb(0.980, 0.702, 0.529)
+            cr.move_to(pad_left + 100, 12)
+            cr.show_text("■ TB2: ---")
+
+            cr.set_source_rgb(0.455, 0.780, 0.925)
+            cr.move_to(pad_left + 220, 12)
+            cr.show_text("■ Flow: ---")
+
+            # Center prompt
+            cr.set_source_rgb(0.424, 0.439, 0.525)
+            cr.set_font_size(11)
+            msg = "Awaiting live data stream..."
+            ext = cr.text_extents(msg)
+            cr.move_to(pad_left + (plot_w - ext.width) / 2.0, pad_top + plot_h / 2.0)
+            cr.show_text(msg)
             return True
 
         def pt_x(idx: int) -> float:
-            return pad_left + (idx / float(self.max_samples - 1)) * plot_w
+            total_samples = max(2, self.max_samples)
+            return pad_left + (idx / float(total_samples - 1)) * plot_w
 
         def pt_y_temp(temp: float) -> float:
             clamped = max(temp_min, min(temp_max, temp))
@@ -455,76 +573,83 @@ class OscilloscopeWidget(Gtk.DrawingArea):
             return pad_top + norm * plot_h
 
         def pt_y_flow(flow: float) -> float:
-            # Flow rate 0..10 ml/s maps to bottom 40% of graph
             clamped = max(0.0, min(10.0, flow))
             norm = 1.0 - (clamped / 10.0) * 0.4
             return pad_top + norm * plot_h
 
         # 1. Flow Rate Curve (Cyan / Dashed)
-        cr.set_source_rgb(0.455, 0.780, 0.925)  # #74c7ec
-        cr.set_line_width(2.0)
-        cr.set_dash([4.0, 2.0])
-        for idx, fl in enumerate(self.flow_data):
-            x = pt_x(idx)
-            y = pt_y_flow(fl)
-            if idx == 0:
-                cr.move_to(x, y)
-            else:
-                cr.line_to(x, y)
-        cr.stroke()
-        cr.set_dash([])  # reset dash
+        if self.flow_data:
+            cr.set_source_rgb(0.455, 0.780, 0.925)  # #74c7ec
+            cr.set_line_width(2.0)
+            cr.set_dash([4.0, 2.0])
+            for idx, fl in enumerate(self.flow_data):
+                x = pt_x(idx)
+                y = pt_y_flow(fl)
+                if idx == 0:
+                    cr.move_to(x, y)
+                else:
+                    cr.line_to(x, y)
+            cr.stroke()
+            cr.set_dash([])  # reset dash
 
-        # 2. TB2 Steam Boiler (Orange)
-        cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387
-        cr.set_line_width(2.0)
-        for idx, t in enumerate(self.tb2_data):
-            x = pt_x(idx)
-            y = pt_y_temp(t)
-            if idx == 0:
-                cr.move_to(x, y)
-            else:
-                cr.line_to(x, y)
-        cr.stroke()
+        # 2. TB2 Steam Boiler (Orange) - only if dual heater has samples
+        if self.has_tb2 and self.tb2_data:
+            cr.set_source_rgb(0.980, 0.702, 0.529)  # #fab387
+            cr.set_line_width(2.0)
+            for idx, t in enumerate(self.tb2_data):
+                x = pt_x(idx)
+                y = pt_y_temp(t)
+                if idx == 0:
+                    cr.move_to(x, y)
+                else:
+                    cr.line_to(x, y)
+            cr.stroke()
 
         # 3. TB1 Coffee Boiler (Pink / Magenta)
-        cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
-        cr.set_line_width(2.5)
-        for idx, t in enumerate(self.tb1_data):
-            x = pt_x(idx)
-            y = pt_y_temp(t)
-            if idx == 0:
-                cr.move_to(x, y)
-            else:
-                cr.line_to(x, y)
-        cr.stroke()
+        if self.tb1_data:
+            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8
+            cr.set_line_width(2.5)
+            for idx, t in enumerate(self.tb1_data):
+                x = pt_x(idx)
+                y = pt_y_temp(t)
+                if idx == 0:
+                    cr.move_to(x, y)
+                else:
+                    cr.line_to(x, y)
+            cr.stroke()
 
         # Current Value Dots at Right Margin
-        last_tb1 = self.tb1_data[-1]
-        last_tb2 = self.tb2_data[-1]
-        last_flow = self.flow_data[-1]
         lx = pt_x(n_pts - 1)
+        last_tb1 = self.tb1_data[-1] if self.tb1_data else None
+        last_tb2 = self.tb2_data[-1] if (self.has_tb2 and self.tb2_data) else None
+        last_flow = self.flow_data[-1] if self.flow_data else None
 
-        cr.set_source_rgb(0.953, 0.545, 0.659)
-        cr.arc(lx, pt_y_temp(last_tb1), 4, 0, 2 * math.pi)
-        cr.fill()
+        if last_tb1 is not None:
+            cr.set_source_rgb(0.953, 0.545, 0.659)
+            cr.arc(lx, pt_y_temp(last_tb1), 4, 0, 2 * math.pi)
+            cr.fill()
 
-        cr.set_source_rgb(0.980, 0.702, 0.529)
-        cr.arc(lx, pt_y_temp(last_tb2), 4, 0, 2 * math.pi)
-        cr.fill()
+        if last_tb2 is not None:
+            cr.set_source_rgb(0.980, 0.702, 0.529)
+            cr.arc(lx, pt_y_temp(last_tb2), 4, 0, 2 * math.pi)
+            cr.fill()
 
         # Legend HUD Header
         cr.set_font_size(9.5)
         cr.set_source_rgb(0.953, 0.545, 0.659)
         cr.move_to(pad_left, 12)
-        cr.show_text(f"■ TB1: {last_tb1:.1f}°C")
+        cr.show_text(f"■ TB1: {last_tb1:.1f}°C" if last_tb1 is not None else "■ TB1: ---")
 
         cr.set_source_rgb(0.980, 0.702, 0.529)
         cr.move_to(pad_left + 100, 12)
-        cr.show_text(f"■ TB2: {last_tb2:.1f}°C")
+        if self.has_tb2 and last_tb2 is not None:
+            cr.show_text(f"■ TB2: {last_tb2:.1f}°C")
+        else:
+            cr.show_text("■ TB2: N/A (Single Heater)")
 
         cr.set_source_rgb(0.455, 0.780, 0.925)
-        cr.move_to(pad_left + 200, 12)
-        cr.show_text(f"■ Flow: {last_flow:.1f} ml/s")
+        cr.move_to(pad_left + 240, 12)
+        cr.show_text(f"■ Flow: {last_flow:.1f} ml/s" if last_flow is not None else "■ Flow: ---")
 
         return True
 
@@ -536,14 +661,14 @@ class OscilloscopeWidget(Gtk.DrawingArea):
 class RadialGaugeWidget(Gtk.DrawingArea):
     """Circular progress gauge displaying machine health score (0-100%)."""
 
-    def __init__(self, value: int = 91):
+    def __init__(self, value: Optional[int] = None):
         super().__init__()
         self.value = value
         self.set_size_request(85, 85)
         self.connect("draw", self._on_draw)
 
-    def set_value(self, val: int):
-        self.value = max(0, min(100, int(val)))
+    def set_value(self, val: Optional[int]):
+        self.value = max(0, min(100, int(val))) if val is not None else None
         self.queue_draw()
 
     def _on_draw(self, widget, cr: cairo.Context) -> bool:
@@ -562,24 +687,31 @@ class RadialGaugeWidget(Gtk.DrawingArea):
         cr.arc(cx, cy, radius, 0, 2 * math.pi)
         cr.stroke()
 
-        # Progress Arc
-        fraction = self.value / 100.0
-        start_angle = -math.pi / 2
-        end_angle = start_angle + fraction * (2 * math.pi)
+        if self.value is not None and self.value >= 0:
+            # Progress Arc
+            fraction = self.value / 100.0
+            start_angle = -math.pi / 2
+            end_angle = start_angle + fraction * (2 * math.pi)
 
-        if self.value >= 80:
-            cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1 (Green)
-        elif self.value >= 50:
-            cr.set_source_rgb(0.976, 0.886, 0.686)  # #f9e2af (Amber)
+            if self.value >= 80:
+                cr.set_source_rgb(0.651, 0.890, 0.631)  # #a6e3a1 (Green)
+            elif self.value >= 50:
+                cr.set_source_rgb(0.976, 0.886, 0.686)  # #f9e2af (Amber)
+            else:
+                cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8 (Red)
+
+            cr.arc(cx, cy, radius, start_angle, end_angle)
+            cr.stroke()
+
+            text = f"{self.value}%"
+            cr.set_source_rgb(0.804, 0.839, 0.957)
         else:
-            cr.set_source_rgb(0.953, 0.545, 0.659)  # #f38ba8 (Red)
+            # Empty / unread state
+            text = "--"
+            cr.set_source_rgb(0.424, 0.439, 0.525)
 
-        cr.arc(cx, cy, radius, start_angle, end_angle)
-        cr.stroke()
-
-        # Center Text (Percentage)
+        # Center Text
         cr.set_font_size(15)
-        text = f"{self.value}%"
         extents = cr.text_extents(text)
         cr.move_to(cx - extents.width / 2.0, cy + extents.height / 2.0)
         cr.show_text(text)
@@ -634,16 +766,17 @@ class BeverageAnalyticsWidget(Gtk.Box):
         # Summary Metrics Bar at bottom
         self.summary_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         self.summary_bar.get_style_context().add_class("card")
-        self.lbl_water = Gtk.Label(label="Water Dispensed: --- Liters")
+        self.lbl_water = Gtk.Label(label="Water Dispensed: ---")
         self.lbl_water.set_xalign(0.0)
-        self.lbl_beans = Gtk.Label(label="Coffee Beans Ground: --- kg")
+        self.lbl_beans = Gtk.Label(label="Coffee Beans Ground: ---")
         self.lbl_beans.set_xalign(0.0)
         self.summary_bar.pack_start(self.lbl_water, True, True, 0)
         self.summary_bar.pack_start(self.lbl_beans, True, True, 0)
         self.pack_start(self.summary_bar, False, False, 4)
 
         self._cached_beverages = []
-        self._total_cups = 1
+        self._total_cups = 0
+        self._render_bars()
 
     def _on_filter_toggled(self, widget):
         if widget.get_active():
@@ -652,25 +785,30 @@ class BeverageAnalyticsWidget(Gtk.Box):
 
     def update_data(self, beverages: List[dict], total_cups: int, water_liters: float = 0.0, beans_kg: float = 0.0):
         self._cached_beverages = beverages or []
-        self._total_cups = max(1, total_cups)
+        self._total_cups = max(0, total_cups)
 
         if water_liters > 0:
             self.lbl_water.set_markup(f"Water Dispensed: <b><span color='#89dceb'>{water_liters:,.1f} L</span></b>")
         else:
-            est_liters = (total_cups * 110) / 1000.0
-            self.lbl_water.set_markup(f"Est. Water Throughput: <b><span color='#89dceb'>{est_liters:,.1f} L</span></b>")
+            self.lbl_water.set_markup("Water Dispensed: <b><span color='#89dceb'>---</span></b>")
 
         if beans_kg > 0:
             self.lbl_beans.set_markup(f"Beans Ground: <b><span color='#fab387'>{beans_kg:,.1f} kg</span></b>")
         else:
-            est_kg = (total_cups * 8.5) / 1000.0
-            self.lbl_beans.set_markup(f"Est. Coffee Ground: <b><span color='#fab387'>{est_kg:,.1f} kg</span></b>")
+            self.lbl_beans.set_markup("Coffee Beans Ground: <b><span color='#fab387'>---</span></b>")
 
         self._render_bars()
 
     def _render_bars(self):
         for child in self.bars_box.get_children():
             self.bars_box.remove(child)
+
+        if not self._cached_beverages:
+            lbl_empty = Gtk.Label(label="No beverage statistics read yet. Click '⚡ Read Statistics' to interrogate appliance.")
+            lbl_empty.get_style_context().add_class("card-label")
+            self.bars_box.pack_start(lbl_empty, False, False, 12)
+            self.bars_box.show_all()
+            return
 
         colors = ["#89b4fa", "#74c7ec", "#fab387", "#f9e2af", "#cba6f7", "#a6e3a1", "#94e2d5"]
         filtered = []
@@ -695,10 +833,11 @@ class BeverageAnalyticsWidget(Gtk.Box):
 
         sorted_bev = sorted(filtered, key=lambda x: x.get("count", 0), reverse=True)
         max_cnt = max((b.get("count", 0) for b in sorted_bev), default=1) or 1
+        tot_div = max(1, self._total_cups)
 
         for idx, b in enumerate(sorted_bev[:14]):
             cnt = b.get("count", 0)
-            share_pct = (cnt / self._total_cups) * 100.0
+            share_pct = (cnt / tot_div) * 100.0
             color = colors[idx % len(colors)]
 
             row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
@@ -755,6 +894,15 @@ class DiagnosticAdvisorWidget(Gtk.Box):
         scrolled.add(self.cards_box)
         self.pack_start(scrolled, True, True, 0)
 
+        # Initial Standby Card
+        self._add_card(
+            icon="ℹ️",
+            title="Awaiting Diagnostic Interrogation",
+            desc="Run '⚡ Read Statistics' or toggle 'Live Data' to analyze appliance health.",
+            action="Status: Standby",
+            severity="info"
+        )
+
         # Field Service Checklist Box
         chk_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         chk_frame.get_style_context().add_class("card")
@@ -764,11 +912,13 @@ class DiagnosticAdvisorWidget(Gtk.Box):
         chk_frame.pack_start(chk_title, False, False, 2)
 
         self.chk1 = Gtk.CheckButton(label="Visual inspection of silicone pressure lines & brass fittings")
-        self.chk1.set_active(True)
+        self.chk1.set_active(False)
         self.chk2 = Gtk.CheckButton(label="Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)")
-        self.chk2.set_active(True)
+        self.chk2.set_active(False)
         self.chk3 = Gtk.CheckButton(label="Descaling cycle execution & flowmeter verification")
+        self.chk3.set_active(False)
         self.chk4 = Gtk.CheckButton(label="Clean microswitch contact leaves on rear chassis")
+        self.chk4.set_active(False)
 
         for c in [self.chk1, self.chk2, self.chk3, self.chk4]:
             chk_frame.pack_start(c, False, False, 1)

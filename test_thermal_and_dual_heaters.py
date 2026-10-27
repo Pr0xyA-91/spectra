@@ -338,6 +338,91 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertTrue(opt_sensor["ok"])
         self.assertIn("Reflected IR ADC: 1564", opt_sensor["details"])
 
+    def test_bean_hopper_fast_poll_telemetry(self):
+        """Test continuous fast-poll bean hopper detection from active AS: sensor query."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
+
+        # 1. Fast poll with hopper empty (AS: on_adc = 1792 >= 1710)
+        def mock_query_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206980000,077207000001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query_empty
+
+        res_empty = sc.query_live_sensors("mock_fast_bean", conn=conn, fast_poll=True)
+        sw_empty = {s["id"]: s for s in res_empty["switches"]}
+        self.assertFalse(res_empty["telemetry"]["beans_ok"])
+        self.assertFalse(sw_empty["bean_hopper"]["ok"])
+        self.assertEqual(sw_empty["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertFalse(sw_empty["machine_ready"]["ok"])
+        self.assertEqual(sw_empty["machine_ready"]["badge"], "FILL BEANS")
+        self.assertEqual(sw_empty["machine_ready"]["status"], "Not Ready (Fill Beans)")
+        self.assertIn("Fill Beans", [a["name"] for a in res_empty["alerts"]])
+
+        # 2. Fast poll with hopper charged (AS: on_adc = 1564 < 1710)
+        conn_full = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query_full = conn_full.query_ascii
+
+        def mock_query_full(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206450000,0772061C0001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query_full(cmd, timeout=timeout)
+        conn_full.query_ascii = mock_query_full
+
+        res_full = sc.query_live_sensors("mock_fast_bean", conn=conn_full, fast_poll=True)
+        sw_full = {s["id"]: s for s in res_full["switches"]}
+        self.assertTrue(res_full["telemetry"]["beans_ok"])
+        self.assertTrue(sw_full["bean_hopper"]["ok"])
+        self.assertEqual(sw_full["bean_hopper"]["badge"], "NORMAL")
+        self.assertTrue(sw_full["machine_ready"]["ok"])
+        self.assertEqual(sw_full["machine_ready"]["badge"], "READY")
+
+    def test_optical_bean_sensor_ambient_light_and_standby_tolerance(self):
+        """Test that optical bean detection uses ambient-compensated delta and ignores standby noise."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+
+        # Case 1: High ambient room light (e.g. hopper lid open under bright light):
+        # off_adc = 2244, on_adc = 2328 -> delta = 84 counts (beans present, absorbed IR)
+        # Even though on_adc > 1700 (2328), delta <= 89 correctly identifies beans present!
+        def mock_ambient(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077308C40000,077309180001"  # 0x08C4=2244, 0x0918=2328 -> delta=84
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+            return ""
+        conn.query_ascii = mock_ambient
+
+        res_amb = sc.query_live_sensors("mock_amb", conn=conn, fast_poll=True)
+        self.assertTrue(res_amb["telemetry"]["beans_ok"])
+        sw_amb = {s["id"]: s for s in res_amb["switches"]}
+        self.assertTrue(sw_amb["bean_hopper"]["ok"])
+        self.assertEqual(sw_amb["bean_hopper"]["badge"], "NORMAL")
+
+        # Case 2: Machine enters standby (floating unpowered ADC noise: off=6103, on=6467 > 3500)
+        # Should reject invalid ADCs and preserve cached beans_ok=True
+        def mock_standby(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077317D70000,077319430001"  # Floating standby noise
+            elif cmd_c == "HZ:":
+                return "hz:000000100000,028A,00E6,0000,0202,0802,3,000000,0000,10"
+            return ""
+        conn.query_ascii = mock_standby
+
+        res_sb = sc.query_live_sensors("mock_standby", conn=conn, fast_poll=True)
+        self.assertTrue(res_sb["telemetry"]["beans_ok"])
+        sw_sb = {s["id"]: s for s in res_sb["switches"]}
+        self.assertTrue(sw_sb["bean_hopper"]["ok"])
+
+
     def test_ascii_and_smart_connect_counter_mapping(self):
         """Test that ASCII EEPROM mode and Smart Connect mode map maintenance and beverage labels accurately."""
         # 1. ASCII EEPROM Demo (S8)

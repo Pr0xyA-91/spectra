@@ -116,16 +116,19 @@ conn.close()
 * **Optical IR Hopper Sensor (`AS:`)**:
   - Interrogated via the analog sensor command `AS:` (`Check Sensor` at `0x4e6fb8` in `P518Ani.exe`).
   - Response format: `as:VREF, OFF_ADC, 0000, VREF, ON_ADC, 0001` (e.g. `as:077106320000,077106810001`).
-  - `Group 0` (`0000`): Ambient light reading with IR LED off (`~1360–1600` ADC counts).
+  - `Group 0` (`0000`): Ambient light reading with IR LED off (`~1360–1620` ADC counts; up to `2240` counts when hopper lid open in bright light).
   - `Group 1` (`0001`): Reflected infrared light reading with IR LED pulsed on.
-  - **Empty Hopper**: When the hopper is empty, IR reflects back off the clear funnel prism into the photodiode $\rightarrow$ `ON_ADC` rises to `0x06FD`–`0x0700` (`1789`–`1792` counts, delta $\Delta \ge 95$ counts).
-  - **Hopper Charged (Beans Present)**: Dark coffee beans absorb and scatter the IR pulse $\rightarrow$ `ON_ADC` drops by $> 150-220$ counts down to `1445`–`1665` counts (delta $\Delta < 85$ counts).
-  - Threshold: `on_adc < 1680` indicates beans are present; `on_adc > 1710` indicates empty hopper.
+  - **Ambient Compensation**: `on_adc` contains ambient DC offset. True reflection is `delta = (on_adc - off_adc)`. Never gate bean status on raw `on_adc >= 1700`, which falsely triggers under room light.
+  - **Empty Hopper (Reflective)**: When the hopper is empty, IR pulse reflects cleanly off bare prism $\rightarrow$ delta $\Delta \ge 96$ counts (typically $97$–$104$).
+  - **Hopper Charged (Absorption)**: Dark coffee beans bury prism and absorb/scatter IR $\rightarrow$ delta $\Delta \le 93$ counts (typically $84$–$92$).
+  - **Debounce / Hysteresis Band**: A 2-count hysteresis band ($94 \le \Delta \le 95$) latches previous state to completely prevent flickering or oscillation at threshold boundaries.
 * **Puck Thickness / Cake Measurement (`HZ[8]`)**:
   - `HZ[8]` (historically labeled key matrix) reports the live compressed cake thickness in encoder ticks:
   - `0x000E` (`14` dec ticks): Grinder ran empty / puck too thin threshold (triggers machine "Fill Beans" prompt).
   - `0x001D` (`29` dec ticks): Valid single espresso compressed puck.
-* **Note on `HZ[0][3]`**: In older documentation, `HZ[0][3] == "1"` was hypothesized to indicate an empty hopper. Live brewing verification proved that `HZ[0][3]` remains `1` before, during, and after completely successful espresso brewing while the front screen displays "Ready to brew". Real-time optical hopper status must be read from `AS:`.
+* **Note on `HZ[0]` Status Bits**:
+  - `parts[0]` remains `010101100000` in both ready and fill-beans states during active thermal loops; `parts[0][3]` is NOT a bean hopper flag on this firmware (`EF518M V02.20`).
+  - Real-time optical hopper status must be read exclusively from `AS:` with cached state held steadily between cycles to prevent oscillation.
 
 ### 3. Brew Unit Mechanical Position & Stroke Zones
 * Evaluated dynamically from live encoder ticks (`HZ[2]` current, `HZ[1]` upper reference, `RE:0041` mill target):

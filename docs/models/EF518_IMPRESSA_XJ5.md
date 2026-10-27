@@ -78,14 +78,15 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
 #### Calibration & State Thresholds
 * **Empty Hopper (Reflective)**:
   * Infrared pulse reflects cleanly off the bare optical prism back into the photodiode.
-  * `ON_ADC` rises to **`1726`–`1792` counts** ($> 1710$ ADC threshold).
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ is **$+97$ to $+104$ counts**.
+  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ rises to **$\ge +96$ counts** (calibrated empty values: $+97$ to $+104$ counts; up to $+119$ counts when hopper lid is open under room light).
   * Appliance indicates: *"Doplňte kávová zrna"* / *"Fill beans"*.
 * **Hopper Charged (Absorption)**:
-  * Dark coffee beans scatter and absorb the infrared pulse away from the photodiode.
-  * `ON_ADC` drops down to **`1445`–`1665` counts** ($\le 1680$ ADC threshold).
-  * Net delta $\Delta$ drops to **$+65$ to $+81$ counts**.
+  * Dark coffee beans bury the prism, absorbing and scattering the infrared pulse away from the photodiode.
+  * Net delta $\Delta$ drops down to **$\le +93$ counts** (calibrated charged values: $+84$ to $+92$ counts across thermal cycles).
   * Appliance indicates: *"Ready to brew"*.
+* **Ambient Light Compensation & Hysteresis**:
+  * Raw `ON_ADC` incorporates ambient room light (which can exceed $1,750$ or $2,300$ counts with lid open in bright environments even when beans are present). Evaluation strictly relies on ambient-subtracted $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ to prevent ambient false empty alerts.
+  * A Schmitt trigger hysteresis window ($+94$ to $+95$ counts) latches the verified state, completely eliminating rapid boundary oscillations. Standby floating ADC noise ($> 3,500$ counts) is filtered.
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:

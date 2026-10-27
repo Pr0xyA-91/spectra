@@ -239,6 +239,10 @@ def query_live_sensors(
             is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
             if not is_ascii and conn.is_demo:
                 is_ascii = True
+            elif not is_ascii and ("tty" in port_name.lower() or "com" in port_name.lower()):
+                hz_check = conn.query_ascii("HZ:")
+                if hz_check and hz_check.startswith("hz:"):
+                    is_ascii = True
             detected_ef = ""
             if ty_resp and ty_resp.startswith("ty:"):
                 toks = ty_resp[3:].strip().split()
@@ -443,25 +447,6 @@ def query_live_sensors(
                 if ty_disp_resp and ty_disp_resp.startswith("ty$:"):
                     display_firmware = ty_disp_resp[4:].strip()
 
-                # Optical Bean Hopper Sensor (AS: Check Sensor)
-                as_resp = conn.query_ascii("AS:")
-                if as_resp and as_resp.startswith("as:"):
-                    results["raw_as"] = as_resp
-                    as_parts = as_resp[3:].split(",")
-                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
-                        try:
-                            off_adc = int(as_parts[0][4:8], 16)
-                            on_adc = int(as_parts[1][4:8], 16)
-                            # On Jura optical sensor:
-                            # Reflected IR when empty > 1680 ADC
-                            # Absorbed IR when beans present <= 1660 ADC
-                            beans_empty = (on_adc > 1680)
-                            beans_ok = not beans_empty
-                            setattr(conn, "_cached_beans_ok", beans_ok)
-                            setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
-                        except ValueError:
-                            pass
-
                 # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
                 if r1b4 and r1b4.startswith("re:"):
@@ -473,12 +458,63 @@ def query_live_sensors(
                         pass
                 total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
             else:
-                cached_beans = getattr(conn, "_cached_beans_ok", None)
-                if cached_beans is not None:
-                    beans_ok = cached_beans
-                    beans_empty = not beans_ok
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
+
+            # Optical Bean Hopper Sensor (AS: Check Sensor - commercial lines: XJ, GIGA)
+            # Polled during manual refresh (not fast_poll), on first query of a session, or every ~2.0s in Live Data
+            last_as_ts = getattr(conn, "_last_as_ts", 0.0)
+            cached_beans = getattr(conn, "_cached_beans_ok", None)
+            as_supported = getattr(conn, "_as_supported", None)
+            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 2.0))
+
+            if should_query_as:
+                as_resp = conn.query_ascii("AS:")
+                if as_resp and as_resp.startswith("as:"):
+                    results["raw_as"] = as_resp
+                    as_parts = as_resp[3:].split(",")
+                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
+                        try:
+                            off_adc = int(as_parts[0][4:8], 16)
+                            on_adc = int(as_parts[1][4:8], 16)
+                            # Reject floating / invalid ADCs (e.g. machine in standby or unpowered sensor bus)
+                            if 0 < off_adc < 3500 and 0 < on_adc < 3500:
+                                delta = on_adc - off_adc
+                                # Calibrated Jura optical hopper sensor threshold:
+                                # Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
+                                # Absorption by coffee beans (Hopper Charged): delta <= 93 counts -> Beans OK
+                                # Bare prism specular reflection (Hopper Empty): delta >= 96 counts -> Fill Beans
+                                # Boundary hysteresis band (94-95 counts): latch previous state to prevent flickering
+                                if delta <= 93:
+                                    beans_empty = False
+                                    beans_ok = True
+                                elif delta >= 96:
+                                    beans_empty = True
+                                    beans_ok = False
+                                else:
+                                    beans_ok = cached_beans if cached_beans is not None else True
+                                    beans_empty = not beans_ok
+
+                                setattr(conn, "_cached_beans_ok", beans_ok)
+                                setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
+                                setattr(conn, "_last_as_ts", now_ts)
+                                setattr(conn, "_as_supported", True)
+                                setattr(conn, "_as_fail_count", 0)
+                        except ValueError:
+                            pass
+                elif as_resp is None and not conn.is_demo:
+                    # Require 3 consecutive initial failures before treating AS: as unsupported
+                    fail_cnt = getattr(conn, "_as_fail_count", 0) + 1
+                    setattr(conn, "_as_fail_count", fail_cnt)
+                    if fail_cnt >= 3 and getattr(conn, "_as_supported", None) is None:
+                        setattr(conn, "_as_supported", False)
+            elif cached_beans is not None:
+                # Between AS: polling samples, hold verified sensor status steadily (no oscillation)
+                beans_ok = cached_beans
+                beans_empty = not beans_ok
+            else:
+                beans_ok = True
+                beans_empty = False
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
             prev_bu = _last_bu_samples.get(port_key)
@@ -907,6 +943,7 @@ def query_live_sensors(
             alert_names = [a["name"].lower() for a in active_alerts]
             tank_ok = not any("water" in a for a in alert_names)
             tray_ok = not any("tray" in a for a in alert_names)
+            beans_ok = not any("bean" in a for a in alert_names)
             ready_ok = any("ready" in a for a in alert_names) or (len(active_alerts) == 0)
 
             results["switches"] = [
@@ -925,6 +962,14 @@ def query_live_sensors(
                     "ok": tray_ok,
                     "badge": "NORMAL" if tray_ok else "WARNING",
                     "icon": "📥"
+                },
+                {
+                    "id": "bean_hopper",
+                    "name": "Bean Hopper / Charge Sensor",
+                    "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
+                    "ok": beans_ok,
+                    "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "icon": "🫘"
                 },
                 {
                     "id": "machine_ready",
@@ -959,6 +1004,7 @@ def query_live_sensors(
 
             results["telemetry"] = {
                 "active_alert_count": len(active_alerts),
+                "beans_ok": beans_ok,
                 "is_dual_heater": is_dual_sc,
                 "heater_count": 2 if is_dual_sc else 1,
                 "heater_coffee_str": "Nominal",

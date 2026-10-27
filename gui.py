@@ -456,7 +456,7 @@ class JuraDiagApp(Gtk.Window):
         # 1. Machine Health Scorecard (Radial Gauge)
         self.kpi_health_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.kpi_health_card.get_style_context().add_class("card")
-        self.radial_gauge = gui_widgets.RadialGaugeWidget(value=91)
+        self.radial_gauge = gui_widgets.RadialGaugeWidget(value=None)
         self.kpi_health_card.pack_start(self.radial_gauge, False, False, 0)
 
         h_text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -465,11 +465,11 @@ class JuraDiagApp(Gtk.Window):
         lbl_h_title.get_style_context().add_class("card-label")
         lbl_h_title.set_xalign(0.0)
 
-        self.lbl_kpi_health_val = Gtk.Label(label="91% (OPTIMAL)")
+        self.lbl_kpi_health_val = Gtk.Label(label="---")
         self.lbl_kpi_health_val.get_style_context().add_class("card-value")
         self.lbl_kpi_health_val.set_xalign(0.0)
 
-        self.lbl_kpi_health_sub = Gtk.Label(label="✓ Zero critical faults")
+        self.lbl_kpi_health_sub = Gtk.Label(label="Awaiting diagnostic read")
         self.lbl_kpi_health_sub.get_style_context().add_class("card-sub")
         self.lbl_kpi_health_sub.set_xalign(0.0)
 
@@ -504,13 +504,13 @@ class JuraDiagApp(Gtk.Window):
             return card, val_lbl, sub_lbl, prog
 
         self.kpi_total_card, self.lbl_kpi_total, self.lbl_kpi_total_sub, self.prog_kpi_total = \
-            make_metric_card("TOTAL CUPS PREPARED", "---", "Rated Lifespan: 80,000 cups")
+            make_metric_card("TOTAL CUPS PREPARED", "---", "---")
 
         self.kpi_decalc_card, self.lbl_kpi_decalc, self.lbl_kpi_decalc_sub, self.prog_kpi_decalc = \
-            make_metric_card("DESCALING CYCLE STATUS", "---", "Countdown tracker")
+            make_metric_card("DESCALING CYCLE STATUS", "---", "---")
 
         self.kpi_filter_card, self.lbl_kpi_filter, self.lbl_kpi_filter_sub, self.prog_kpi_filter = \
-            make_metric_card("WATER FILTER & HYGIENE", "---", "Hardness & Claris Care")
+            make_metric_card("WATER FILTER & HYGIENE", "---", "---")
 
         # Keep model label internally for backward compatibility
         self.lbl_kpi_model = Gtk.Label(label="No Machine Read")
@@ -637,7 +637,7 @@ class JuraDiagApp(Gtk.Window):
         self.card_component_inspector.get_style_context().add_class("card")
 
         self.lbl_inspect_title = Gtk.Label()
-        self.lbl_inspect_title.set_markup("<b><span color='#89b4fa'>SELECTED COMPONENT TELEMETRY: THERMOBLOCK 1 (COFFEE HEATER)</span></b>")
+        self.lbl_inspect_title.set_markup("<b><span color='#89b4fa'>SELECTED COMPONENT TELEMETRY: (CLICK A NODE)</span></b>")
         self.lbl_inspect_title.set_xalign(0.0)
         self.card_component_inspector.pack_start(self.lbl_inspect_title, False, False, 2)
 
@@ -657,9 +657,9 @@ class JuraDiagApp(Gtk.Window):
             b.pack_start(l_v, False, False, 0)
             return b, l_v
 
-        b1, self.lbl_inspect_v1 = make_sub_box("NTC Sensor Resistance", "2.14 kΩ (92.4 °C) • Cold: 100.2 kΩ")
-        b2, self.lbl_inspect_v2 = make_sub_box("Duty Cycle & Drive", "32% PWM PID Loop • Zero-Cross Sync 100%")
-        b3, self.lbl_inspect_v3 = make_sub_box("Thermal Safety Cutout", "CLOSED (192°C Spec) • Lag: +1.2s")
+        b1, self.lbl_inspect_v1 = make_sub_box("Primary Telemetry", "---")
+        b2, self.lbl_inspect_v2 = make_sub_box("Operating Status", "---")
+        b3, self.lbl_inspect_v3 = make_sub_box("Hardware Details", "---")
 
         inspect_grid.attach(b1, 0, 0, 1, 1)
         inspect_grid.attach(b2, 1, 0, 1, 1)
@@ -685,13 +685,14 @@ class JuraDiagApp(Gtk.Window):
         self.spinner_sensors.set_valign(Gtk.Align.CENTER)
         ctrl_bar.pack_start(self.spinner_sensors, False, False, 0)
 
-        self.chk_auto_poll = Gtk.ToggleButton(label="⏱️ Auto-Poll (1.5s)")
+        self.chk_auto_poll = Gtk.ToggleButton(label="⏱️ Live Data (~1s)")
+        self.chk_auto_poll.set_tooltip_text("Continuous hardware telemetry stream (~1.0s physical sampling)")
         self.chk_auto_poll.get_style_context().add_class("toggle-btn")
         self.chk_auto_poll.set_valign(Gtk.Align.CENTER)
         self.chk_auto_poll.connect("toggled", self._on_auto_poll_toggled)
         ctrl_bar.pack_start(self.chk_auto_poll, False, False, 0)
 
-        self.lbl_sensors_status = Gtk.Label(label="Ready for telemetry polling.")
+        self.lbl_sensors_status = Gtk.Label(label="Ready for telemetry. Click 'Refresh Live' or toggle 'Live Data'.")
         self.lbl_sensors_status.set_xalign(0.0)
         self.lbl_sensors_status.set_valign(Gtk.Align.CENTER)
         self.lbl_sensors_status.set_ellipsize(Pango.EllipsizeMode.END)
@@ -745,24 +746,24 @@ class JuraDiagApp(Gtk.Window):
         self.live_counters_store = Gtk.ListStore(str, int, str)
         self.live_counters_tree = Gtk.TreeView(model=self.live_counters_store)
 
-        self.lbl_live_tank = Gtk.Label(label="WATER OK")
-        self.lbl_sub_tank = Gtk.Label(label="Float OK")
-        self.lbl_live_tray = Gtk.Label(label="INSERTED")
-        self.lbl_sub_tray = Gtk.Label(label="Tray OK")
-        self.lbl_live_beans = Gtk.Label(label="BEANS OK")
-        self.lbl_sub_beans = Gtk.Label(label="Hopper OK")
-        self.lbl_live_state = Gtk.Label(label="READY")
-        self.lbl_sub_state = Gtk.Label(label="Nominal")
-        self.lbl_live_bu = Gtk.Label(label="NOMINAL")
-        self.lbl_sub_bu = Gtk.Label(label="Home / Mill")
-        self.lbl_live_coffee_tb = Gtk.Label(label="92.4 °C")
-        self.lbl_sub_coffee_tb = Gtk.Label(label="Ready to Brew")
-        self.lbl_live_steam_tb = Gtk.Label(label="135.0 °C")
-        self.lbl_sub_steam_tb = Gtk.Label(label="Standby")
-        self.lbl_live_flow = Gtk.Label(label="0.0 ml/s")
-        self.lbl_sub_flow = Gtk.Label(label="Idle")
-        self.lbl_live_filter = Gtk.Label(label="CLARIS")
-        self.lbl_sub_filter = Gtk.Label(label="Hardness OK")
+        self.lbl_live_tank = Gtk.Label(label="---")
+        self.lbl_sub_tank = Gtk.Label(label="---")
+        self.lbl_live_tray = Gtk.Label(label="---")
+        self.lbl_sub_tray = Gtk.Label(label="---")
+        self.lbl_live_beans = Gtk.Label(label="---")
+        self.lbl_sub_beans = Gtk.Label(label="---")
+        self.lbl_live_state = Gtk.Label(label="---")
+        self.lbl_sub_state = Gtk.Label(label="---")
+        self.lbl_live_bu = Gtk.Label(label="---")
+        self.lbl_sub_bu = Gtk.Label(label="---")
+        self.lbl_live_coffee_tb = Gtk.Label(label="---")
+        self.lbl_sub_coffee_tb = Gtk.Label(label="---")
+        self.lbl_live_steam_tb = Gtk.Label(label="---")
+        self.lbl_sub_steam_tb = Gtk.Label(label="---")
+        self.lbl_live_flow = Gtk.Label(label="---")
+        self.lbl_sub_flow = Gtk.Label(label="---")
+        self.lbl_live_filter = Gtk.Label(label="---")
+        self.lbl_sub_filter = Gtk.Label(label="---")
 
         scrolled.add(self.sensors_paned)
         return scrolled
@@ -781,77 +782,182 @@ class JuraDiagApp(Gtk.Window):
             if abs(current_pos - target_pos) > 25:
                 paned.set_position(target_pos)
 
-    def _on_node_selected(self, node_id: str):
-        """Update the component telemetry inspector card when a node is clicked."""
-        specs = {
-            "tb1": (
-                "THERMOBLOCK 1 (COFFEE HEATER)",
-                "NTC Sensor Resistance: 2.14 kΩ (92.4 °C) • Cold: 100.2 kΩ",
-                "Duty Cycle & Drive: 32% PWM PID Loop • Zero-Cross Sync 100%",
-                "Thermal Safety Cutout: CLOSED (192°C Spec) • Lag: +1.2s"
-            ),
-            "tb2": (
-                "THERMOBLOCK 2 (STEAM BOILER)",
-                "NTC Sensor Resistance: 0.82 kΩ (135.0 °C) • Steam Circuit",
-                "Power Drive: Pulsed Triac 2 • Fast Steam Generation",
-                "Thermal Safety Cutout: CLOSED (216°C Spec) • State: Standby"
-            ),
-            "flowmeter": (
-                "DIGMESA FLOWMETER",
-                "Impeller Pulse Frequency: 46 Hz • Resolution: 0.05 ml/pulse",
-                "Current Flow Rate: 2.8 ml/s • Cycle Delivered: Nominal",
-                "Lifetime Flow Timeouts: 0 recorded • Status: OPTIMAL"
-            ),
-            "pump": (
-                "ULKA EP5 HIGH-PRESSURE VIBRATION PUMP",
-                "Rated Pressure: 15 BAR • Frequency: 52 Hz AC Line",
-                "Continuous Duty Rating: 2/1 min • Thermal Protection: Active",
-                "Operating Status: Nominal Hydraulic Resistance"
-            ),
-            "valve": (
-                "CERAMIC MULTI-WAY DISTRIBUTION VALVE",
-                "Current Position: Coffee Spout • Microswitch Position: 0x01",
-                "Drive Motor: Stepper / Encoder Synchronized",
-                "Seal Integrity: Zero bypass leakage detected"
-            ),
-            "bu": (
-                "ENCODER BREW UNIT DRIVE MOTOR",
-                "Optical Encoder Position: 1420 steps (Brew Position Locked)",
-                "Motor Current Peak: 0.88A (Rated 1.2A Maximum)",
-                "Mechanical Stroke: Optimal Alignment • Zero Encoder Jitter"
-            ),
-            "tank": (
-                "WATER RESERVOIR & FLOAT SENSOR",
-                "Reed Switch Float: OK (Magnetic Coupling Closed)",
-                "Estimated Level: 85% Fill Capacity Nominal",
-                "Bypass Hardness Sensor: CLARIS Pro Filter Active"
-            ),
-            "tray": (
-                "DRIP TRAY & GROUNDS CONTAINER SWITCHES",
-                "Presence Microswitch: CLOSED (Inserted)",
-                "Contact Debounce Latency: 0 ms (Clean Contact Leaves)",
-                "Grounds Cake Counter: 4 / 16 Cakes Prepared"
-            ),
-            "beans": (
-                "AROMA+ OPTICAL BEAN HOPPER SENSOR",
-                "IR Transmitter ADC: 1605 • Receiver ADC: 1564",
-                "Optical Absorption: BEANS PRESENT (Hopper Charged)",
-                "Grinder Motor Current: 1.1A (Nominal Burr Friction)"
-            ),
-            "spout": (
-                "DUAL DISPENSER SPOUT & CAPPUCCINATORE",
-                "Spout Height Adjustment: 110 mm Range",
-                "Fluidic Venturi Aeration: Nominal",
-                "Milk System Rinse Valve: Ready"
-            ),
-            "mcu": (
-                "MAIN LOGIC BOARD & OPTICAL TRANSCEIVER",
-                "Microcontroller: Renesas / NEC V850 32-bit MCU",
-                "Non-Volatile Storage: Atmel 24C16 I2C EEPROM",
-                "Optical Bus: 9600 Baud 8N1 Optical Loopback Active"
-            ),
-        }
-        title, v1, v2, v3 = specs.get(node_id, ("COMPONENT", "---", "---", "---"))
+    def _on_node_selected(self, node_id: Optional[str]):
+        """Update the component telemetry inspector card when a node is clicked, strictly from reported data."""
+        if not node_id:
+            self.lbl_inspect_title.set_markup("<b><span color='#89b4fa'>SELECTED COMPONENT TELEMETRY: (CLICK A NODE)</span></b>")
+            self.lbl_inspect_v1.set_text("---")
+            self.lbl_inspect_v2.set_text("---")
+            self.lbl_inspect_v3.set_text("---")
+            return
+
+        live = getattr(self, "_last_live_result", None) or {}
+        telem = live.get("telemetry", {})
+        switches_map = {sw["id"]: sw for sw in live.get("switches", [])}
+        error_counters = live.get("error_counters", {})
+        summary = self.session.get_structured_summary() if self.session else {}
+        session_telem = summary.get("telemetry", {}) if summary else {}
+
+        has_data = bool(telem or summary)
+
+        if node_id == "tb1":
+            title = "THERMOBLOCK 1 (COFFEE HEATER)"
+            if has_data:
+                c_temp = telem.get("heater_coffee_str", session_telem.get("heater_coffee_str", "---"))
+                status = telem.get("heater_coffee_status", "---")
+                ready_flg = "Ready (1)" if telem.get("heater_ready_flag") else ("Heating / Not Ready (0)" if "heater_ready_flag" in telem else "---")
+                v1 = f"Live Temperature: {c_temp}"
+                v2 = f"Thermal Operating State: {status} • Ready Flag: {ready_flg}"
+                ntc_raw = telem.get("heater_coffee_raw")
+                v3 = f"NTC Sensor Count: {ntc_raw} (0x{ntc_raw:04X})" if ntc_raw is not None else "---"
+            else:
+                v1, v2, v3 = "Live Temperature: ---", "Operating State: Awaiting read", "---"
+
+        elif node_id == "tb2":
+            title = "THERMOBLOCK 2 (STEAM HEATER)"
+            if has_data:
+                is_dual = telem.get("is_dual_heater", session_telem.get("is_dual_heater", False))
+                if is_dual:
+                    s_temp = telem.get("heater_steam_str", "---")
+                    s_status = telem.get("heater_steam_status", "---")
+                    s_raw = telem.get("heater_steam_raw")
+                    v1 = f"Live Temperature: {s_temp}"
+                    v2 = f"Thermal Operating State: {s_status}"
+                    v3 = f"NTC Sensor Count: {s_raw} (0x{s_raw:04X})" if s_raw is not None else "---"
+                else:
+                    v1 = "Configuration: Single Heater Model (No Steam Thermoblock)"
+                    v2 = "Status: Not Installed (Circuit: Open Pull-Up 0x0802)"
+                    v3 = "Hardware Circuit: Single Thermoblock Layout"
+            else:
+                v1, v2, v3 = "Live Temperature: ---", "Operating State: Awaiting read", "---"
+
+        elif node_id == "flowmeter":
+            title = "FLOWMETER (DIGIMESA)"
+            if has_data:
+                fl = telem.get("flow_rate_ml_s", 0.0)
+                pulses = telem.get("flow_pulses", 0)
+                vol_ml = telem.get("flow_volume_ml", 0.0)
+                tot_l = session_telem.get("water_dispensed_liters", summary.get("water_dispensed_liters"))
+                fm_in = telem.get("fm_intake_timeouts", error_counters.get("Flowmeter Intake Timeouts", 0))
+                fm_rin = telem.get("fm_rinse_timeouts", error_counters.get("Flowmeter Rinse Timeouts", 0))
+                v1 = f"Live Flow Rate: {fl:.1f} ml/s • Current Cycle: {vol_ml:.1f} ml ({pulses} pulses)"
+                v2 = f"Lifetime Timeouts: Intake: {fm_in} | Rinse: {fm_rin}"
+                v3 = f"Total Lifetime Water Dispensed: {tot_l} L" if tot_l is not None else "Pulse Ratio: 2.366 pulses / ml"
+            else:
+                v1, v2, v3 = "Live Flow Rate: ---", "Operating State: Awaiting read", "---"
+
+        elif node_id == "pump":
+            title = "VIBRATION WATER PUMP"
+            if has_data:
+                fl = telem.get("flow_rate_ml_s", 0.0)
+                state = "Active (Dispensing Fluid)" if fl > 0 else "Idle / Standby"
+                v1 = f"Pump Drive State: {state}"
+                v2 = f"Measured Fluid Output: {fl:.1f} ml/s"
+                v3 = "Hydraulic Pressure Line: Nominal Resistance"
+            else:
+                v1, v2, v3 = "Pump Drive State: ---", "Fluid Output: ---", "---"
+
+        elif node_id == "valve":
+            title = "CERAMIC DISTRIBUTION VALVE"
+            if has_data:
+                mv_b = telem.get("mv_busy", False)
+                mv_i = telem.get("mv_init_ok", True)
+                v1 = f"Motor Drive State: {'Moving / Busy' if mv_b else 'Idle / Positioned'}"
+                v2 = f"Initialization State: {'Initialized (OK)' if mv_i else 'Fault / Uninitialized'}"
+                timeouts = error_counters.get("Ceramic Valve Timeouts", 0)
+                pos_faults = error_counters.get("Multiway Valve Position Faults", 0)
+                v3 = f"Lifetime Errors: Valve Timeouts: {timeouts} | Position Faults: {pos_faults}"
+            else:
+                v1, v2, v3 = "Motor Drive State: ---", "Initialization State: ---", "---"
+
+        elif node_id == "bu":
+            title = "BREW UNIT DRIVE & ENCODER"
+            if has_data:
+                pos = telem.get("bu_encoder_pos", "---")
+                zone = telem.get("bu_position_state", "---")
+                upper = telem.get("bu_encoder_upper", "---")
+                target = telem.get("bu_mill_target", "---")
+                init_cnt = telem.get("bu_init_count", "---")
+                v1 = f"Encoder Position: {pos} ticks ({zone})"
+                v2 = f"Calibrated Targets: Mill: {target} ticks | Upper Ref: {upper} ticks"
+                bu_pos_err = error_counters.get("Brew Unit Position Faults", 0)
+                v3 = f"Initialization Count: {init_cnt} cycles | Position Faults: {bu_pos_err}"
+            else:
+                v1, v2, v3 = "Encoder Position: ---", "Targets: ---", "---"
+
+        elif node_id == "tank":
+            title = "WATER RESERVOIR & SENSOR"
+            if has_data:
+                sw = switches_map.get("water_tank", {})
+                tank_ok = sw.get("ok", True)
+                v1 = f"Float / Reed Switch: {'Water Present (OK)' if tank_ok else 'Empty / Missing (Refill)'}"
+                claris = telem.get("filter_claris_active", session_telem.get("filter_claris_active"))
+                claris_str = "CLARIS Active" if claris is True else ("Bypass Mode" if claris is False else "---")
+                hard = telem.get("water_hardness_dh", session_telem.get("water_hardness_dh"))
+                v2 = f"Filter System: {claris_str}"
+                v3 = f"Configured Water Hardness: {hard} °dH" if hard is not None else "---"
+            else:
+                v1, v2, v3 = "Float Switch: ---", "Filter System: ---", "---"
+
+        elif node_id == "tray":
+            title = "DRIP TRAY & GROUNDS CONTAINER"
+            if has_data:
+                sw_tr = switches_map.get("drip_tray", {})
+                tr_ok = sw_tr.get("ok", True)
+                gr_full = telem.get("grounds_full", False)
+                v1 = f"Drip Tray Microswitch: {'Inserted (OK)' if tr_ok else 'Missing / Removed'}"
+                v2 = f"Grounds Container: {'Full (Empty Waste Container)' if gr_full else 'OK (Inserted & Empty)'}"
+                tr_trips = error_counters.get("Drip Tray Missing Trips", 0)
+                v3 = f"Historical Trips: Drip Tray Removed {tr_trips} times"
+            else:
+                v1, v2, v3 = "Drip Tray Microswitch: ---", "Grounds Container: ---", "---"
+
+        elif node_id == "beans":
+            title = "OPTICAL BEAN HOPPER SENSOR"
+            if has_data:
+                sw_b = switches_map.get("bean_hopper", {})
+                b_ok = sw_b.get("ok", telem.get("beans_ok"))
+                adcs = telem.get("bean_adcs")
+                if b_ok is True:
+                    b_status_str = "Beans OK (Hopper Charged)"
+                elif b_ok is False:
+                    b_status_str = "Fill Beans (Hopper Empty)"
+                else:
+                    b_status_str = "Awaiting Sensor Read"
+                v1 = f"Optical Sensor Status: {b_status_str}"
+                if adcs and len(adcs) >= 2:
+                    delta = adcs[1] - adcs[0]
+                    v2 = f"IR ADC Readings: Ambient={adcs[0]}, Reflected={adcs[1]} (Delta: {delta} counts)"
+                else:
+                    v2 = "IR ADC Readings: Passive Telemetry"
+                puck = telem.get("cake_thickness_ticks", 0)
+                v3 = f"Last Compressed Cake Thickness: {puck} ticks"
+            else:
+                v1, v2, v3 = "Optical Sensor Status: ---", "IR ADC Readings: ---", "---"
+
+        elif node_id == "mcu":
+            title = "LOGIC BOARD & OPTICAL INTERFACE"
+            if has_data:
+                fw = summary.get("firmware_string", session_telem.get("firmware_string", "---"))
+                dfw = telem.get("display_firmware", session_telem.get("display_firmware", "---"))
+                ldr = telem.get("loader_version", session_telem.get("loader_version", "---"))
+                port = summary.get("port", getattr(self.session, "port_name", "UART 9600"))
+                v1 = f"Main Firmware: {fw}"
+                v2 = f"Display Unit MCU: {dfw} • Bootloader: {ldr}"
+                v3 = f"Serial Bus: {port} • 9600 Baud 8N1 Optical Loopback"
+            else:
+                v1, v2, v3 = "Main Firmware: ---", "Display MCU: ---", "---"
+
+        elif node_id == "spout":
+            title = "DISPENSER SPOUT"
+            v1 = "Fluidic Outlet: Dual Dispenser Spout"
+            v2 = "Status: Nominal" if has_data else "Awaiting telemetry"
+            v3 = "---"
+
+        else:
+            title = "COMPONENT"
+            v1, v2, v3 = "---", "---", "---"
+
         safe_title = GLib.markup_escape_text(title)
         self.lbl_inspect_title.set_markup(f"<b><span color='#89b4fa'>SELECTED COMPONENT TELEMETRY: {safe_title}</span></b>")
         self.lbl_inspect_v1.set_text(v1)
@@ -1128,16 +1234,31 @@ class JuraDiagApp(Gtk.Window):
             self.lbl_kpi_decalc.set_text(f"{cups_left} Cups Left")
             self.lbl_kpi_decalc_sub.set_text(f"Cycles: {decalc_cnt:,} performed ({decalc_pct}% used)")
             self.prog_kpi_decalc.set_fraction(decalc_pct / 100.0)
-        else:
+        elif decalc_cnt > 0:
             self.lbl_kpi_decalc.set_text(f"{decalc_cnt:,} Performed")
             self.lbl_kpi_decalc_sub.set_text("Descaling cycle nominal")
-            self.prog_kpi_decalc.set_fraction(0.35)
+            self.prog_kpi_decalc.set_fraction(0.0)
+        else:
+            self.lbl_kpi_decalc.set_text("---")
+            self.lbl_kpi_decalc_sub.set_text("---")
+            self.prog_kpi_decalc.set_fraction(0.0)
 
-        claris_active = summary.get("telemetry", {}).get("filter_claris_active", True)
-        hardness = summary.get("telemetry", {}).get("water_hardness_dh", 16)
-        self.lbl_kpi_filter.set_text("CLARIS Pro" if claris_active else "Bypass Mode")
-        self.lbl_kpi_filter_sub.set_text(f"Hardness: {hardness} °dH • Cleanings: {clean_cnt:,}")
-        self.prog_kpi_filter.set_fraction(0.65)
+        claris_active = summary.get("telemetry", {}).get("filter_claris_active")
+        hardness = summary.get("telemetry", {}).get("water_hardness_dh")
+        if claris_active is True:
+            self.lbl_kpi_filter.set_text("CLARIS Active")
+        elif claris_active is False:
+            self.lbl_kpi_filter.set_text("Bypass Mode")
+        else:
+            self.lbl_kpi_filter.set_text("---")
+
+        sub_parts = []
+        if hardness is not None:
+            sub_parts.append(f"Hardness: {hardness} °dH")
+        if clean_cnt > 0:
+            sub_parts.append(f"Cleanings: {clean_cnt:,}")
+        self.lbl_kpi_filter_sub.set_text(" • ".join(sub_parts) if sub_parts else "---")
+        self.prog_kpi_filter.set_fraction(0.0)
 
         # Evaluate Machine Health Index
         score = self.diag_advisor.evaluate_health(summary, getattr(session, "live_sensors", {}))
@@ -1230,14 +1351,14 @@ class JuraDiagApp(Gtk.Window):
         if self.chk_auto_poll.get_active():
             self.auto_poll_active = True
             self.btn_refresh_sensors.set_sensitive(False)
-            self.lbl_sensors_status.set_text("Continuous auto-polling active (1.5s)...")
+            self.lbl_sensors_status.set_text("Live data stream active (~1s sampling)...")
             if self.auto_poll_thread is None or not self.auto_poll_thread.is_alive():
                 self.auto_poll_thread = threading.Thread(target=self._auto_poll_worker, daemon=True)
                 self.auto_poll_thread.start()
         else:
             self.auto_poll_active = False
             self.btn_refresh_sensors.set_sensitive(True)
-            self.lbl_sensors_status.set_text("Auto-poll stopped. Ready for manual refresh.")
+            self.lbl_sensors_status.set_text("Live data stream stopped. Ready.")
 
     def _auto_poll_worker(self):
         conn: Optional[serial_io.JuraSerialConnection] = None
@@ -1276,10 +1397,11 @@ class JuraDiagApp(Gtk.Window):
                 if self.auto_poll_active:
                     GLib.idle_add(self._on_live_sensors_updated, res)
 
-                for _ in range(15):
+                # Hardware streaming pacing: 0.1s inter-query breathing pause (~1.0s physical rate)
+                for _ in range(2):
                     if not self.auto_poll_active:
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.05)
         finally:
             with self.serial_lock:
                 if conn:
@@ -1326,13 +1448,13 @@ class JuraDiagApp(Gtk.Window):
 
         self._last_live_result = result
         if "error" in result:
-            self.lbl_sensors_status.set_text(f"Poll notice: {result['error']}")
+            self.lbl_sensors_status.set_text(f"Live notice: {result['error']}")
             return
 
         ts = result.get("timestamp", datetime.now().strftime("%H:%M:%S"))
         proto = result.get("protocol", "UART")
-        mode_tag = "auto" if self.auto_poll_active else "manual"
-        self.lbl_sensors_status.set_text(f"Polled ({mode_tag}): {ts} (via {proto})")
+        mode_tag = "live" if self.auto_poll_active else "manual"
+        self.lbl_sensors_status.set_text(f"Live Data ({mode_tag}): {ts} (via {proto})")
 
         telem = result.get("telemetry", {})
         switches_map = {sw["id"]: sw for sw in result.get("switches", [])}
@@ -1340,19 +1462,25 @@ class JuraDiagApp(Gtk.Window):
         # 1. Update Cairo Digital Twin Widget
         self.dt_widget.update_state(telem, switches_map)
 
-        # 2. Push telemetry to Rolling Oscilloscope Widget
-        coffee_c = telem.get("heater_coffee_c", 92.4)
-        steam_c = telem.get("heater_steam_c", 135.0)
+        # 2. Push telemetry to Rolling Oscilloscope Widget (strictly reported numbers)
+        coffee_c = telem.get("heater_coffee_c")
+        steam_c = telem.get("heater_steam_c")
         flow_rate = telem.get("flow_rate_ml_s", 0.0)
         self.osc_widget.push_sample(coffee_c, steam_c, flow_rate)
 
         # 3. Append to Event Stream Log
-        bu_pos = telem.get("bu_encoder_pos", 0)
-        bu_st = telem.get("bu_position_short", "Home")
-        ev_line = f"{ts} [POLL] TB1: {coffee_c:.1f}°C | TB2: {steam_c:.1f}°C | Flow: {flow_rate:.1f} ml/s | BU: {bu_pos} ({bu_st})"
+        bu_pos = telem.get("bu_encoder_pos", "---")
+        bu_st = telem.get("bu_position_short", "---")
+        tb1_msg = f"{coffee_c:.1f}°C" if coffee_c is not None else "---"
+        tb2_msg = f"{steam_c:.1f}°C" if steam_c is not None else "N/A"
+        ev_line = f"{ts} [LIVE] TB1: {tb1_msg} | TB2: {tb2_msg} | Flow: {flow_rate:.1f} ml/s | BU: {bu_pos} ({bu_st})"
         self._append_event_stream(ev_line)
 
-        # 4. Refresh Diagnostic Advisor if session summary exists
+        # 4. Refresh selected component inspector card if a node is selected
+        if self.dt_widget.selected_node_id:
+            self._on_node_selected(self.dt_widget.selected_node_id)
+
+        # 5. Refresh Diagnostic Advisor if session summary exists
         if self.session:
             summary = self.session.get_structured_summary()
             score = self.diag_advisor.evaluate_health(summary, result)
