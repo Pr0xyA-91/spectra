@@ -114,9 +114,12 @@ conn.close()
 
 ### 2. Optical Infrared Bean Hopper Sensor (`AS:`) & Puck Measurement (`HZ[8]`)
 * **Multi-Layer Bean Hopper Detection Architecture**:
-  - **Firmware Status Register (`HZ[0][3]`)**: Bit 3 of `parts[0]` directly reflects the machine CPU's internal debounced bean hopper state (`parts[0][3] == "0"` -> Ready to brew / Beans OK; `parts[0][3] == "1"` -> Fill Beans / Lockout).
-  - **Grinder Dose Puck Measurement (`HZ[8]`)**: Compressed puck thickness $\le 14$ ticks indicates grinder ran empty during the dose cycle.
-  - **Optical IR Sensor (`AS:`)**: Continuous photodiode telemetry (`off_adc`, `on_adc`, `delta`). Bare optical prism reflection ($\Delta \ge 102$ counts) acts as optical empty safety verification. Standby floating noise ($> 3,500$ ADC) is filtered out.
+  - **Optical IR Sensor (`AS:`)**: Continuous photodiode telemetry (`off_adc`, `on_adc`, $\Delta$). Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ eliminates ambient room light offsets (calibrated live on IMPRESSA XJ5):
+    - **Covered / Interrupted / Beans Present**: $\Delta \le 89$ counts (live values: $86$–$89$ counts). Machine immediately updates to Ready.
+    - **Uncovered / Open / Empty Hopper**: $\Delta \ge 91$ counts (live values: $91$–$96$ counts). The appliance CPU defers LCD update until brew/product selection, at which point it refuses to grind and prompts Fill Beans.
+    - **Hysteresis Window ($90$ counts)**: Schmitt trigger latches previous state, completely eliminating 1-second boundary fluttering.
+  - **Firmware Status Register (`HZ[0][3]`)**: Reflects explicit CPU status bus hopper alerts when asserted (`parts[0][3] == "1"`).
+  - **Grinder Dose Puck Measurement (`HZ[8]`)**: Compressed puck thickness $\le 14$ ticks indicates grinder ran empty during the dose cycle (acts as fallback if optical sensor is absent).
 
 ### 3. Brew Unit Mechanical Position & Stroke Zones
 * Evaluated dynamically from live encoder ticks (`HZ[2]` current, `HZ[1]` upper reference, `RE:0041` mill target):

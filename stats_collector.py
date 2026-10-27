@@ -498,25 +498,34 @@ def query_live_sensors(
 
             # Evaluate bean hopper level:
             # Multi-layer safety verification:
-            # 1. Firmware Bean Lockout: parts[0][3] directly reflects CPU hopper alert on HZ bus ("Fill Beans")
-            # 2. Puck Compression: cake thickness <= 14 encoder ticks indicates grinder ran empty
-            # 3. Bare Prism Reflection: optical delta >= 102 counts indicates hopper is bare/uncovered
+            # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
+            #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
+            #    - Covered / Charged (absorption by coffee beans or beam blocked): delta <= 89 counts -> Beans OK
+            #    - Uncovered / Empty (bare prism specular reflection): delta >= 91 counts -> Fill Beans
+            #    - Boundary hysteresis window (90 counts): latch previous state to prevent 1-second boundary flutter
+            # 2. Firmware Bean Lockout: parts[0][3] == "1" reflects CPU hopper alert on HZ bus ("Fill Beans")
+            # 3. Puck Compression: cake thickness <= 14 encoder ticks indicates grinder ran empty during dose
+            #    (applies as fallback when optical sensor is not fitted/available)
             optical_empty = False
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
                 delta = on_adc - off_adc
-                if delta >= 102:
+                if delta <= 89:
+                    optical_empty = False
+                elif delta >= 91:
                     optical_empty = True
+                else:
+                    # Latch previous state across hysteresis boundary (90 counts)
+                    optical_empty = not getattr(conn, "_cached_beans_ok", True)
 
-            puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
-
-            if hz_bean_empty or puck_empty or optical_empty:
-                beans_empty = True
-                beans_ok = False
+                beans_empty = optical_empty or hz_bean_empty
+                beans_ok = not beans_empty
             else:
-                beans_empty = False
-                beans_ok = True
+                # Fallback for models without optical sensor (e.g. standard residential lines)
+                puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
+                beans_empty = hz_bean_empty or puck_empty
+                beans_ok = not beans_empty
 
             setattr(conn, "_cached_beans_ok", beans_ok)
 
