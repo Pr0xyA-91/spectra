@@ -4,14 +4,14 @@
   <img src="docs/brand/spectra_banner.svg" alt="SPECTRA Diagnostic Suite" width="100%">
 </p>
 
-[![Version: 0.5.0](https://img.shields.io/badge/version-0.5.0-blue.svg)](https://github.com/Pr0xyA-91/spectra)
+[![Version: 0.5.1](https://img.shields.io/badge/version-0.5.1-blue.svg)](https://github.com/Pr0xyA-91/spectra)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GTK 3](https://img.shields.io/badge/GUI-GTK%203-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: v0.5.0 (Jura Linux Edition)** — Major Next-Generation Diagnostic Workstation Redesign.
+> **Project Status: v0.5.1 (Jura Linux Edition)** — Major Next-Generation Diagnostic Workstation Redesign.
 > **SPECTRA** is an extensible appliance hardware telemetry and diagnostic engine. Currently featuring the native **Jura Diagnostics Module** supporting both classic TOP-tronic and modern Smart Connect machines with dynamic model profiling, EEPROM baseline diffing, optical sensor interrogation, and community model dumper tools.
 
 A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.

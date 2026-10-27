@@ -31,7 +31,7 @@ import profiles_db
 import stats_collector as sc
 import gui_widgets
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 
 class JuraDiagApp(Gtk.Window):

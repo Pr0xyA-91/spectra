@@ -1,5 +1,5 @@
 # SPECTRA — Comprehensive Context & Session Notes for Agy
-**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.5.0)
+**Updated**: October 26, 2026 | **Current Status**: Production / Verified Working (v0.5.1)
 
 > **PRIVACY NOTICE**: This file (`SESSION_NOTES.md`) and `GEMINI.md` are **strictly private** to `https://github.com/Pr0xyA-91/spectra_dev.git` (`origin`). They must **NEVER** be pushed to the public repository (`https://github.com/Pr0xyA-91/spectra.git`).
 
@@ -11,9 +11,9 @@ When cloning or resuming work on a new machine, the private repository `spectra_
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.5.0` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.5.0_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.5.0_win` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `v0.5.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.5.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra-win` | `windows` | `v0.5.1_win` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
@@ -285,4 +285,13 @@ conn.close()
 * **Customer Service PDF/HTML Inspection Certificate Generator**:
   - Branded customer inspection certificate generated via 1-click `🖨️ Service Receipt` button (`gui_widgets.py:generate_service_report_html`).
 * **Version Standardization**:
-  - Upgraded to `v0.5.0` (`spectra`), `v0.5.0_mm` (`spectra-mm`), and `v0.5.0_win` (`spectra-win`).
+  - Upgraded to `v0.5.1` (`spectra`), `v0.5.1_mm` (`spectra-mm`), and `v0.5.1_win` (`spectra-win`).
+
+## 10. Optical Bean Detection Hardware Calibration & v0.5.1 Release (Session 2026-10-27)
+* **Live Optical Calibration with Jura IMPRESSA XJ5 (`EF518M V02.20`)**:
+  - Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ successfully eliminates ambient DC offsets (measured across $1,466$ to $1,694$ ambient counts).
+  - **Covered / Interrupted / Beans Present**: $\Delta \le 89$ counts (live values: $86$–$89$ counts). Machine immediately updates to Ready.
+  - **Uncovered / Open / Empty Hopper**: $\Delta \ge 91$ counts (live values: $91$–$96$ counts). Machine defers LCD update until brew/product selection, at which point it refuses to grind and prompts Fill Beans.
+  - **Schmitt Trigger Hysteresis ($90$ counts)**: Latching previous state completely eliminates rapid 1-second boundary oscillations.
+* **Release Artifacts**:
+  - Upgraded to `v0.5.1` (`spectra`), `v0.5.1_mm` (`spectra-mm`), and `v0.5.1_win` (`spectra-win`).
