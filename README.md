@@ -4,14 +4,14 @@
   <img src="docs/brand/spectra_banner.svg" alt="SPECTRA Diagnostic Suite" width="100%">
 </p>
 
-[![Version: 0.5.0_win](https://img.shields.io/badge/version-0.5.0__win-blue.svg)](https://github.com/Pr0xyA-91/spectra)
+[![Version: 0.5.1_win](https://img.shields.io/badge/version-0.5.0__win-blue.svg)](https://github.com/Pr0xyA-91/spectra)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GUI](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Linux | Windows](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: v0.5.0_win (Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
+> **Project Status: v0.5.1_win (Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
 > **SPECTRA** is an extensible appliance hardware telemetry and diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
 > See **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)** for the complete Windows setup guide and **[DEPENDENCIES.md](DEPENDENCIES.md)** for platform dependency breakdowns.
 

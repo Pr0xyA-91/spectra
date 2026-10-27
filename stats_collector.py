@@ -36,7 +36,7 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.5.0_win"
+__version__ = "0.5.1_win"
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:

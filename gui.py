@@ -33,7 +33,7 @@ from spectra_engine import SpectraSession, WRATSession, format_text_summary, for
 from drivers import DRIVER_DISPLAY_NAMES
 import gui_widgets
 
-__version__ = "0.5.0_win"
+__version__ = "0.5.1_win"
 
 
 class JuraDiagApp(Gtk.Window):
