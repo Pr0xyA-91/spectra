@@ -29,4 +29,11 @@ The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts th
   * `machine_ready` depends strictly on 5 real-time physical inputs from `HZ:`: Drip Tray inserted, Water Tank full, Grounds Container not full, Coffee Thermoblock $\ge 80.0\,^\circ\text{C}$, and Appliance idle (`parts[0][0] == '0'`).
   * `parts[7][3]` in `HZ:` is a 1 Hz MCU heartbeat clock tick, **not** an alarm bit.
 - **Fast Auto-Poll (`fast_poll=True`)**: Queries only dynamic `HZ:` telemetry (~50ms latency) and omits static EEPROM settings (`water_hardness_dh` from `RE:00C3`) so the UI never overwrites verified static settings with fallback defaults.
+- **Optical Infrared Bean Hopper Sensor (`AS:`) & Firmware Lazy-Update**:
+  * **Photodiode Reflection Delta**: Evaluates net ambient-subtracted pulsed IR reflection ($\\Delta = \\text{ON\\_ADC} - \\text{OFF\\_ADC}$).
+    - **Covered / Beans Present**: $\\Delta \\le 89\\text{ counts}$ (live calibrated at $86$–$89$). Appliance clears lockout immediately and displays *"Ready"*.
+    - **Uncovered / Empty Hopper**: $\\Delta \\ge 91\\text{ counts}$ (live calibrated at $91$–$96$).
+  * **Firmware Lazy Update Invariant**: When beans run out, the appliance CPU defers updating the front LCD until a beverage is selected. Only when a brew button is pressed does the MCU check `AS:`, abort the grind, and prompt *"Fill beans"*. SPECTRA detects this proactively from `AS:` before the user attempts a brew.
+  * **Schmitt Trigger Deadband**: The boundary between $89$ and $91$ counts ($90\\text{ counts}$) latches the previous state to eliminate 1-second boundary flickering.
+  * **Never Override with Unverified HZ Bits**: Do not gate `beans_ok` solely on `HZ[0][3]`; `AS:` is the physical ground truth on optical-equipped models.
 - **Legacy Preservation**: Never alter `/home/a91/Projects/Jura SW/` (the legacy 2016 suite).
