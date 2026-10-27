@@ -422,15 +422,14 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         sw_sb = {s["id"]: s for s in res_sb["switches"]}
         self.assertTrue(sw_sb["bean_hopper"]["ok"])
 
-        # Case 3: Empty hopper bare prism reflection (off=1540, on=1632 -> delta=92 counts)
-        # Calibrated threshold: delta >= 92 counts -> Fill Beans (blocking readiness)
+        # Case 3: Empty hopper lockout via HZ[0][3] == '1' and bare prism reflection (delta >= 102)
         conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         def mock_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077306040000,077306600001"  # 0x0604=1540, 0x0660=1632 -> delta=92
+                return "as:077206980000,077207000001"  # 0x0698=1688, 0x0700=1792 -> delta=104 >= 102
             elif cmd_c == "HZ:":
-                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+                return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
             return ""
         conn_empty.query_ascii = mock_empty
 

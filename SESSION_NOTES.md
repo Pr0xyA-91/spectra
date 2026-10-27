@@ -113,22 +113,10 @@ conn.close()
 * Historical faults remain displayed where they belong: in the **Hardware Diagnostics** tree view.
 
 ### 2. Optical Infrared Bean Hopper Sensor (`AS:`) & Puck Measurement (`HZ[8]`)
-* **Optical IR Hopper Sensor (`AS:`)**:
-  - Interrogated via the analog sensor command `AS:` (`Check Sensor` at `0x4e6fb8` in `P518Ani.exe`).
-  - Response format: `as:VREF, OFF_ADC, 0000, VREF, ON_ADC, 0001` (e.g. `as:077106320000,077106810001`).
-  - `Group 0` (`0000`): Ambient light reading with IR LED off (`~1360–1620` ADC counts; up to `2240` counts when hopper lid open in bright light).
-  - `Group 1` (`0001`): Reflected infrared light reading with IR LED pulsed on.
-  - **Ambient Compensation**: `on_adc` contains ambient DC offset. True reflection is `delta = (on_adc - off_adc)`. Never gate bean status on raw `on_adc >= 1700`, which falsely triggers under room light.
-  - **Empty Hopper (Reflective)**: When the hopper is empty, IR pulse reflects cleanly off bare prism $\rightarrow$ delta $\Delta \ge 92$ counts (typically $92$–$104$).
-  - **Hopper Charged (Absorption)**: Dark coffee beans bury prism and absorb/scatter IR $\rightarrow$ delta $\Delta \le 89$ counts (typically $83$–$89$).
-  - **Debounce / Hysteresis Band**: A 2-count hysteresis band ($90 \le \Delta \le 91$) latches previous state to completely prevent flickering or oscillation at threshold boundaries.
-* **Puck Thickness / Cake Measurement (`HZ[8]`)**:
-  - `HZ[8]` (historically labeled key matrix) reports the live compressed cake thickness in encoder ticks:
-  - `0x000E` (`14` dec ticks): Grinder ran empty / puck too thin threshold (triggers machine "Fill Beans" prompt).
-  - `0x001D` (`29` dec ticks): Valid single espresso compressed puck.
-* **Note on `HZ[0]` Status Bits**:
-  - `parts[0]` remains `010101100000` in both ready and fill-beans states during active thermal loops; `parts[0][3]` is NOT a bean hopper flag on this firmware (`EF518M V02.20`).
-  - Real-time optical hopper status must be read exclusively from `AS:` with cached state held steadily between cycles to prevent oscillation.
+* **Multi-Layer Bean Hopper Detection Architecture**:
+  - **Firmware Status Register (`HZ[0][3]`)**: Bit 3 of `parts[0]` directly reflects the machine CPU's internal debounced bean hopper state (`parts[0][3] == "0"` -> Ready to brew / Beans OK; `parts[0][3] == "1"` -> Fill Beans / Lockout).
+  - **Grinder Dose Puck Measurement (`HZ[8]`)**: Compressed puck thickness $\le 14$ ticks indicates grinder ran empty during the dose cycle.
+  - **Optical IR Sensor (`AS:`)**: Continuous photodiode telemetry (`off_adc`, `on_adc`, `delta`). Bare optical prism reflection ($\Delta \ge 102$ counts) acts as optical empty safety verification. Standby floating noise ($> 3,500$ ADC) is filtered out.
 
 ### 3. Brew Unit Mechanical Position & Stroke Zones
 * Evaluated dynamically from live encoder ticks (`HZ[2]` current, `HZ[1]` upper reference, `RE:0041` mill target):
