@@ -78,15 +78,15 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
 #### Calibration & State Thresholds
 * **Empty Hopper (Reflective)**:
   * Infrared pulse reflects cleanly off the bare optical prism back into the photodiode.
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ rises to **$\ge +96$ counts** (calibrated empty values: $+97$ to $+104$ counts; up to $+119$ counts when hopper lid is open under room light).
+  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ rises to **$\ge +92$ counts** (calibrated empty values: $+92$ to $+104$ counts across empty hopper states; up to $+119$ counts when hopper lid is open under room light).
   * Appliance indicates: *"Doplňte kávová zrna"* / *"Fill beans"*.
 * **Hopper Charged (Absorption)**:
   * Dark coffee beans bury the prism, absorbing and scattering the infrared pulse away from the photodiode.
-  * Net delta $\Delta$ drops down to **$\le +93$ counts** (calibrated charged values: $+84$ to $+92$ counts across thermal cycles).
+  * Net delta $\Delta$ drops down to **$\le +89$ counts** (calibrated charged values: $+83$ to $+89$ counts across thermal cycles).
   * Appliance indicates: *"Ready to brew"*.
 * **Ambient Light Compensation & Hysteresis**:
   * Raw `ON_ADC` incorporates ambient room light (which can exceed $1,750$ or $2,300$ counts with lid open in bright environments even when beans are present). Evaluation strictly relies on ambient-subtracted $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ to prevent ambient false empty alerts.
-  * A Schmitt trigger hysteresis window ($+94$ to $+95$ counts) latches the verified state, completely eliminating rapid boundary oscillations. Standby floating ADC noise ($> 3,500$ counts) is filtered.
+  * A Schmitt trigger hysteresis window ($+90$ to $+91$ counts) latches the verified state, completely eliminating rapid boundary oscillations. Standby floating ADC noise ($> 3,500$ counts) is filtered.
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:
