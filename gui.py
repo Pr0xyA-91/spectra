@@ -106,6 +106,7 @@ class JuraDiagApp(Gtk.Window):
         self.serial_lock = threading.Lock()
         self.auto_poll_active = False
         self.auto_poll_thread: Optional[threading.Thread] = None
+        self.selected_port: str = ""
         self._last_live_result: Optional[dict] = None
 
         # Main Layout Box
@@ -369,6 +370,7 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_port.set_valign(Gtk.Align.CENTER)
 
         self.port_combo = Gtk.ComboBoxText()
+        self.port_combo.connect("changed", self._on_port_changed)
         self.port_combo.set_size_request(160, -1)
         self.port_combo.set_valign(Gtk.Align.CENTER)
         for cell in self.port_combo.get_cells():
@@ -1154,8 +1156,17 @@ class JuraDiagApp(Gtk.Window):
                 active_idx = idx
         if ports:
             self.port_combo.set_active(active_idx)
+            self.selected_port = self.port_combo.get_active_text() or ""
+
+    def _on_port_changed(self, widget):
+        self.selected_port = self.port_combo.get_active_text() or ""
 
     def _append_log(self, text: str):
+        line_count = self.log_buffer.get_line_count()
+        if line_count > 1000:
+            start_iter = self.log_buffer.get_start_iter()
+            cutoff_iter = self.log_buffer.get_iter_at_line(line_count - 800)
+            self.log_buffer.delete(start_iter, cutoff_iter)
         end_iter = self.log_buffer.get_end_iter()
         self.log_buffer.insert(end_iter, text + "\n")
         adj = self.log_view.get_vadjustment()
@@ -1165,6 +1176,11 @@ class JuraDiagApp(Gtk.Window):
     def _append_event_stream(self, text: str):
         if self._stream_paused:
             return
+        line_count = self.event_stream_buffer.get_line_count()
+        if line_count > 500:
+            start_iter = self.event_stream_buffer.get_start_iter()
+            cutoff_iter = self.event_stream_buffer.get_iter_at_line(line_count - 400)
+            self.event_stream_buffer.delete(start_iter, cutoff_iter)
         end_iter = self.event_stream_buffer.get_end_iter()
         self.event_stream_buffer.insert(end_iter, text + "\n")
         adj = self.event_stream_view.get_vadjustment()
@@ -1222,7 +1238,8 @@ class JuraDiagApp(Gtk.Window):
         port_name = getattr(session, "port_name", getattr(session, "port", "UNKNOWN"))
         is_demo = "DEMO" in str(port_name).upper()
         self.lbl_status_dot.set_markup("<span color='#89b4fa'>●</span>" if is_demo else "<span color='#a6e3a1'>●</span>")
-        self.lbl_status_pill_title.set_markup(f"<b><span color='#cdd6f4' size='small'>{session.model_family.upper()}</span></b>")
+        safe_model = GLib.markup_escape_text(session.model_family.upper())
+        self.lbl_status_pill_title.set_markup(f"<b><span color='#cdd6f4' size='small'>{safe_model}</span></b>")
         mfr_name = getattr(session, "manufacturer_name", getattr(session, "protocol_mode", "Jura"))
         self.lbl_status_pill_sub.set_text(f"{port_name} • {mfr_name} • OK")
         self.status_pill.get_style_context().remove_class("offline")
@@ -1355,6 +1372,7 @@ class JuraDiagApp(Gtk.Window):
 
     def _on_auto_poll_toggled(self, widget):
         if self.chk_auto_poll.get_active():
+            self.selected_port = self.port_combo.get_active_text() or ""
             self.auto_poll_active = True
             self.btn_refresh_sensors.set_sensitive(False)
             self.lbl_sensors_status.set_text("Live data stream active (~1s sampling)...")
@@ -1542,8 +1560,14 @@ class JuraDiagApp(Gtk.Window):
             dialog.run()
             dialog.destroy()
 
+            # Attempt to launch default browser in background (cross-platform)
             try:
-                subprocess.Popen(["xdg-open", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if sys.platform.startswith("win"):
+                    os.startfile(out_path)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.Popen(["xdg-open", out_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
 

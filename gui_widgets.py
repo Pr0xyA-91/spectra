@@ -10,6 +10,7 @@ Provides:
 """
 
 import math
+import html
 import collections
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
@@ -31,6 +32,20 @@ class DigitalTwinWidget(Gtk.DrawingArea):
     Renders an interactive, responsive hydraulic and electrical schematic
     of the coffee machine's internal circuit using Cairo vector graphics.
     """
+
+    NODE_BOXES = {
+        "tank": (35, 75, 80, 85),
+        "flowmeter": (165, 85, 65, 65),
+        "pump": (270, 75, 85, 75),
+        "valve": (395, 85, 60, 60),
+        "tb1": (490, 45, 105, 60),
+        "tb2": (490, 125, 105, 60),
+        "bu": (630, 80, 85, 85),
+        "tray": (35, 205, 155, 60),
+        "beans": (210, 205, 155, 60),
+        "spout": (385, 205, 155, 60),
+        "mcu": (560, 205, 155, 60),
+    }
 
     def __init__(self, on_node_selected=None):
         super().__init__()
@@ -107,20 +122,7 @@ class DigitalTwinWidget(Gtk.DrawingArea):
 
     def _find_node_at(self, vx: float, vy: float) -> Optional[str]:
         # Node bounding boxes in virtual coordinate space
-        boxes = {
-            "tank": (35, 75, 80, 85),
-            "flowmeter": (165, 85, 65, 65),
-            "pump": (270, 75, 85, 75),
-            "valve": (395, 85, 60, 60),
-            "tb1": (490, 45, 105, 60),
-            "tb2": (490, 125, 105, 60),
-            "bu": (630, 80, 85, 85),
-            "tray": (35, 205, 155, 60),
-            "beans": (210, 205, 155, 60),
-            "spout": (385, 205, 155, 60),
-            "mcu": (560, 205, 155, 60),
-        }
-        for nid, (bx, by, bw, bh) in boxes.items():
+        for nid, (bx, by, bw, bh) in self.NODE_BOXES.items():
             if bx <= vx <= bx + bw and by <= vy <= by + bh:
                 return nid
         return None
@@ -668,8 +670,10 @@ class RadialGaugeWidget(Gtk.DrawingArea):
         self.connect("draw", self._on_draw)
 
     def set_value(self, val: Optional[int]):
-        self.value = max(0, min(100, int(val))) if val is not None else None
-        self.queue_draw()
+        new_val = max(0, min(100, int(val))) if val is not None else None
+        if self.value != new_val:
+            self.value = new_val
+            self.queue_draw()
 
     def _on_draw(self, widget, cr: cairo.Context) -> bool:
         alloc = self.get_allocation()
@@ -844,7 +848,8 @@ class BeverageAnalyticsWidget(Gtk.Box):
             info_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
             lbl_name = Gtk.Label()
-            lbl_name.set_markup(f"<b>{b.get('name', 'Beverage')}</b>")
+            safe_bev_name = GLib.markup_escape_text(b.get('name', 'Beverage'))
+            lbl_name.set_markup(f"<b>{safe_bev_name}</b>")
             lbl_name.set_xalign(0.0)
 
             lbl_stats = Gtk.Label()
@@ -1042,12 +1047,12 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     Generates a professional, branded customer service inspection certificate
     in self-contained HTML format ready for printing to PDF or customer handoff.
     """
-    model = summary.get("machine_model", "Unknown Jura Model")
+    model = html.escape(str(summary.get("machine_model", "Unknown Jura Model")))
     total_cups = summary.get("total_cups", 0)
-    serial_no = summary.get("telemetry", {}).get("serial_number", "N/A")
-    prod_date = summary.get("telemetry", {}).get("production_date", "N/A")
-    fw = summary.get("firmware_string", "N/A")
-    timestamp = summary.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    serial_no = html.escape(str(summary.get("telemetry", {}).get("serial_number", "N/A")))
+    prod_date = html.escape(str(summary.get("telemetry", {}).get("production_date", "N/A")))
+    fw = html.escape(str(summary.get("firmware_string", "N/A")))
+    timestamp = html.escape(str(summary.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))))
 
     health_color = "#22c55e" if health_score >= 80 else ("#eab308" if health_score >= 50 else "#ef4444")
     health_label = "EXCELLENT" if health_score >= 85 else ("GOOD" if health_score >= 70 else "NEEDS SERVICE")
@@ -1057,9 +1062,10 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     for b in sorted(summary.get("beverages", []), key=lambda x: x.get("count", 0), reverse=True)[:10]:
         cnt = b.get("count", 0)
         pct = (cnt / max(1, total_cups)) * 100.0
+        safe_name = html.escape(str(b.get('name', 'Specialty')))
         bev_rows += f"""
         <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{b.get('name', 'Specialty')}</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{safe_name}</td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: bold;">{cnt:,}</td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #64748b;">{pct:.1f}%</td>
         </tr>
@@ -1069,9 +1075,10 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     maint_rows = ""
     for m in summary.get("maintenance", []):
         pct_str = f"{m.get('percentage')}%" if m.get("percentage") is not None else "N/A"
+        safe_label = html.escape(str(m.get('label', 'Cycle')))
         maint_rows += f"""
         <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{m.get('label', 'Cycle')}</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{safe_label}</td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: bold;">{m.get('count', 0):,}</td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; text-align: right;">{pct_str}</td>
         </tr>
@@ -1082,14 +1089,15 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     for item, is_ok in technician_checklist:
         icon = "☑" if is_ok else "☐"
         status_color = "#16a34a" if is_ok else "#ca8a04"
+        safe_item = html.escape(str(item))
         chk_items += f"""
         <li style="padding: 6px 0; border-bottom: 1px dashed #e2e8f0; display: flex; align-items: center;">
             <span style="font-size: 16px; margin-right: 8px; color: {status_color};">{icon}</span>
-            <span>{item}</span>
+            <span>{safe_item}</span>
         </li>
         """
 
-    html = f"""<!DOCTYPE html>
+    cert_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1299,4 +1307,4 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
 </body>
 </html>
 """
-    return html
+    return cert_html

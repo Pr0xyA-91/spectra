@@ -585,9 +585,9 @@ def is_valid_port(port: str) -> bool:
         return False
     # Safe patterns: /dev/tty*, /dev/pts/*, COM1..COM256, DEMO / SIMULATION, or mock
     if p.startswith("/dev/tty") or p.startswith("/dev/pts/"):
-        return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00"])
+        return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00", "\n", "\r"])
     if p.upper().startswith("COM"):
-        return True
+        return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00", "\n", "\r"])
     if "DEMO" in p.upper() or p.lower() in ("mock", "demo"):
         return True
     return False
@@ -699,7 +699,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def _send_json(self, data: Any):
-        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        payload = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))

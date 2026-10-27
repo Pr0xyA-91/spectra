@@ -295,3 +295,20 @@ conn.close()
   - **Schmitt Trigger Hysteresis ($90$ counts)**: Latching previous state completely eliminates rapid 1-second boundary oscillations.
 * **Release Artifacts**:
   - Upgraded to `v0.5.1` (`spectra`), `v0.5.1_mm` (`spectra-mm`), and `v0.5.1_win` (`spectra-win`).
+
+## 11. Security Hardening & Performance Optimization Audit (Session 2026-10-27)
+* **Stored XSS & Injection Prevention**:
+  - Full HTML escaping via `html.escape()` for all machine models, serial numbers, beverage names, and maintenance labels in generated customer service inspection certificates (`generate_service_report_html`).
+  - Web dashboard port validator (`is_valid_port`) hardened with CRLF injection checks (`\n`, `\r`) and path traversal protection.
+* **GTK Thread Affinity & Crash Prevention**:
+  - Background auto-poll worker now reads thread-safe `self.selected_port` cached on the main thread, eliminating direct widget queries (`port_combo.get_active_text()`) from secondary worker threads.
+  - Wrapped dynamic beverage names and advisor checklist labels with `GLib.markup_escape_text()` to prevent Pango markup parser exceptions on special characters (`&`, `<`, `>`).
+* **Memory & Rendering Performance Optimizations**:
+  - Capped `event_stream_buffer` (500 lines) and `log_buffer` (1,000 lines) with rolling truncation to eliminate unbounded memory growth during long-running telemetry sessions.
+  - `RadialGaugeWidget` now suppresses redundant `queue_draw()` calls when telemetry value is unchanged.
+  - `DigitalTwinWidget` coordinate bounding boxes elevated to class constant `NODE_BOXES`, eliminating heap dictionary re-allocations on mouse motion events.
+  - Precompiled Smart Connect regexes (`_RE_TR32`, `_RE_TG43`, `_RE_TG47`, `_RE_AN_ALERTS`) at module import in `jura_protocol.py`.
+  - Added 4,096-byte boundary checks on incoming serial chunks (`query_ascii` and `_send_encrypted_cmd`) to protect against line noise buffer exhaustion.
+  - Cross-platform certificate viewing: uses `os.startfile` on Windows, `open` on macOS, and `xdg-open` on Linux.
+* **Validation**:
+  - Created `test_security_and_optimizations.py` across all 3 repositories (67/67 unit tests passing).

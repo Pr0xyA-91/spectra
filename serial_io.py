@@ -154,7 +154,10 @@ class JuraSerialConnection:
                 return
             except Exception as e:
                 if self.fd is not None:
-                    os.close(self.fd)
+                    try:
+                        os.close(self.fd)
+                    except OSError:
+                        pass
                     self.fd = None
                 if not HAS_PYSERIAL:
                     raise IOError(f"Failed to configure serial port {self.port_name}: {e}")
@@ -371,6 +374,8 @@ class JuraSerialConnection:
             chunk = self.read(max_bytes=256, timeout_sec=0.05)
             if chunk:
                 rx.extend(chunk)
+                if len(rx) > 4096:
+                    break
                 if b"\r\n" in rx:
                     lines = [l.strip().decode("latin1", errors="ignore") for l in rx.split(b"\r\n")]
                     complete_lines = lines[:-1]

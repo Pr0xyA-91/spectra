@@ -1110,6 +1110,8 @@ class JuraStatsSession:
             chunk = self.conn.read(max_bytes=1024, timeout_sec=0.15)
             if chunk:
                 rx_wire.extend(chunk)
+                if len(rx_wire) > 4096:
+                    break
                 decoded, _ = jp.decode_wire(bytes(rx_wire))
                 if b"\r\n" in decoded:
                     plain_resp = jp.decode_encrypted_frame(decoded)
