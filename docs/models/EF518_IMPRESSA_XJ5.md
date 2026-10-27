@@ -76,16 +76,16 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
   * `Group 1` (`0001`): Reflected infrared light reading when IR LED is pulsed on (`~1445–1792` ADC counts).
 
 #### Multi-Layer Detection Architecture
-* **Firmware Lockout Register (`HZ[0][3]`)**:
-  * Primary source of truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
-  * Bit `3` of `parts[0]` reflects the machine CPU's internal debounced bean hopper state:
-    * `parts[0][3] == "0"`: Appliance displays *"Ready"* / *"Ready to brew"*.
-    * `parts[0][3] == "1"`: Appliance displays *"Doplňte kávová zrna"* / *"Fill beans"*.
-* **Grind Dose Cake Measurement (`HZ[8]`)**:
-  * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle.
 * **Optical Analog Calibration (`AS:`)**:
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ provides continuous photodiode telemetry for the Digital Twin and Component Inspector.
-  * Bare optical prism total reflection ($\Delta \ge +102$ counts) acts as optical empty safety verification. Standby floating noise ($> 3,500$ ADC) is filtered out.
+  * Primary source of continuous bean level truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
+  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ completely eliminates ambient room light offsets (verified across ambient shifts from $1,466$ to $1,694$ counts).
+  * **Covered / Interrupted / Beans Present**: $\Delta \le +89$ counts (live calibrated: $+86$ to $+89$ counts). Machine immediately switches to *"Ready"*.
+  * **Uncovered / Open / Bare Sensor**: $\Delta \ge +91$ counts (live calibrated: $+91$ to $+96$ counts). The appliance CPU defers updating its LCD until a product selection/brew is attempted, at which point it refuses to grind and prompts *"Doplňte kávová zrna"* / *"Fill beans"*.
+  * **Hysteresis Window ($+90$ counts)**: Schmitt trigger latches the previous state, eliminating 1-second boundary flickering.
+* **Firmware Lockout Register (`HZ[0][3]`)**:
+  * Reflects CPU status bus hopper alerts when asserted (`parts[0][3] == "1"`).
+* **Grind Dose Cake Measurement (`HZ[8]`)**:
+  * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle (acts as fallback when optical sensor is not fitted).
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:
