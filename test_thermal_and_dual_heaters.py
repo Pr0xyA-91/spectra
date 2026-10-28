@@ -491,14 +491,14 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
     def test_optical_bean_calibration_and_dev_slider(self):
         """Test optical bean sensor threshold calibration and dev branch UI toggle."""
-        # 1. Verify default calibration
+        # 1. Verify default calibration (nominal 99 counts)
         sc.reset_optical_bean_threshold(save=False)
-        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+        self.assertEqual(sc.get_optical_bean_threshold(), 99)
         calib = sc.get_optical_bean_calibration()
-        self.assertEqual(calib["lower_bound"], 92)
-        self.assertEqual(calib["upper_bound"], 96)
+        self.assertEqual(calib["lower_bound"], 97)
+        self.assertEqual(calib["upper_bound"], 101)
 
-        # 2. Delta of 105 with default threshold (94) -> Empty (105 >= 96)
+        # 2. Delta of 105 with default threshold (99) -> Empty (105 >= 101)
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
         def mock_query(cmd, timeout=1.0):
@@ -522,22 +522,22 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(res_calib["telemetry"]["optical_threshold"], 110)
         self.assertEqual(res_calib["telemetry"]["optical_delta"], 105)
 
-        # 4. Reset threshold back to 94
+        # 4. Reset threshold back to 99
         sc.reset_optical_bean_threshold(save=False)
-        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+        self.assertEqual(sc.get_optical_bean_threshold(), 99)
 
         # 5. Verify dev branch GUI slider availability
         import gui
         self.assertTrue(gui.is_dev_branch())
         app = gui.JuraDiagApp()
         self.assertTrue(hasattr(app, "card_dev_calib"))
-        self.assertEqual(app.scale_bean_threshold.get_value(), 94.0)
+        self.assertEqual(app.scale_bean_threshold.get_value(), 99.0)
 
         # Changing slider updates calibration
         app.scale_bean_threshold.set_value(120.0)
         self.assertEqual(sc.get_optical_bean_threshold(), 120)
         app._on_reset_bean_calibration_clicked(None)
-        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+        self.assertEqual(sc.get_optical_bean_threshold(), 99)
         app.destroy()
 
 

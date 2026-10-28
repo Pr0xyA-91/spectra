@@ -374,11 +374,11 @@ conn.close()
 * **Architecture & Interactive Slider**:
   - Gated strictly to development builds via `is_dev_branch()` (checks git branch `main`, `multi-manufacturer`, `windows`, and existence of private `SESSION_NOTES.md`). On public releases (`public-main`), the control is completely omitted.
   - Interactive slider in "⚡ Live Digital Twin" tab right below component inspector:
-    - Range: 40 to 180 counts (default 94 counts).
-    - Decision window: Beans OK if $\Delta \le (\text{threshold} - 2)$, Fill Beans if $\Delta \ge (\text{threshold} + 2)$, with hysteresis across the deadband.
+    - Range: 40 to 180 counts (calibrated nominal baseline: **99 counts**, offset +5 from initial 94).
+    - Decision window: Beans OK if $\Delta \le 97$ counts, Fill Beans if $\Delta \ge 101$ counts, with hysteresis across deadband ($98..100$ counts).
     - Live feedback: Real-time readout of current delta, raw ambient/reflected ADCs, active decision bounds, and dynamic state indicator (🟢 `BEANS OK` / 🔴 `FILL BEANS`).
     - Instant preview: Dragging the slider immediately recalculates current live telemetry and updates Digital Twin hopper node color without needing a manual reconnect.
-    - Factory reset button: One-click restore to 94 counts.
+    - Factory reset button: One-click restore to calibrated base (99 counts).
 * **Persistent Storage**:
   - Persisted automatically to `~/.config/spectra/calibration.json`, loaded on startup.
 * **CLI & Scripting Access**:

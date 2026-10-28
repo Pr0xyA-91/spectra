@@ -41,7 +41,7 @@ __version__ = "0.5.1_win"
 # ---------------------------------------------------------------------------
 # Optical Bean Sensor Calibration Settings (Dev-configurable)
 # ---------------------------------------------------------------------------
-DEFAULT_OPTICAL_BEAN_THRESHOLD = 94
+DEFAULT_OPTICAL_BEAN_THRESHOLD = 99
 DEFAULT_OPTICAL_BEAN_HYSTERESIS = 2
 
 _optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
@@ -52,7 +52,7 @@ CALIBRATION_FILE = os.path.join(CONFIG_DIR, "calibration.json")
 
 
 def get_optical_bean_threshold() -> int:
-    """Return active optical bean sensor threshold in counts (default 94)."""
+    """Return active optical bean sensor threshold in counts (default 99)."""
     return _optical_bean_threshold
 
 
@@ -66,7 +66,7 @@ def set_optical_bean_threshold(val: int, save: bool = True) -> int:
 
 
 def reset_optical_bean_threshold(save: bool = True) -> int:
-    """Reset optical bean threshold to factory default (94 counts)."""
+    """Reset optical bean threshold to factory default (99 counts)."""
     return set_optical_bean_threshold(DEFAULT_OPTICAL_BEAN_THRESHOLD, save=save)
 
 
@@ -571,7 +571,7 @@ def query_live_sensors(
             # Multi-layer safety verification:
             # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
             #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    Calibrated via configurable threshold (default 94 ± 2):
+            #    Calibrated via configurable threshold (default 99 ± 2):
             #    - Covered / Charged (beam interrupted / absorbed by coffee beans): delta <= (threshold - hysteresis) -> Beans OK
             #    - Uncovered / Empty (bare terminal / beam open): delta >= (threshold + hysteresis) -> Fill Beans
             #    - Boundary hysteresis deadband: latch previous state to prevent boundary flutter
