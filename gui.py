@@ -36,6 +36,24 @@ import gui_widgets
 __version__ = "0.5.1_win"
 
 
+def is_dev_branch() -> bool:
+    """Check if SPECTRA is running on a development branch/build."""
+    if os.environ.get("SPECTRA_DEV", "").lower() in ("1", "true"):
+        return True
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(repo_dir, "SESSION_NOTES.md")):
+        return True
+    try:
+        import subprocess
+        branch = subprocess.check_output(
+            ["git", "-C", repo_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return branch in ("main", "multi-manufacturer", "windows", "dev")
+    except Exception:
+        return False
+
+
 class JuraDiagApp(Gtk.Window):
     @staticmethod
     def _load_app_icon(size: int = 36) -> Optional[GdkPixbuf.Pixbuf]:
@@ -273,6 +291,25 @@ class JuraDiagApp(Gtk.Window):
         progressbar trough {
             background-color: #313244;
             border-radius: 4px;
+            min-height: 14px;
+        }
+        scale {
+            margin: 4px 0px;
+        }
+        scale trough {
+            background-color: #313244;
+            border-radius: 4px;
+            min-height: 6px;
+        }
+        scale highlight {
+            background-color: #fab387;
+            border-radius: 4px;
+            min-height: 6px;
+        }
+        scale slider {
+            background-color: #cdd6f4;
+            border-radius: 50%;
+            min-width: 14px;
             min-height: 14px;
         }
         treeview {
@@ -724,6 +761,11 @@ class JuraDiagApp(Gtk.Window):
         self.card_component_inspector.pack_start(inspect_grid, False, False, 2)
         left_box.pack_start(self.card_component_inspector, False, False, 0)
 
+        # Developer Calibration Card (Development branch / build only)
+        if is_dev_branch():
+            self.card_dev_calib = self._create_dev_calibration_card()
+            left_box.pack_start(self.card_dev_calib, False, False, 4)
+
         self.sensors_paned.pack1(left_box, True, False)
 
         # RIGHT SIDE: Real-Time Oscilloscope & Event Stream
@@ -820,6 +862,146 @@ class JuraDiagApp(Gtk.Window):
 
         scrolled.add(self.sensors_paned)
         return scrolled
+
+    def _create_dev_calibration_card(self) -> Gtk.Widget:
+        """Developer calibration card for live optical bean hopper sensor threshold adjustment."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card.get_style_context().add_class("card")
+        card.set_border_width(6)
+
+        # Header row: Title + Dev Badge + Value Label + Reset Button
+        header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_title = Gtk.Label()
+        lbl_title.set_markup("<b><span size='small' color='#fab387'>🎛️ OPTICAL BEAN SENSOR SENSITIVITY CALIBRATION</span></b>")
+        lbl_title.set_xalign(0.0)
+        header_row.pack_start(lbl_title, False, False, 0)
+
+        lbl_badge = Gtk.Label()
+        lbl_badge.set_markup("<span size='x-small' background='#313244' color='#f9e2af' weight='bold'> DEV BRANCH </span>")
+        header_row.pack_start(lbl_badge, False, False, 0)
+
+        header_spacer = Gtk.Box()
+        header_row.pack_start(header_spacer, True, True, 0)
+
+        current_thresh = sc.get_optical_bean_threshold()
+        self.lbl_calib_threshold = Gtk.Label()
+        self.lbl_calib_threshold.set_markup(f"<b><span color='#fab387'>{current_thresh}</span> counts</b>")
+        header_row.pack_start(self.lbl_calib_threshold, False, False, 0)
+
+        btn_reset = Gtk.Button(label="↺ Reset (94)")
+        btn_reset.set_tooltip_text("Reset optical bean sensitivity threshold to factory default (94 counts)")
+        btn_reset.connect("clicked", self._on_reset_bean_calibration_clicked)
+        header_row.pack_start(btn_reset, False, False, 0)
+
+        card.pack_start(header_row, False, False, 0)
+
+        # Slider Row
+        slider_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+
+        lbl_min = Gtk.Label()
+        lbl_min.set_markup("<span size='x-small' color='#6c7086'>Dark / Dense (40)</span>")
+        slider_row.pack_start(lbl_min, False, False, 0)
+
+        self.adj_bean_threshold = Gtk.Adjustment(
+            value=float(current_thresh),
+            lower=40.0,
+            upper=180.0,
+            step_increment=1.0,
+            page_increment=5.0,
+            page_size=0.0
+        )
+        self.scale_bean_threshold = Gtk.Scale(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            adjustment=self.adj_bean_threshold
+        )
+        self.scale_bean_threshold.set_digits(0)
+        self.scale_bean_threshold.set_draw_value(False)
+        self.scale_bean_threshold.set_hexpand(True)
+        self.scale_bean_threshold.add_mark(60, Gtk.PositionType.BOTTOM, "Strong (60)")
+        self.scale_bean_threshold.add_mark(94, Gtk.PositionType.BOTTOM, "Nominal (94)")
+        self.scale_bean_threshold.add_mark(120, Gtk.PositionType.BOTTOM, "Weak (120)")
+        self.scale_bean_threshold.add_mark(150, Gtk.PositionType.BOTTOM, "Bare (150)")
+
+        self.scale_bean_threshold.connect("value-changed", self._on_bean_threshold_changed)
+        slider_row.pack_start(self.scale_bean_threshold, True, True, 0)
+
+        lbl_max = Gtk.Label()
+        lbl_max.set_markup("<span size='x-small' color='#6c7086'>Bare / Open (180)</span>")
+        slider_row.pack_start(lbl_max, False, False, 0)
+
+        card.pack_start(slider_row, False, False, 0)
+
+        # Live status & diagnostic feedback line
+        self.lbl_calib_live = Gtk.Label()
+        self.lbl_calib_live.set_xalign(0.0)
+        self._update_calib_live_label(None)
+        card.pack_start(self.lbl_calib_live, False, False, 2)
+
+        return card
+
+    def _on_bean_threshold_changed(self, scale):
+        val = int(round(scale.get_value()))
+        sc.set_optical_bean_threshold(val)
+        if hasattr(self, "lbl_calib_threshold"):
+            self.lbl_calib_threshold.set_markup(f"<b><span color='#fab387'>{val}</span> counts</b>")
+        self._update_calib_live_label(getattr(self, "_last_live_result", None))
+        if getattr(self, "_last_live_result", None):
+            last_res = self._last_live_result
+            adcs = last_res.get("telemetry", {}).get("bean_adcs")
+            if adcs and len(adcs) >= 2:
+                delta = adcs[1] - adcs[0]
+                lower = val - 2
+                upper = val + 2
+                if delta <= lower:
+                    b_ok = True
+                elif delta >= upper:
+                    b_ok = False
+                else:
+                    b_ok = last_res.get("telemetry", {}).get("beans_ok", True)
+                last_res.setdefault("telemetry", {})["beans_ok"] = b_ok
+                for sw in last_res.get("switches", []):
+                    if sw["id"] == "bean_hopper":
+                        sw["ok"] = b_ok
+                        sw["status"] = "Beans OK / Hopper Charged" if b_ok else "Fill Beans / Hopper Empty"
+                        sw["badge"] = "NORMAL" if b_ok else "FILL BEANS"
+                self.dt_widget.update_state(last_res.get("telemetry", {}), {sw["id"]: sw for sw in last_res.get("switches", [])})
+                if self.dt_widget.selected_node_id:
+                    self._on_node_selected(self.dt_widget.selected_node_id)
+
+    def _on_reset_bean_calibration_clicked(self, widget):
+        sc.reset_optical_bean_threshold()
+        if hasattr(self, "adj_bean_threshold"):
+            self.adj_bean_threshold.set_value(94.0)
+        if hasattr(self, "lbl_calib_threshold"):
+            self.lbl_calib_threshold.set_markup("<b><span color='#fab387'>94</span> counts</b>")
+        self._update_calib_live_label(getattr(self, "_last_live_result", None))
+
+    def _update_calib_live_label(self, result: Optional[dict] = None):
+        if not hasattr(self, "lbl_calib_live"):
+            return
+        thresh = sc.get_optical_bean_threshold()
+        hyst = 2
+        lower = thresh - hyst
+        upper = thresh + hyst
+
+        if result and "telemetry" in result:
+            telem = result["telemetry"]
+            adcs = telem.get("bean_adcs")
+            beans_ok = telem.get("beans_ok")
+            if adcs and len(adcs) >= 2:
+                off_adc, on_adc = adcs[0], adcs[1]
+                delta = on_adc - off_adc
+                st_color = "#a6e3a1" if beans_ok else "#f38ba8"
+                st_text = "🟢 BEANS OK (Hopper Charged)" if beans_ok else "🔴 FILL BEANS (Hopper Empty)"
+                self.lbl_calib_live.set_markup(
+                    f"<span size='small'>Live Delta: <b>{delta} counts</b> (ON={on_adc}, OFF={off_adc}) • "
+                    f"Active Bounds: OK ≤ {lower}, Empty ≥ {upper} • Status: <span color='{st_color}'><b>{st_text}</b></span></span>"
+                )
+                return
+
+        self.lbl_calib_live.set_markup(
+            f"<span size='small' color='#a6adc8'>Threshold: <b>{thresh}</b> counts (Charged ≤ {lower}, Empty ≥ {upper}) • Awaiting live sensor query</span>"
+        )
 
     def _on_pause_stream_clicked(self, widget):
         self._stream_paused = not self._stream_paused
@@ -980,7 +1162,8 @@ class JuraDiagApp(Gtk.Window):
                 v1 = f"Optical Sensor Status: {b_status_str}"
                 if adcs and len(adcs) >= 2:
                     delta = adcs[1] - adcs[0]
-                    v2 = f"IR ADC Readings: Ambient={adcs[0]}, Reflected={adcs[1]} (Delta: {delta} counts)"
+                    calib = sc.get_optical_bean_calibration()
+                    v2 = f"IR ADC Readings: Ambient={adcs[0]}, Reflected={adcs[1]} (Delta: {delta} counts | Threshold: {calib['threshold']} ± {calib['hysteresis']})"
                 else:
                     v2 = "IR ADC Readings: Passive Telemetry"
                 puck = telem.get("cake_thickness_ticks", 0)
@@ -1542,7 +1725,11 @@ class JuraDiagApp(Gtk.Window):
         if self.dt_widget.selected_node_id:
             self._on_node_selected(self.dt_widget.selected_node_id)
 
-        # 5. Refresh Diagnostic Advisor if session summary exists
+        # 5. Refresh developer calibration live feedback if active
+        if hasattr(self, "_update_calib_live_label"):
+            self._update_calib_live_label(result)
+
+        # 6. Refresh Diagnostic Advisor if session summary exists
         if self.session:
             summary = self.session.get_structured_summary()
             score = self.diag_advisor.evaluate_health(summary, result)
