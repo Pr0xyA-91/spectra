@@ -864,8 +864,8 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_calib_threshold.set_markup(f"<b><span color='#fab387'>{current_thresh}</span> counts</b>")
         header_row.pack_start(self.lbl_calib_threshold, False, False, 0)
 
-        btn_reset = Gtk.Button(label="↺ Reset (94)")
-        btn_reset.set_tooltip_text("Reset optical bean sensitivity threshold to factory default (94 counts)")
+        btn_reset = Gtk.Button(label="↺ Reset (99)")
+        btn_reset.set_tooltip_text("Reset optical bean sensitivity threshold to factory default (99 counts)")
         btn_reset.connect("clicked", self._on_reset_bean_calibration_clicked)
         header_row.pack_start(btn_reset, False, False, 0)
 
@@ -894,8 +894,8 @@ class JuraDiagApp(Gtk.Window):
         self.scale_bean_threshold.set_draw_value(False)
         self.scale_bean_threshold.set_hexpand(True)
         self.scale_bean_threshold.add_mark(60, Gtk.PositionType.BOTTOM, "Strong (60)")
-        self.scale_bean_threshold.add_mark(94, Gtk.PositionType.BOTTOM, "Nominal (94)")
-        self.scale_bean_threshold.add_mark(120, Gtk.PositionType.BOTTOM, "Weak (120)")
+        self.scale_bean_threshold.add_mark(99, Gtk.PositionType.BOTTOM, "Nominal (99)")
+        self.scale_bean_threshold.add_mark(125, Gtk.PositionType.BOTTOM, "Weak (125)")
         self.scale_bean_threshold.add_mark(150, Gtk.PositionType.BOTTOM, "Bare (150)")
 
         self.scale_bean_threshold.connect("value-changed", self._on_bean_threshold_changed)
@@ -947,9 +947,9 @@ class JuraDiagApp(Gtk.Window):
     def _on_reset_bean_calibration_clicked(self, widget):
         sc.reset_optical_bean_threshold()
         if hasattr(self, "adj_bean_threshold"):
-            self.adj_bean_threshold.set_value(94.0)
+            self.adj_bean_threshold.set_value(99.0)
         if hasattr(self, "lbl_calib_threshold"):
-            self.lbl_calib_threshold.set_markup("<b><span color='#fab387'>94</span> counts</b>")
+            self.lbl_calib_threshold.set_markup("<b><span color='#fab387'>99</span> counts</b>")
         self._update_calib_live_label(getattr(self, "_last_live_result", None))
 
     def _update_calib_live_label(self, result: Optional[dict] = None):
