@@ -422,12 +422,12 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         sw_sb = {s["id"]: s for s in res_sb["switches"]}
         self.assertTrue(sw_sb["bean_hopper"]["ok"])
 
-        # Case 3: Empty hopper lockout via HZ[0][3] == '1' and bare prism reflection (delta >= 102)
+        # Case 3: Empty hopper bare terminal reflection (delta >= 96, e.g. 104)
         conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         def mock_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077206980000,077207000001"  # 0x0698=1688, 0x0700=1792 -> delta=104 >= 102
+                return "as:077206980000,077207000001"  # 0x0698=1688, 0x0700=1792 -> delta=104 >= 96
             elif cmd_c == "HZ:":
                 return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
             return ""
@@ -441,6 +441,27 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertFalse(sw_emp["machine_ready"]["ok"])
         self.assertEqual(sw_emp["machine_ready"]["badge"], "FILL BEANS")
         self.assertTrue(any(a["name"] == "Fill Beans" for a in res_emp["alerts"]))
+
+        # Case 4: IMPRESSA XJ5 (EF518M) live operating condition:
+        # HZ[0][3] == '1' during thermal regulation, but hopper is filled with beans (delta=88 <= 92).
+        # Live invariant: Optical AS: is the ground truth. Beans MUST be reported OK and ready.
+        conn_xj5 = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_xj5(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077205C70000,0772061F0001"  # 0x05C7=1479, 0x061F=1567 -> delta=88 <= 92
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,0289,00E5,006D,03EE,0802,3,000000,001E,00"
+            return ""
+        conn_xj5.query_ascii = mock_xj5
+
+        res_xj5 = sc.query_live_sensors("mock_xj5", conn=conn_xj5, fast_poll=True)
+        self.assertTrue(res_xj5["telemetry"]["beans_ok"])
+        sw_xj5 = {s["id"]: s for s in res_xj5["switches"]}
+        self.assertTrue(sw_xj5["bean_hopper"]["ok"])
+        self.assertEqual(sw_xj5["bean_hopper"]["badge"], "NORMAL")
+        self.assertTrue(sw_xj5["machine_ready"]["ok"])
+        self.assertEqual(sw_xj5["machine_ready"]["badge"], "READY")
 
 
     def test_ascii_and_smart_connect_counter_mapping(self):

@@ -79,11 +79,11 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
 * **Optical Analog Calibration (`AS:`)**:
   * Primary source of continuous bean level truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
   * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ completely eliminates ambient room light offsets (verified across ambient shifts from $1,466$ to $1,694$ counts).
-  * **Covered / Interrupted / Beans Present**: $\Delta \le +89$ counts (live calibrated: $+86$ to $+89$ counts). Machine immediately switches to *"Ready"*.
-  * **Uncovered / Open / Bare Sensor**: $\Delta \ge +91$ counts (live calibrated: $+91$ to $+96$ counts). The appliance CPU defers updating its LCD until a product selection/brew is attempted, at which point it refuses to grind and prompts *"Doplňte kávová zrna"* / *"Fill beans"*.
-  * **Hysteresis Window ($+90$ counts)**: Schmitt trigger latches the previous state, eliminating 1-second boundary flickering.
-* **Firmware Lockout Register (`HZ[0][3]`)**:
-  * Reflects CPU status bus hopper alerts when asserted (`parts[0][3] == "1"`).
+  * **Covered / Interrupted / Beans Present**: $\Delta \le +92$ counts (live calibrated: $+85$ to $+91$ counts, nominal $\sim +87$). Machine immediately switches to *"Ready"*.
+  * **Uncovered / Open / Bare Sensor**: $\Delta \ge +96$ counts (live calibrated: $+96$ to $+119$ counts, nominal $\sim +101$). The appliance CPU defers updating its LCD until a product selection/brew is attempted, at which point it refuses to grind and prompts *"Doplňte kávová zrna"* / *"Fill beans"*.
+  * **Hysteresis Deadband ($+93$ to $+95$ counts)**: Schmitt trigger latches the previous state, eliminating boundary flickering.
+* **Firmware Register (`HZ[0][3]`) Separation**:
+  * Bit 3 of `parts[0]` remains `'1'` during active thermal regulation on `EF518M` and must not gate optical sensor evaluation.
 * **Grind Dose Cake Measurement (`HZ[8]`)**:
   * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle (acts as fallback when optical sensor is not fitted).
 

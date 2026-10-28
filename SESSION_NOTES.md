@@ -115,10 +115,11 @@ conn.close()
 ### 2. Optical Infrared Bean Hopper Sensor (`AS:`) & Puck Measurement (`HZ[8]`)
 * **Multi-Layer Bean Hopper Detection Architecture**:
   - **Optical IR Sensor (`AS:`)**: Continuous photodiode telemetry (`off_adc`, `on_adc`, $\Delta$). Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ eliminates ambient room light offsets (calibrated live on IMPRESSA XJ5):
-    - **Covered / Interrupted / Beans Present**: $\Delta \le 89$ counts (live values: $86$–$89$ counts). Machine immediately updates to Ready.
-    - **Uncovered / Open / Empty Hopper**: $\Delta \ge 91$ counts (live values: $91$–$96$ counts). The appliance CPU defers LCD update until brew/product selection, at which point it refuses to grind and prompts Fill Beans.
-    - **Hysteresis Window ($90$ counts)**: Schmitt trigger latches previous state, completely eliminating 1-second boundary fluttering.
-  - **Firmware Status Register (`HZ[0][3]`)**: Reflects explicit CPU status bus hopper alerts when asserted (`parts[0][3] == "1"`).
+    - **Through-Beam Architecture**: Emitter and receiver terminals across bean chute. Coffee beans physically block the infrared beam.
+    - **Covered / Interrupted / Beans Present**: $\Delta \le 92$ counts (live values: $85$–$91$ counts, nominal $\sim 87$ counts). Machine immediately updates to Ready.
+    - **Uncovered / Open / Empty Hopper**: $\Delta \ge 96$ counts (live values: $96$–$119$ counts, nominal $\sim 101$ counts when lid open or empty). The appliance CPU defers LCD update until brew/product selection, at which point it refuses to grind and prompts Fill Beans.
+    - **Hysteresis Deadband ($93$–$95$ counts)**: Schmitt trigger latches previous state, completely eliminating boundary fluttering.
+  - **Firmware Status Register (`HZ[0][3]`) Separation**: On `EF518M` and optical machines, `parts[0][3]` remains `'1'` during active thermal regulation and does NOT indicate hopper lockout. Optical `AS:` is the sole physical ground truth.
   - **Grinder Dose Puck Measurement (`HZ[8]`)**: Compressed puck thickness $\le 14$ ticks indicates grinder ran empty during the dose cycle (acts as fallback if optical sensor is absent).
 
 ### 3. Brew Unit Mechanical Position & Stroke Zones
