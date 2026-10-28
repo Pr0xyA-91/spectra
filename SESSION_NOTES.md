@@ -345,3 +345,24 @@ conn.close()
 * **Test Suite Expansion**:
   - Created `test_memory_mapper.py` covering classification, sweep reconstruction, baseline diffing, bit-flip detection, JSON persistence, and safety invariants.
   - Expanded unit test coverage to 82 unit tests across all 3 repositories (22 in `spectra`, 30 in `spectra-mm`, 30 in `spectra-win` — 100% passing).
+
+## 13. EEPROM Integrity, Diagnostic Safety Protocol & Restoration Utility (Session 2026-10-28)
+* **Incident Analysis & Command Safety Rule**:
+  - Investigation of a counter reset revealed that sending unverified two-letter diagnostic commands can trigger irreversible appliance actions.
+  - Specifically, `FA:` is Jura's **Factory Reset / Zero Operation Counters** command, which wipes registers `0x0000` through `0x0032` (lifetime cup counters, rinse/cleaning/descaling logs, and machine batch data).
+  - **MANDATORY INVARIANT**: Strictly adhere to `SAFE_READ_PREFIXES` (`RT:`, `RE:`, `HZ:`, `AS:`, `TY:`, `TL:`, `CS$:`, `IC:`). Under no circumstances should unverified two-letter commands (especially `FA:`, `WT:`, `DA:`, `@tw:`) be sent to connected hardware.
+* **Non-Destructive Restoration Architecture (`contrib/restore_eeprom.py`)**:
+  - Purpose-built EEPROM restoration utility that reads golden model specs (`docs/models/<EF>_*.json`).
+  - Verifies machine compatibility via `TY:` handshake before any action.
+  - Compares physical EEPROM word-by-word against target specification (`RE:<ADDR>`).
+  - Writes only mismatched registers via `WE:<ADDR>,<VAL>` with explicit read-back verification.
+  - Automatically recalculates and commits internal checksum via `AN:0B` (verified at `RE:0075`).
+  - Features `--dry-run` simulation mode to preview deltas safely without writing.
+* **Restored Hardware State (`EF518M` on `/dev/ttyUSB0`)**:
+  - All 90 operational and batch registers successfully restored from verified golden snapshot:
+    - Lifetime Cups: **34,969** | Total Preparations: **28,741**
+    - Single Beverages: Espresso: **4,268** (`0x10AC`), Coffee: **18,245** (`0x4745`)
+    - Double Beverages: 2x Espresso: **607** (`0x025F`), 2x Coffee: **5,621** (`0x15F5`)
+    - Maintenance: Rinses: **3,617** (`0x0E21`), Cleanings: **166** (`0x00A6`), Descalings: **38** (`0x0026`)
+    - Hardware Serial / Batch / Production Date: `0x4660` / `0x0033` / `0x2EBE` (30.05.2013)
+    - Checksum `RE:0075`: Recalculated and validated (`0x11F2`).
