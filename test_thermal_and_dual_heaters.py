@@ -540,6 +540,71 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(sc.get_optical_bean_threshold(), 99)
         app.destroy()
 
+    def test_z5_two_digit_addressing_and_ean_decoding(self):
+        """Test Top-Tronic 8-bit EEPROM 2-digit addressing, Z5 Gen II identification, and full EAN generation."""
+        conn = serial_io.JuraSerialConnection(port_name="DEMO:Z5")
+
+        def mock_z5_query(cmd, timeout=1.0):
+            c = cmd.strip()
+            if c == "TY:":
+                return "ty:EF642M V01.12"
+            if c == "TY$:":
+                return "ty$:EF642D V01.04"
+            if c == "IC:":
+                return "ic:230V 50Hz"
+            if c == "RT:00":
+                return "rt:1ECB112605CE0023005D00D800023D3B005F001800000000000000000000003D"
+            if c == "RT:10":
+                return "rt:82F1000000E90000000013B70000000000000000000000000000000000000000"
+            if c == "RT:20":
+                return "rt:00000000003F0000000000000000000000000000000000000000000000000000"
+            if c == "RT:30":
+                return "rt:07DD000426B90000000000000000000000000000000000000000000000000000"
+            if c == "RT:E0":
+                # Doubles: 0xE0=91, 0xE1=345, 0xE2=11, 0xE3=1, 0xE4=6, 0xE5=3, 0xE9=0, 0xEA=9957 (0x26E5)
+                return "rt:005B0159000B000100060003000000000000000026E500000000000000000000"
+            if c == "RE:30":
+                return "re:07DD"
+            if c == "RE:31":
+                return "re:0004"
+            if c == "RE:32":
+                return "re:26B9"
+            if c == "RE:15":
+                return "re:13B7"
+            if c == "RE:E9":
+                return "re:0000"
+            if c == "RE:EA":
+                return "re:26E5"
+            if c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            if c == "AS:":
+                return "as:077206400000,077206450001"
+            return None
+
+        conn.query_ascii = mock_z5_query
+
+        session = sc.JuraStatsSession(port_name="mock_z5")
+        session.conn = conn
+        success = session.run_interrogation()
+        self.assertTrue(success)
+
+        summary = session.get_structured_summary()
+        telem = summary["telemetry"]
+
+        self.assertEqual(summary["machine_model"], "IMPRESSA Z5 Generation II")
+        self.assertEqual(telem["article_number"], "13356")
+        self.assertEqual(telem["serial_number"], "20090525002013")
+        self.assertEqual(telem["serial_number_word"], 4)
+        self.assertEqual(telem["appliance_number"], 2013)
+        self.assertEqual(telem["production_date"], "25.5.2009")
+        self.assertEqual(telem["appliance_code"], "07DD26B9")
+        self.assertEqual(telem["ean_code"], "(01)07610917133567(21)20090525002013")
+        self.assertEqual(telem["software_version_display"], "EF642D V01.04")
+        self.assertEqual(telem["total_preparations"], 14562)
+        self.assertEqual(telem["total_cups"], 15019)
+        self.assertEqual(telem["preparations_since_intervention"], 5047)
+        self.assertEqual(telem["cups_since_intervention"], 5062)
+
 
 if __name__ == "__main__":
     unittest.main()

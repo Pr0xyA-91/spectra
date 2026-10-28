@@ -29133,9 +29133,9 @@
     ]
   },
   "EF642D": {
-    "model_family": "Signature - Line Z5 Generation II",
+    "model_family": "IMPRESSA Z5 Generation II",
     "ef_code": "EF642D",
-    "article_number": "19010",
+    "article_number": "13356",
     "series": "Jura Consumer",
     "products": [
       {
@@ -29146,31 +29146,73 @@
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "1 Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "1 Coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 4,
+        "name": "1 Special Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 5,
+        "name": "1 Cappuccino",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 6,
+        "name": "1 Latte Macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 7,
+        "name": "Ground Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 8,
         "name": "2 Espressi",
         "is_double": true,
         "active": true
       },
       {
-        "code": 5,
+        "code": 9,
+        "name": "2 Ristretti",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 10,
         "name": "2 Coffees",
         "is_double": true,
         "active": true
       },
       {
-        "code": 6,
+        "code": 11,
         "name": "2 Special Coffees",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 12,
+        "name": "2 Cappuccini",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "2 Latte Macchiati",
         "is_double": true,
         "active": true
       }
@@ -29212,12 +29254,16 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "appliance_type": "IMPRESSA Z5 Generation II",
+    "software_version_display": "EF642D V01.04",
+    "address_width": 2,
+    "max_words": 256
   },
   "EF642M": {
-    "model_family": "Signature - Line Z5 Generation II",
+    "model_family": "IMPRESSA Z5 Generation II",
     "ef_code": "EF642M",
-    "article_number": "19010",
+    "article_number": "13356",
     "series": "Jura Consumer",
     "products": [
       {
@@ -29228,31 +29274,73 @@
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "1 Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "1 Coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 4,
+        "name": "1 Special Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 5,
+        "name": "1 Cappuccino",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 6,
+        "name": "1 Latte Macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 7,
+        "name": "Ground Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 8,
         "name": "2 Espressi",
         "is_double": true,
         "active": true
       },
       {
-        "code": 5,
+        "code": 9,
+        "name": "2 Ristretti",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 10,
         "name": "2 Coffees",
         "is_double": true,
         "active": true
       },
       {
-        "code": 6,
+        "code": 11,
         "name": "2 Special Coffees",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 12,
+        "name": "2 Cappuccini",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "2 Latte Macchiati",
         "is_double": true,
         "active": true
       }
@@ -29294,7 +29382,11 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "appliance_type": "IMPRESSA Z5 Generation II",
+    "software_version_display": "EF642D V01.04",
+    "address_width": 2,
+    "max_words": 256
   },
   "EF540M": {
     "model_family": "Z6 OT TFT Aroma G3 Smart Connect",
@@ -31180,7 +31272,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF509P": {
     "model_family": "ENA Micro 101 Aroma+",
@@ -32166,7 +32260,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF527P": {
     "model_family": "IMPRESSA C65",
@@ -33806,7 +33902,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF631M": {
     "model_family": "IMPRESSA J9.2 One Touch",
@@ -34298,7 +34396,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF632M": {
     "model_family": "IMPRESSA J7 Aroma+",
@@ -34790,7 +34890,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF643M": {
     "model_family": "IMPRESSA Z7 OT 10 Year Anniv. Edition",
@@ -34954,7 +35056,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF644D": {
     "model_family": "IMPRESSA Z7 OT Voice",
@@ -35036,7 +35140,9 @@
         "blocking": false,
         "name": "Machine Ready"
       }
-    ]
+    ],
+    "address_width": 2,
+    "max_words": 256
   },
   "EF644M": {
     "model_family": "IMPRESSA Z7 OT Voice",

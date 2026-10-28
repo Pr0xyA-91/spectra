@@ -44,6 +44,15 @@ __version__ = "0.5.1_win"
 DEFAULT_OPTICAL_BEAN_THRESHOLD = 99
 DEFAULT_OPTICAL_BEAN_HYSTERESIS = 2
 
+# ---------------------------------------------------------------------------
+# Jura Top-Tronic 8-bit EEPROM Models (2-digit hex addressing: RT:xx / RE:xx)
+# ---------------------------------------------------------------------------
+TWO_DIGIT_ADDRESS_EFS = {
+    "EF509M", "EF511", "EF511M", "EF527M", "EF631D", "EF632D",
+    "EF642D", "EF642M", "EF643D", "EF644D", "EPSILON", "IOTA",
+    "UFO", "E90", "ALPHAM", "ALPHAD", "C1300", "E1300", "E100"
+}
+
 _optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
 _optical_bean_hysteresis = DEFAULT_OPTICAL_BEAN_HYSTERESIS
 
@@ -1253,24 +1262,45 @@ class JuraStatsSession:
                         self.power_spec = f"IC Code: {raw_ic}"
                     self.log(f"Machine Power Rating: {self.power_spec}")
 
-                # Query EEPROM memory blocks (RT:0000 .. RT:0030)
-                update_prog(0.30, "Reading EEPROM diagnostic blocks (RT:0000 .. RT:0030)...")
-                eeprom: Dict[int, int] = {}
+                # Determine EEPROM address width and architecture
+                is_two_digit = (
+                    self.profile.get("address_width") == 2
+                    or any(self.ef_code.upper().startswith(p) for p in TWO_DIGIT_ADDRESS_EFS)
+                )
+                address_width = 2 if is_two_digit else 4
+                is_z5 = "EF642" in self.ef_code.upper() or "Z5" in self.model_family.upper()
+
+                # Query Display Sub-Bus Firmware Gateway (TY$:)
+                ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
+                if ty_sub and ty_sub.lower().startswith("ty$:"):
+                    display_fw = ty_sub[4:].strip()
+                elif ty_sub and ty_sub.lower().startswith("ty:"):
+                    display_fw = ty_sub[3:].strip()
+                else:
+                    display_fw = self.profile.get("software_version_display", "EF518D V02.04")
+
+                # Query EEPROM memory blocks
                 blocks = [0x00, 0x10, 0x20, 0x30]
+                if is_z5 or is_two_digit:
+                    blocks.append(0xE0)
+
+                update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
+                eeprom: Dict[int, int] = {}
 
                 for b_idx, blk in enumerate(blocks):
                     pct = 0.30 + (b_idx / len(blocks)) * 0.50
-                    update_prog(pct, f"Reading memory block 0x{blk:04X}...")
-                    cmd = f"RT:{blk:04X}"
+                    blk_str = f"{blk:02X}" if address_width == 2 else f"{blk:04X}"
+                    update_prog(pct, f"Reading memory block 0x{blk_str}...")
+                    cmd = f"RT:{blk_str}"
                     ans = self.conn.query_ascii(cmd, timeout=1.8)
                     if ans and ans.startswith("rt:"):
                         raw_hex = ans[3:].strip()
                         words = [int(raw_hex[i * 4: i * 4 + 4], 16) for i in range(len(raw_hex) // 4)]
                         for idx, w in enumerate(words):
                             eeprom[blk + idx] = w
-                        self.log(f"EEPROM [0x{blk:04X}]: {len(words)} words read successfully")
+                        self.log(f"EEPROM [0x{blk_str}]: {len(words)} words read successfully")
                     else:
-                        self.log(f"Notice: Block 0x{blk:04X} returned empty/timeout")
+                        self.log(f"Notice: Block 0x{blk_str} returned empty/timeout")
 
                 # Explicitly query machine identity, production, and service history EEPROM words
                 # 0x0030: Appliance / Machine Number (Maschinennummer: e.g. 18016)
@@ -1285,47 +1315,93 @@ class JuraStatsSession:
                 # 0x00C3: Water Hardness (High byte: °dH)
                 update_prog(0.80, "Reading machine serial and production records...")
                 id_addrs = [
-                    (0x30, "0030", "Machine Number"),
-                    (0x31, "0031", "Serial Word"),
-                    (0x32, "0032", "Production Date"),
-                    (0x15, "0015", "Service Counter"),
-                    (0xDA, "00DA", "SPDL Country Code"),
-                    (0xDB, "00DB", "SPDL Download Date"),
-                    (0xDC, "00DC", "SPDL Language Date"),
-                    (0xE9, "00E9", "Retail High"),
-                    (0xEA, "00EA", "Retail Low"),
-                    (0xC3, "00C3", "Water Hardness"),
+                    (0x30, "Machine Number"),
+                    (0x31, "Serial Word"),
+                    (0x32, "Production Date"),
+                    (0x15, "Service Counter"),
+                    (0xDA, "SPDL Country Code"),
+                    (0xDB, "SPDL Download Date"),
+                    (0xDC, "SPDL Language Date"),
+                    (0xE9, "Retail High"),
+                    (0xEA, "Retail Low"),
+                    (0xC3, "Water Hardness"),
                 ]
-                for addr_int, addr_hex, desc in id_addrs:
+                if is_z5:
+                    for a in range(0xE0, 0xE6):
+                        id_addrs.append((a, f"Double Beverage 0x{a:02X}"))
+                    id_addrs.append((0x22, "Filter Cycles"))
+
+                for addr_int, desc in id_addrs:
                     if addr_int not in eeprom or eeprom[addr_int] == 0:
-                        ans = self.conn.query_ascii(f"RE:{addr_hex}", timeout=1.0)
+                        addr_str = f"{addr_int:02X}" if address_width == 2 else f"{addr_int:04X}"
+                        ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
                         if ans and ans.lower().startswith("re:"):
                             try:
                                 eeprom[addr_int] = int(ans[3:].strip(), 16)
-                                self.log(f"EEPROM [0x{addr_hex}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
+                                self.log(f"EEPROM [0x{addr_str}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
                             except ValueError:
                                 pass
 
                 update_prog(0.85, "Parsing machine telemetry & statistics...")
-                # Map standard Jura EEPROM statistics addresses
-                esp1 = eeprom.get(1, 0)
-                cof1 = eeprom.get(2, 0)
-                spec1 = eeprom.get(3, 0)
-                esp2 = eeprom.get(4, 0)
-                cof2 = eeprom.get(5, 0)
-                spec2 = eeprom.get(6, 0)
+                if is_z5:
+                    esp1 = eeprom.get(0x00, 0)
+                    rist1 = eeprom.get(0x01, 0)
+                    cof1 = eeprom.get(0x02, 0)
+                    spec1 = eeprom.get(0x03, 0)
+                    capp1 = eeprom.get(0x04, 0)
+                    latte1 = eeprom.get(0x05, 0)
+                    ground = eeprom.get(0x06, 0)
 
-                self.counters[1] = esp1
-                self.counters[2] = cof1
-                if spec1 > 0:
-                    self.counters[3] = spec1
-                self.counters[4] = esp2
-                self.counters[5] = cof2
-                if spec2 > 0:
-                    self.counters[6] = spec2
+                    esp2 = eeprom.get(0xE0, 0)
+                    rist2 = eeprom.get(0xE1, 0)
+                    cof2 = eeprom.get(0xE2, 0)
+                    spec2 = eeprom.get(0xE3, 0)
+                    capp2 = eeprom.get(0xE4, 0)
+                    latte2 = eeprom.get(0xE5, 0)
 
-                self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
-                self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
+                    self.counters[1] = esp1
+                    self.counters[2] = rist1
+                    self.counters[3] = cof1
+                    self.counters[4] = spec1
+                    self.counters[5] = capp1
+                    self.counters[6] = latte1
+                    if ground > 0:
+                        self.counters[7] = ground
+                    self.counters[8] = esp2
+                    self.counters[9] = rist2
+                    self.counters[10] = cof2
+                    self.counters[11] = spec2
+                    self.counters[12] = capp2
+                    self.counters[13] = latte2
+
+                    single_preps = esp1 + rist1 + cof1 + spec1 + capp1 + latte1 + ground
+                    double_preps = esp2 + rist2 + cof2 + spec2 + capp2 + latte2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    filter_cycles = eeprom.get(0x22, eeprom.get(20, 0))
+                else:
+                    # Map standard Jura EEPROM statistics addresses
+                    esp1 = eeprom.get(1, 0)
+                    cof1 = eeprom.get(2, 0)
+                    spec1 = eeprom.get(3, 0)
+                    esp2 = eeprom.get(4, 0)
+                    cof2 = eeprom.get(5, 0)
+                    spec2 = eeprom.get(6, 0)
+
+                    self.counters[1] = esp1
+                    self.counters[2] = cof1
+                    if spec1 > 0:
+                        self.counters[3] = spec1
+                    self.counters[4] = esp2
+                    self.counters[5] = cof2
+                    if spec2 > 0:
+                        self.counters[6] = spec2
+
+                    self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
+                    self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
+
+                    filter_cycles = eeprom.get(20, 0)
 
                 rinses = eeprom.get(7, 0)
                 cleanings = eeprom.get(8, 0)
@@ -1334,7 +1410,6 @@ class JuraStatsSession:
 
                 water_dl = eeprom.get(16, 0)
                 decalc_dl = eeprom.get(18, 0)
-                filter_cycles = eeprom.get(20, 0)
                 since_serv = eeprom.get(21, 0)
                 water_since_decalc = eeprom.get(31, 0)
 
@@ -1394,9 +1469,8 @@ class JuraStatsSession:
                 prep_since_intervention = since_prep if since_prep > 0 else since_serv
 
                 # Article Number and Full EAN Code:
-                article_num = str(self.profile.get("article_number", "13705"))
-                display_fw = self.profile.get("software_version_display", "EF518D V02.04")
-                app_type = self.profile.get("appliance_type", f"{article_num} {self.model_family}")
+                article_num = str(self.profile.get("article_number", "13356" if is_z5 else "13705"))
+                app_type = self.profile.get("appliance_type", self.model_family)
 
                 ean_code = "N/A"
                 if article_num and serial_number != "N/A":
@@ -1575,9 +1649,10 @@ class JuraStatsSession:
         beverage_list = []
         profile_codes = set()
         profile_prods = self.profile.get("products", [])
-        # In ASCII EEPROM mode, if a Smart Connect profile was matched (which lacks code 1 or maps 4 to Cappuccino),
+        # In ASCII EEPROM mode, if a generic or unconfigured profile was matched,
         # fall back to classic 6-slot EEPROM beverage descriptors so counts are not mislabeled.
-        if self.is_legacy_cleartext and (not profile_prods or any(p.get("code") == 4 and not p.get("is_double") for p in profile_prods)):
+        # But if the matched profile has a specific product list (e.g. Z5 with 13 products), preserve it!
+        if self.is_legacy_cleartext and (not profile_prods or self.profile.get("model_family") == "Generic Jura Automatic"):
             profile_prods = [
                 {"code": 1, "name": "1 Espresso", "is_double": False, "active": True},
                 {"code": 2, "name": "1 Coffee", "is_double": False, "active": True},
