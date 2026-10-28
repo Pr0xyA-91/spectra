@@ -386,3 +386,41 @@ conn.close()
   - `python3 cli.py --set-bean-threshold <COUNTS>`: Configures and persists new sensitivity threshold.
 * **Validation**:
   - Expanded unit test suite to 85 unit tests (23 in `spectra`, 31 in `spectra-mm`, 31 in `spectra-win` — 100% passing).
+
+## 15. Top-Tronic 8-Bit EEPROM 2-Digit Addressing & IMPRESSA Z5 Gen II Resolution (Session 2026-10-28)
+* **Problem & Root Cause**:
+  - Customer machine connected: Jura IMPRESSA Z5 Gen II (`EF642M V01.12 / EF642D V01.04`).
+  - Serial number and EAN were misread, returning bogus values derived from register `0x0000` (`1ECB`).
+  - Diagnostic exports (`~/Downloads/26001078-Z6-IN.txt` and `26001078-Z5-ST.txt`) established ground truth:
+    - Appliance Type: `IMPRESSA Z5 Generation II` (Article `13356`)
+    - Serial Number: `20090525002013` (Production date `25.5.2009` + Appliance Number `002013`)
+    - Serial Word: `4` | Appliance Code: `07DD26B9`
+    - Full EAN: `(01)07610917133567(21)20090525002013`
+    - Total Cups: `15,019` | Total Preparations: `14,562`
+    - Cups since intervention: `5,062` | Preparations since intervention: `5,047`
+  - **Root Cause 1: Address Width (2-Digit vs 4-Digit Hex)**:
+    - Verified from Jura service software database (`geraete.txt`, column 20: `addr_w = 2`): 1st and 2nd generation Top-Tronic models (`EF642M`, `EF642D`, `EF509M`, `EF511`, `EF527M`, `EF631D`, etc.) use 8-bit EEPROMs ($FF = 256 words) and strictly expect 2 hex digits for `RE:` and `RT:`.
+    - When SPECTRA issued `RE:0030`, the MCU's command parser parsed only the first two characters (`00`), returning address `0x0000` (`1ECB`) and ignoring `30`.
+  - **Root Cause 2: Profile Metadata Mismatch**:
+    - `profiles_data.json` had `EF642M` and `EF642D` mapped to `19010` (Signature Line Rhodium) instead of `13356` (IMPRESSA Z5 Generation II).
+  - **Root Cause 3: Display Gateway Gateway (`TY$:`)**:
+    - Display sub-bus firmware defaulted to fallback instead of querying `TY$:` live, which on the Z5 responds with `ty$:EF642D V01.04`.
+  - **Root Cause 4: Z5 Generation II Beverage & Memory Layout**:
+    - Single beverages reside at registers `0x00`–`0x05` (Espresso: 7883, Ristretto: 4390, Coffee: 1486, Special Coffee: 35, Cappuccino: 93, Latte Macchiato: 216) + Ground Coffee at `0x06` (2).
+    - Double beverages reside at block `0xE0` (`0xE0`–`0xE5`: 2x Espressi: 91, 2x Ristretti: 345, 2x Coffees: 11, 2x Special: 1, 2x Cappuccini: 6, 2x Latte: 3).
+    - Filter cycle counter resides at `0x22` (63).
+    - Retail high/low words at `0xE9`/`0xEA` (`0x0000` / `0x26E5` = 9957 baseline), yielding exact cups since intervention: $15,019 - 9,957 = 5,062$.
+* **Implementation**:
+  - `stats_collector.py` & `memory_mapper.py`:
+    - Defined `TWO_DIGIT_ADDRESS_EFS` covering all 8-bit Top-Tronic MCUs (`EF509M`, `EF511`, `EF527M`, `EF631D`, `EF632D`, `EF642D`, `EF642M`, `EF643D`, `EF644D`, legacy masks).
+    - Dynamic query formatting: `RE:{addr:02X}` and `RT:{blk:02X}` for 2-digit models (16 blocks); `RE:{addr:04X}` and `RT:{blk:04X}` for 4-digit models (32 blocks).
+    - Interrogation includes block `0xE0` for Z5 and 2-digit models.
+    - Added live Display Gateway (`TY$:`) probe.
+    - Updated `profiles_data.json` for `EF642D` and `EF642M` (`13356`, `IMPRESSA Z5 Generation II`, `address_width: 2`, `max_words: 256`, 13 beverage products).
+* **Live Hardware Verification**:
+  - Verified live on connected customer Z5 (`/dev/ttyUSB0`) under strictly safe read-only commands:
+    - EAN, Serial Number, Appliance Number, Production Date, Preparations, Cups, and all 13 beverage counters match official export 100% identically down to the single digit.
+* **Regression Testing**:
+  - Added `test_z5_two_digit_addressing_and_ean_decoding` to `test_thermal_and_dual_heaters.py`.
+  - All test suites passing across all 3 repositories (24 tests in `spectra`, 26 in `spectra-mm`, 28 in `spectra-win`).
+

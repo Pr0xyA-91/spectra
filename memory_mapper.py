@@ -58,6 +58,13 @@ SAFE_READ_PREFIXES = (
 )
 FORBIDDEN_WRITE_COMMANDS = ("WE:", "WT:", "DA:", "@tw:", "@TW:", "we:", "wt:", "da:")
 
+# Jura Top-Tronic 8-bit EEPROM Models (2-digit hex addressing: RT:xx / RE:xx)
+TWO_DIGIT_ADDRESS_EFS = {
+    "EF509M", "EF511", "EF511M", "EF527M", "EF631D", "EF632D",
+    "EF642D", "EF642M", "EF643D", "EF644D", "EPSILON", "IOTA",
+    "UFO", "E90", "ALPHAM", "ALPHAD", "C1300", "E1300", "E100"
+}
+
 # ============================================================================
 # Universal Register Catalog (Platform Invariants — 🟢 Mapped)
 # ============================================================================
@@ -227,6 +234,9 @@ class MemoryMapperEngine:
         self.gateways: Dict[str, str] = {}
         self.ef_code: str = "UNKNOWN"
         self.model_family: str = "Jura Appliance"
+        self.is_two_digit: bool = False
+        self.address_width: int = 4
+        self.max_words: int = 512
         self.model_spec: Dict[str, Any] = {}
         self.spec_file_path: Optional[str] = None
 
@@ -269,6 +279,15 @@ class MemoryMapperEngine:
         else:
             self.ef_code = "UNKNOWN"
 
+        profile = profiles_db.find_profile(self.ef_code)
+        self.is_two_digit = (
+            profile.get("address_width") == 2
+            or any(self.ef_code.upper().startswith(p) for p in TWO_DIGIT_ADDRESS_EFS)
+        )
+        self.address_width = 2 if self.is_two_digit else 4
+        self.max_words = 256 if self.is_two_digit else 512
+        self.current_eeprom = {i: 0 for i in range(self.max_words)}
+
         self._load_or_init_model_spec()
 
     def _load_or_init_model_spec(self):
@@ -296,7 +315,7 @@ class MemoryMapperEngine:
             self.model_family = found_spec.get("model_family", self.model_family)
         else:
             # Try profiles database
-            profile = profiles_db.get_profile(self.ef_code)
+            profile = profiles_db.find_profile(self.ef_code)
             self.model_family = profile.get("model_family", f"Jura Appliance ({self.ef_code})")
             clean_name = re.sub(r'[^A-Za-z0-9_]+', '_', self.model_family).strip('_')
             fname = f"{self.ef_code}_{clean_name}.json"
@@ -307,6 +326,8 @@ class MemoryMapperEngine:
                 "ef_code": self.ef_code,
                 "display_ef": self.gateways.get("TY$:", "").replace("ty$:", ""),
                 "series": profile.get("series", "Jura Appliance"),
+                "address_width": self.address_width,
+                "max_words": self.max_words,
                 "article_numbers": [str(a) for a in profile.get("articles", [])],
                 "hardware": {
                     "thermoblocks": 1,
@@ -321,16 +342,17 @@ class MemoryMapperEngine:
 
     def sweep_eeprom(self, progress_callback=None) -> Dict[int, int]:
         """
-        Perform complete 512-word sweep (0x0000..0x01FF) using 32 block reads (RT:),
+        Perform complete EEPROM sweep (16 blocks for 2-digit models, 32 blocks for 4-digit models),
         falling back to individual word reads (RE:) where blocks fail.
         """
-        total_blocks = 32
+        total_blocks = 16 if self.address_width == 2 else 32
         for b_idx in range(total_blocks):
             blk = b_idx * 16
+            blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
             if progress_callback:
-                progress_callback(b_idx + 1, total_blocks, f"Reading Block 0x{blk:04X}...")
+                progress_callback(b_idx + 1, total_blocks, f"Reading Block 0x{blk_str}...")
 
-            cmd = f"RT:{blk:04X}"
+            cmd = f"RT:{blk_str}"
             ans = self.query_safe(cmd, timeout=1.5)
 
             block_success = False
@@ -349,7 +371,8 @@ class MemoryMapperEngine:
                 # Fallback to single word queries
                 for i in range(16):
                     addr = blk + i
-                    w_ans = self.query_safe(f"RE:{addr:04X}", timeout=1.0)
+                    addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
+                    w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
                     if w_ans and w_ans.lower().startswith("re:"):
                         try:
                             self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
@@ -357,6 +380,9 @@ class MemoryMapperEngine:
                             self.current_eeprom[addr] = 0x0000
                     else:
                         self.current_eeprom[addr] = 0x0000
+
+        self.classify_all()
+        return dict(self.current_eeprom)
 
         self.classify_all()
         return dict(self.current_eeprom)
@@ -376,19 +402,23 @@ class MemoryMapperEngine:
         return self.baseline_snapshot
 
     def classify_all(self) -> List[RegisterEntry]:
-        """Classify all 512 registers according to model spec, universal, theoretical, and unknown tables."""
+        """Classify all registers according to model spec, universal, theoretical, and unknown tables."""
         custom_regs = self.model_spec.get("custom_registers", {})
         baseline = self.baseline_snapshot.eeprom if self.baseline_snapshot else self.current_eeprom
 
         entries: List[RegisterEntry] = []
-        for addr in range(512):
+        max_words = getattr(self, "max_words", 512)
+        addr_w = getattr(self, "address_width", 4)
+        for addr in range(max_words):
             val = self.current_eeprom.get(addr, 0)
             base_val = baseline.get(addr, val)
-            hex_addr = f"{addr:04X}"
+            hex_addr = f"{addr:02X}" if addr_w == 2 else f"{addr:04X}"
+            hex_addr_alt = f"{addr:04X}" if addr_w == 2 else f"{addr:02X}"
 
             # 1. Check Model Specification custom_registers
-            if hex_addr in custom_regs:
-                c = custom_regs[hex_addr]
+            reg_def = custom_regs.get(hex_addr) or custom_regs.get(hex_addr_alt)
+            if reg_def:
+                c = reg_def
                 name = c.get("name", f"Reg_0x{hex_addr}")
                 # If name starts with Unmapped_0x, treat as unknown
                 if name.startswith("Unmapped_0x"):
@@ -503,7 +533,7 @@ class MemoryMapperEngine:
         changed = sum(1 for r in self.classified_registers if r.is_changed)
 
         return {
-            "total_words": 512,
+            "total_words": getattr(self, "max_words", 512),
             "mapped": mapped,
             "theoretical": theoretical,
             "unknown": unknown,
@@ -526,7 +556,7 @@ class MemoryMapperEngine:
         Map a register and persist immediately into docs/models/<EF>_*.json.
         Returns (success, message).
         """
-        hex_addr = f"{addr:04X}"
+        hex_addr = f"{addr:02X}" if getattr(self, "address_width", 4) == 2 else f"{addr:04X}"
         name = name.strip()
         desc = desc.strip()
         category = category.strip() or "settings"
