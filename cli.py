@@ -46,8 +46,25 @@ def main():
     parser.add_argument("--list-ports", action="store_true", help="List detected serial ports and exit")
     parser.add_argument("--list-models", action="store_true", help="List supported machine models and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show live raw serial protocol logging")
+    parser.add_argument("--set-bean-threshold", type=int, metavar="COUNTS", help="Set optical bean sensor sensitivity threshold (counts)")
+    parser.add_argument("--get-bean-threshold", action="store_true", help="Show optical bean sensor calibration parameters")
 
     args = parser.parse_args()
+
+    if args.get_bean_threshold:
+        c = sc.get_optical_bean_calibration()
+        print("Optical Bean Sensor Calibration:")
+        print(f"  Active Threshold:  {c['threshold']} counts")
+        print(f"  Hysteresis Window: ±{c['hysteresis']} counts")
+        print(f"  Decision Bounds:   Charged <= {c['lower_bound']} counts | Empty >= {c['upper_bound']} counts")
+        sys.exit(0)
+
+    if args.set_bean_threshold is not None:
+        val = sc.set_optical_bean_threshold(args.set_bean_threshold)
+        c = sc.get_optical_bean_calibration()
+        print(f"Updated optical bean sensor threshold to {val} counts.")
+        print(f"Active Decision Bounds: Charged <= {c['lower_bound']} counts | Empty >= {c['upper_bound']} counts")
+        sys.exit(0)
 
     if args.list_ports:
         ports = serial_io.list_serial_ports()

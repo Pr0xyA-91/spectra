@@ -38,6 +38,77 @@ from serial_io import JuraSerialConnection
 
 __version__ = "0.5.1"
 
+# ---------------------------------------------------------------------------
+# Optical Bean Sensor Calibration Settings (Dev-configurable)
+# ---------------------------------------------------------------------------
+DEFAULT_OPTICAL_BEAN_THRESHOLD = 94
+DEFAULT_OPTICAL_BEAN_HYSTERESIS = 2
+
+_optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
+_optical_bean_hysteresis = DEFAULT_OPTICAL_BEAN_HYSTERESIS
+
+CONFIG_DIR = os.path.expanduser("~/.config/spectra")
+CALIBRATION_FILE = os.path.join(CONFIG_DIR, "calibration.json")
+
+
+def get_optical_bean_threshold() -> int:
+    """Return active optical bean sensor threshold in counts (default 94)."""
+    return _optical_bean_threshold
+
+
+def set_optical_bean_threshold(val: int, save: bool = True) -> int:
+    """Set optical bean sensor threshold in counts (clamped 30..250)."""
+    global _optical_bean_threshold
+    _optical_bean_threshold = max(30, min(250, int(val)))
+    if save:
+        _save_calibration()
+    return _optical_bean_threshold
+
+
+def reset_optical_bean_threshold(save: bool = True) -> int:
+    """Reset optical bean threshold to factory default (94 counts)."""
+    return set_optical_bean_threshold(DEFAULT_OPTICAL_BEAN_THRESHOLD, save=save)
+
+
+def get_optical_bean_calibration() -> Dict[str, Any]:
+    """Return dictionary of active optical calibration parameters and bounds."""
+    return {
+        "threshold": _optical_bean_threshold,
+        "hysteresis": _optical_bean_hysteresis,
+        "lower_bound": _optical_bean_threshold - _optical_bean_hysteresis,
+        "upper_bound": _optical_bean_threshold + _optical_bean_hysteresis
+    }
+
+
+def _load_calibration():
+    global _optical_bean_threshold, _optical_bean_hysteresis
+    if os.path.exists(CALIBRATION_FILE):
+        try:
+            with open(CALIBRATION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if "optical_bean_threshold" in data:
+                    _optical_bean_threshold = max(30, min(250, int(data["optical_bean_threshold"])))
+                if "optical_bean_hysteresis" in data:
+                    _optical_bean_hysteresis = max(0, min(20, int(data["optical_bean_hysteresis"])))
+        except Exception:
+            pass
+
+
+def _save_calibration():
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CALIBRATION_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "optical_bean_threshold": _optical_bean_threshold,
+                "optical_bean_hysteresis": _optical_bean_hysteresis,
+                "updated_at": datetime.now().isoformat()
+            }, f, indent=2)
+    except Exception:
+        pass
+
+
+_load_calibration()
+
 
 def decode_jura_date(val: int) -> Optional[datetime]:
     """
@@ -500,21 +571,27 @@ def query_live_sensors(
             # Multi-layer safety verification:
             # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
             #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    - Covered / Charged (beam interrupted / absorbed by coffee beans): delta <= 92 counts -> Beans OK
-            #    - Uncovered / Empty (bare terminal / beam open): delta >= 96 counts -> Fill Beans
-            #    - Boundary hysteresis deadband (93..95 counts): latch previous state to prevent 1-second boundary flutter
+            #    Calibrated via configurable threshold (default 94 ± 2):
+            #    - Covered / Charged (beam interrupted / absorbed by coffee beans): delta <= (threshold - hysteresis) -> Beans OK
+            #    - Uncovered / Empty (bare terminal / beam open): delta >= (threshold + hysteresis) -> Fill Beans
+            #    - Boundary hysteresis deadband: latch previous state to prevent boundary flutter
             # 2. Puck Compression (fallback when optical sensor is absent): cake thickness <= 14 encoder ticks indicates grinder ran empty during dose
             optical_empty = False
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            opt_thresh = _optical_bean_threshold
+            opt_hyst = _optical_bean_hysteresis
+            opt_lower = opt_thresh - opt_hyst
+            opt_upper = opt_thresh + opt_hyst
+
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
                 delta = on_adc - off_adc
-                if delta <= 92:
+                if delta <= opt_lower:
                     optical_empty = False
-                elif delta >= 96:
+                elif delta >= opt_upper:
                     optical_empty = True
                 else:
-                    # Latch previous state across hysteresis deadband (93..95 counts)
+                    # Latch previous state across hysteresis deadband
                     optical_empty = not getattr(conn, "_cached_beans_ok", True)
 
                 beans_empty = optical_empty
@@ -799,13 +876,14 @@ def query_live_sensors(
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
+                delta = on_adc - off_adc
                 sensor_list.append({
                     "id": "optical_bean_sensor",
                     "name": "Optical Bean Hopper Sensor",
                     "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
                     "ok": beans_ok,
                     "badge": "NOMINAL" if beans_ok else "EMPTY",
-                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {on_adc - off_adc} counts | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
+                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {delta} counts (Threshold: {opt_thresh} ± {opt_hyst}, Bounds: ≤{opt_lower} / ≥{opt_upper}) | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
                     "icon": "🫘",
                     "value": on_adc,
                     "unit": "ADC"
@@ -902,6 +980,11 @@ def query_live_sensors(
                 "machine_state_status": ready_status,
                 "cake_thickness_ticks": cake_thickness_ticks,
                 "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
+                "optical_threshold": opt_thresh,
+                "optical_hysteresis": opt_hyst,
+                "optical_lower": opt_lower,
+                "optical_upper": opt_upper,
+                "optical_delta": (on_adc - off_adc) if cached_adcs else None,
                 "button_matrix": button_matrix_hex,
                 "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,

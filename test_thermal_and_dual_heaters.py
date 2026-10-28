@@ -489,6 +489,57 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(maint_sc.get("FilterChange"), (2, 25))
         self.assertEqual(maint_sc.get("Decalc"), (41, 95))
 
+    def test_optical_bean_calibration_and_dev_slider(self):
+        """Test optical bean sensor threshold calibration and dev branch UI toggle."""
+        # 1. Verify default calibration
+        sc.reset_optical_bean_threshold(save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+        calib = sc.get_optical_bean_calibration()
+        self.assertEqual(calib["lower_bound"], 92)
+        self.assertEqual(calib["upper_bound"], 96)
+
+        # 2. Delta of 105 with default threshold (94) -> Empty (105 >= 96)
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
+        def mock_query(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                # off_adc = 1600, on_adc = 1705 -> delta = 105
+                return "as:077206400000,077206A90001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query
+
+        res_default = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
+        self.assertFalse(res_default["telemetry"]["beans_ok"])
+
+        # 3. Adjust threshold to 110 (bounds 108 / 112) -> Beans OK (105 <= 108)
+        sc.set_optical_bean_threshold(110, save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 110)
+        res_calib = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
+        self.assertTrue(res_calib["telemetry"]["beans_ok"])
+        self.assertEqual(res_calib["telemetry"]["optical_threshold"], 110)
+        self.assertEqual(res_calib["telemetry"]["optical_delta"], 105)
+
+        # 4. Reset threshold back to 94
+        sc.reset_optical_bean_threshold(save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+
+        # 5. Verify dev branch GUI slider availability
+        import gui
+        self.assertTrue(gui.is_dev_branch())
+        app = gui.JuraDiagApp()
+        self.assertTrue(hasattr(app, "card_dev_calib"))
+        self.assertEqual(app.scale_bean_threshold.get_value(), 94.0)
+
+        # Changing slider updates calibration
+        app.scale_bean_threshold.set_value(120.0)
+        self.assertEqual(sc.get_optical_bean_threshold(), 120)
+        app._on_reset_bean_calibration_clicked(None)
+        self.assertEqual(sc.get_optical_bean_threshold(), 94)
+        app.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

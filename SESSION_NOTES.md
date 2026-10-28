@@ -366,3 +366,23 @@ conn.close()
     - Maintenance: Rinses: **3,617** (`0x0E21`), Cleanings: **166** (`0x00A6`), Descalings: **38** (`0x0026`)
     - Hardware Serial / Batch / Production Date: `0x4660` / `0x0033` / `0x2EBE` (30.05.2013)
     - Checksum `RE:0075`: Recalculated and validated (`0x11F2`).
+
+## 14. Optical Bean Sensor Sensitivity Calibration & Dev Slider (Session 2026-10-28)
+* **Problem & Physical Variability**:
+  - Optical through-beam IR sensors (`AS:`) measure beam absorption: $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$.
+  - Ambient illumination, bean roast darkness, bean geometry, hopper throat dust, and component aging can shift nominal absorption deltas beyond the fixed factory threshold (nominal $88..94$ counts), causing spurious "Fill Beans" prompts even when the hopper is charged.
+* **Architecture & Interactive Slider**:
+  - Gated strictly to development builds via `is_dev_branch()` (checks git branch `main`, `multi-manufacturer`, `windows`, and existence of private `SESSION_NOTES.md`). On public releases (`public-main`), the control is completely omitted.
+  - Interactive slider in "⚡ Live Digital Twin" tab right below component inspector:
+    - Range: 40 to 180 counts (default 94 counts).
+    - Decision window: Beans OK if $\Delta \le (\text{threshold} - 2)$, Fill Beans if $\Delta \ge (\text{threshold} + 2)$, with hysteresis across the deadband.
+    - Live feedback: Real-time readout of current delta, raw ambient/reflected ADCs, active decision bounds, and dynamic state indicator (🟢 `BEANS OK` / 🔴 `FILL BEANS`).
+    - Instant preview: Dragging the slider immediately recalculates current live telemetry and updates Digital Twin hopper node color without needing a manual reconnect.
+    - Factory reset button: One-click restore to 94 counts.
+* **Persistent Storage**:
+  - Persisted automatically to `~/.config/spectra/calibration.json`, loaded on startup.
+* **CLI & Scripting Access**:
+  - `python3 cli.py --get-bean-threshold`: Displays active calibration parameters and bounds.
+  - `python3 cli.py --set-bean-threshold <COUNTS>`: Configures and persists new sensitivity threshold.
+* **Validation**:
+  - Expanded unit test suite to 85 unit tests (23 in `spectra`, 31 in `spectra-mm`, 31 in `spectra-win` — 100% passing).
