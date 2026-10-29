@@ -948,8 +948,8 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_calib_threshold.set_markup(f"<b><span color='#fab387'>{current_thresh}</span> counts</b>")
         header_row.pack_start(self.lbl_calib_threshold, False, False, 0)
 
-        btn_reset = Gtk.Button(label="↺ Reset (99)")
-        btn_reset.set_tooltip_text("Reset optical bean sensitivity threshold to factory default (99 counts)")
+        btn_reset = Gtk.Button(label="↺ Reset (115)")
+        btn_reset.set_tooltip_text("Reset optical bean sensitivity threshold to factory default (115 counts)")
         btn_reset.connect("clicked", self._on_reset_bean_calibration_clicked)
         header_row.pack_start(btn_reset, False, False, 0)
 
@@ -978,9 +978,9 @@ class JuraDiagApp(Gtk.Window):
         self.scale_bean_threshold.set_draw_value(False)
         self.scale_bean_threshold.set_hexpand(True)
         self.scale_bean_threshold.add_mark(60, Gtk.PositionType.BOTTOM, "Strong (60)")
-        self.scale_bean_threshold.add_mark(99, Gtk.PositionType.BOTTOM, "Nominal (99)")
-        self.scale_bean_threshold.add_mark(125, Gtk.PositionType.BOTTOM, "Weak (125)")
-        self.scale_bean_threshold.add_mark(150, Gtk.PositionType.BOTTOM, "Bare (150)")
+        self.scale_bean_threshold.add_mark(90, Gtk.PositionType.BOTTOM, "Cold (90)")
+        self.scale_bean_threshold.add_mark(115, Gtk.PositionType.BOTTOM, "Nominal (115)")
+        self.scale_bean_threshold.add_mark(145, Gtk.PositionType.BOTTOM, "Bare (145)")
 
         self.scale_bean_threshold.connect("value-changed", self._on_bean_threshold_changed)
         slider_row.pack_start(self.scale_bean_threshold, True, True, 0)
@@ -1010,8 +1010,9 @@ class JuraDiagApp(Gtk.Window):
             adcs = last_res.get("telemetry", {}).get("bean_adcs")
             if adcs and len(adcs) >= 2:
                 delta = adcs[1] - adcs[0]
-                lower = val - 2
-                upper = val + 2
+                hyst = getattr(sc, "DEFAULT_OPTICAL_BEAN_HYSTERESIS", 5)
+                lower = val - hyst
+                upper = val + hyst
                 if delta <= lower:
                     b_ok = True
                 elif delta >= upper:
@@ -1030,19 +1031,20 @@ class JuraDiagApp(Gtk.Window):
 
     def _on_reset_bean_calibration_clicked(self, widget):
         sc.reset_optical_bean_threshold()
+        def_t = getattr(sc, "DEFAULT_OPTICAL_BEAN_THRESHOLD", 115)
         if hasattr(self, "adj_bean_threshold"):
-            self.adj_bean_threshold.set_value(99.0)
+            self.adj_bean_threshold.set_value(float(def_t))
         if hasattr(self, "lbl_calib_threshold"):
-            self.lbl_calib_threshold.set_markup("<b><span color='#fab387'>99</span> counts</b>")
+            self.lbl_calib_threshold.set_markup(f"<b><span color='#fab387'>{def_t}</span> counts</b>")
         self._update_calib_live_label(getattr(self, "_last_live_result", None))
 
     def _update_calib_live_label(self, result: Optional[dict] = None):
         if not hasattr(self, "lbl_calib_live"):
             return
-        thresh = sc.get_optical_bean_threshold()
-        hyst = 2
-        lower = thresh - hyst
-        upper = thresh + hyst
+        calib = sc.get_optical_bean_calibration()
+        thresh = calib.get("threshold", 115)
+        lower = calib.get("lower_bound", 110)
+        upper = calib.get("upper_bound", 120)
 
         if result and "telemetry" in result:
             telem = result["telemetry"]

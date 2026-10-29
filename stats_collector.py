@@ -45,8 +45,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Optical Bean Sensor Calibration Settings (Dev-configurable)
 # ---------------------------------------------------------------------------
-DEFAULT_OPTICAL_BEAN_THRESHOLD = 99
-DEFAULT_OPTICAL_BEAN_HYSTERESIS = 2
+DEFAULT_OPTICAL_BEAN_THRESHOLD = 115
+DEFAULT_OPTICAL_BEAN_HYSTERESIS = 5
 
 # ---------------------------------------------------------------------------
 # Jura Top-Tronic 8-bit EEPROM Models (2-digit hex addressing: RT:xx / RE:xx)
@@ -65,7 +65,7 @@ CALIBRATION_FILE = os.path.join(CONFIG_DIR, "calibration.json")
 
 
 def get_optical_bean_threshold() -> int:
-    """Return active optical bean sensor threshold in counts (default 99)."""
+    """Return active optical bean sensor threshold in counts (default 115)."""
     return _optical_bean_threshold
 
 
@@ -79,7 +79,7 @@ def set_optical_bean_threshold(val: int, save: bool = True) -> int:
 
 
 def reset_optical_bean_threshold(save: bool = True) -> int:
-    """Reset optical bean threshold to factory default (99 counts)."""
+    """Reset optical bean threshold to factory default (115 counts)."""
     return set_optical_bean_threshold(DEFAULT_OPTICAL_BEAN_THRESHOLD, save=save)
 
 
@@ -100,9 +100,18 @@ def _load_calibration():
             with open(CALIBRATION_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if "optical_bean_threshold" in data:
-                    _optical_bean_threshold = max(30, min(250, int(data["optical_bean_threshold"])))
+                    loaded_thresh = max(30, min(250, int(data["optical_bean_threshold"])))
+                    # Migrate legacy 99 default to new calibrated 115 default
+                    if loaded_thresh == 99:
+                        _optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
+                    else:
+                        _optical_bean_threshold = loaded_thresh
                 if "optical_bean_hysteresis" in data:
-                    _optical_bean_hysteresis = max(0, min(20, int(data["optical_bean_hysteresis"])))
+                    loaded_hyst = max(0, min(20, int(data["optical_bean_hysteresis"])))
+                    if loaded_hyst == 2:
+                        _optical_bean_hysteresis = DEFAULT_OPTICAL_BEAN_HYSTERESIS
+                    else:
+                        _optical_bean_hysteresis = loaded_hyst
         except Exception:
             pass
 
@@ -582,9 +591,10 @@ def query_live_sensors(
             # Multi-layer safety verification:
             # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
             #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    Calibrated via configurable threshold (default 99 ± 2).
-            #    - Covered / Charged: delta <= (threshold - hysteresis) -> Beans OK
-            #    - Uncovered / Empty: delta >= (threshold + hysteresis) -> Fill Beans
+            #    Calibrated via configurable threshold (default 115 ± 5):
+            #    - Covered / Charged: delta <= (threshold - hysteresis, <= 110) -> Beans OK
+            #    - Uncovered / Empty: delta >= (threshold + hysteresis, >= 120) -> Fill Beans
+            #    - Normal thermal drift band (85..105 counts) is safely classified as Beans OK.
             #    - Extraction Transient Immunity: During mechanical compression (bu_encoder_pos_raw > 250),
             #      water extraction (flow_pulses_raw > 0 and flow_ml_s > 0), or valve travel, electrical
             #      load sag causes optical baseline shifts. Spurious empty triggers are suppressed during brew.
