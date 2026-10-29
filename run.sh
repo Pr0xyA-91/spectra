@@ -9,6 +9,15 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+# Automatically adopt uucp group if member in /etc/group but current session has not reloaded
+if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER"; then
+    cmd="exec bash $(printf "%q" "$PROJECT_DIR/run.sh")"
+    for arg in "$@"; do
+        cmd+=" $(printf "%q" "$arg")"
+    done
+    exec newgrp uucp -c "$cmd"
+fi
+
 # Check if user requested CLI mode or help
 if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]]; then
     python3 "$PROJECT_DIR/cli.py" "$@"
@@ -19,13 +28,6 @@ fi
 if [ $# -gt 0 ]; then
     python3 "$PROJECT_DIR/cli.py" "$@"
     exit 0
-fi
-
-# Automatically adopt uucp group if member in /etc/group but current session has not reloaded
-if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER"; then
-    exec newgrp uucp << REEXEC
-exec bash "$PROJECT_DIR/run.sh" "$@"
-REEXEC
 fi
 
 # Check permissions for serial devices
