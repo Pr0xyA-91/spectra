@@ -21,7 +21,11 @@ import stats_collector as sc
 from spectra_engine import SpectraSession, WRATSession
 from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 
-__version__ = "0.5.1_win"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1_win"
+    __build__ = "20261029.1130"
 
 # Global state for background polling
 _poll_lock = threading.Lock()
@@ -614,7 +618,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self._send_security_headers()
             self.end_headers()
-            html = HTML_TEMPLATE.replace("__VERSION__", __version__)
+            html = HTML_TEMPLATE.replace("__VERSION__", f"{__version__} (build {__build__})")
             self.wfile.write(html.encode("utf-8"))
 
         elif url.path in ("/logo.svg", "/favicon.ico", "/favicon.svg", "/spectra_logo.svg"):
@@ -726,7 +730,7 @@ def main():
 
     url = f"http://127.0.0.1:{port}"
     print("=" * 78)
-    print(f"  SPECTRA (v{__version__}) Universal Diagnostics — Web Dashboard")
+    print(f"  SPECTRA (v{__version__}, build {__build__}) Universal Diagnostics — Web Dashboard")
     print("=" * 78)
     print(f"[*] Server listening on: {url}")
     print("[*] Opening default web browser automatically...")

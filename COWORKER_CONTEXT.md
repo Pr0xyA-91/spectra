@@ -97,10 +97,14 @@ flowchart TD
 ### Best Practices for Multi-Agent Workflows:
 1. **Always Pull First**: Run `git pull origin <branch>` before starting any code modifications to integrate whatever your peer agent completed on the other device.
 2. **Keep Commits Atomic & Focused**: Avoid massive refactorings that touch unrelated files. Commit logical increments with clear conventional commit messages (e.g. `fix(jura): ...`, `feat(sensors): ...`, `docs: ...`).
-3. **Preserve Version Identifiers**:
-   - `spectra` (main): `__version__ = "0.5.1"`
-   - `spectra-mm` (multi-manufacturer): `__version__ = "0.5.1_mm"`
-   - `spectra-win` (windows): `__version__ = "0.5.1_win"`
+3. **Centralized Version & Build Number Standard**:
+   - SPECTRA uses date-and-time build numbers (`YYYYMMDD.HHMM`, e.g. `20261029.1130`) to track changes precisely across multi-agent development.
+   - Centralized in `version.py`:
+     * `spectra` (main): `__version__ = "0.5.1"`, `__build__ = "20261029.1130"`
+     * `spectra-mm` (multi-manufacturer): `__version__ = "0.5.1_mm"`, `__build__ = "20261029.1130"`
+     * `spectra-win` (windows): `__version__ = "0.5.1_win"`, `__build__ = "20261029.1130"`
+   - Bump anytime significant changes are made using `./version.py --bump` (or `python3 version.py --bump`).
+   - Propagated to GUI window titles, About dialogs, CLI banners, exported telemetry reports, and structured summary JSON.
 4. **Mirror Core Logic Across Repositories**:
    When modifying core Jura communication logic in `spectra/` (e.g. `stats_collector.py`, `profiles_data.json`, `memory_mapper.py`), copy the updated code to `spectra-mm/` and `spectra-win/`, preserving each repository's version string.
 5. **Always Run Unit Tests**:
@@ -281,6 +285,33 @@ The private repository hosts three parallel active branches, checked out into th
   - Synchronize updates to `spectra-mm` and `spectra-win`.
   - Maintain strictly read-only commands (`SAFE_READ_PREFIXES`). Under no circumstances send write commands (`WE:`, `FA:`, `WT:`, `DA:`).
   - Push strictly to private `origin` (`spectra_dev.git`). Never push private files to `public`.
+
+---
+
+### [2026-10-29 11:35] — Agent Workstation #1 (Device 1)
+* **What Was Done**:
+  1. **Added Centralized Build Number Standard**:
+     - Introduced `version.py` tracking both semantic version (`__version__`) and date-and-time build identifier (`__build__ = "YYYYMMDD.HHMM"`, currently `20261029.1130`).
+     - Added in-place CLI bump command: `./version.py --bump` (or `--set <build>`).
+  2. **Exposed Build Number Across UI, CLI & Reports**:
+     - GUI Window Title: `SPECTRA — Multi-Manufacturer Telemetry & Diagnostics (v0.5.1_win, build 20261029.1130)`
+     - Top Bar & Hero Overview Header: `SPECTRA v0.5.1_win • build 20261029.1130`
+     - GUI About Dialog: `v0.5.1_win (build 20261029.1130)`
+     - Verification Footer & Watermark in HTML Certificate: `v0.5.1_win, build 20261029.1130`
+     - CLI `--version` / `-V`: `SPECTRA 0.5.1_win (build 20261029.1130)`
+     - Exported Text Reports: `SPECTRA Diagnostics Suite v0.5.1_win (build 20261029.1130)`
+     - Structured JSON Summary: `"spectra_version": "0.5.1_win"`, `"spectra_build": "20261029.1130"`
+     - Developer Memory Mapper: Title and CLI Banner updated with build number.
+  3. **Multi-Agent Pre-Commit Protocol**:
+     - Codified Rule 0 in `GEMINI.md` and `COWORKER_CONTEXT.md`: Always fetch and check coworker activity (`git fetch origin`) before committing.
+  4. **Multi-Repository Mirroring**:
+     - Replicated `version.py` and all build number integrations across `spectra`, `spectra-mm`, and `spectra-win`.
+* **Test Status**:
+  - `spectra`: 29/29 passing (100%)
+  - `spectra-mm`: 37/37 passing (100%)
+* **Next Pending Steps for Coworker**:
+  - Use `python3 version.py --bump` whenever committing notable code changes or releases so builds are uniquely timestamped.
+  - Keep pre-commit fetch protocol active.
 
 ---
 

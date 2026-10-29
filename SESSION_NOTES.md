@@ -511,4 +511,29 @@ conn.close()
   - All commands strictly read-only (`SAFE_READ_PREFIXES`).
   - Unit test suite: 28/28 tests passing.
 
+---
+
+### Phase 14: Centralized Date-and-Time Build Numbers & Multi-Agent Pre-Commit Protocol (2026-10-29)
+* **Goal**:
+  - Implement clear, automated build numbers across all components using date and time (`YYYYMMDD.HHMM`, e.g. `20261029.1130`) so developers, agents, and users know exactly what build is running.
+  - Establish a strict pre-commit verification protocol between the two cooperating AGY agents across devices.
+* **Architecture & Implementation**:
+  - Created centralized `version.py`:
+    - `__version__ = "0.5.1_win"`
+    - `__build__ = "20261029.1130"`
+    - `__edition__ = "Windows Edition"`
+    - Helper formatters `get_version_string()` and `get_full_title()`.
+    - Automated in-place bump command: `./version.py --bump` (or `--set <build>`).
+  - Exposed build numbers across all user-facing interfaces:
+    - **GUI**: Main window title, top bar brand header, hero overview header, About dialog.
+    - **Diagnostics Reports**: Formatted in text report headers and included in structured JSON summary (`spectra_build`).
+    - **CLI**: Banner and `-V / --version` output.
+    - **Developer Memory Mapper**: Window title and CLI banner.
+  - Codified **RULE 0** in `GEMINI.md` and `COWORKER_CONTEXT.md`: Mandatory fetch and coworker activity inspection before committing or starting tasks.
+  - Mirrored changes across `spectra` (`main`), `spectra-mm` (`multi-manufacturer`), and `spectra-win` (`windows`).
+* **Validation**:
+  - Full test suites executed and passing across all branches (29 tests in `spectra`, 37 in `spectra-mm`, 37 in `spectra-win`).
+  - Pre-commit fetch protocol verified with live GitHub remote.
+
+
 

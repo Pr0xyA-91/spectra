@@ -62,8 +62,13 @@ fi
 
 # Commit if there are changes
 if [ -n "$(git status --porcelain)" ]; then
-    VERSION=$(grep '__version__' stats_collector.py | head -n1 | cut -d'"' -f2)
-    MSG="${2:-release: Sync v${VERSION} release to public distribution}"
+    VERSION=$(grep '__version__' version.py 2>/dev/null | head -n1 | cut -d'"' -f2 || grep '__version__' stats_collector.py | head -n1 | cut -d'"' -f2)
+    BUILD=$(grep '__build__' version.py 2>/dev/null | head -n1 | cut -d'"' -f2 || echo "")
+    if [ -n "$BUILD" ]; then
+        MSG="${2:-release: Sync v${VERSION} (build ${BUILD}) to public distribution}"
+    else
+        MSG="${2:-release: Sync v${VERSION} release to public distribution}"
+    fi
     git commit -m "$MSG"
     echo "[+] Created public release commit: $MSG"
 fi
