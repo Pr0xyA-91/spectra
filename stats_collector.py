@@ -362,7 +362,7 @@ def query_live_sensors(
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
             cake_thickness_ticks = 0
-            hz_bean_empty = False
+            hz_bean_ok = True
             has_hz_status = False
 
             if hz_resp and hz_resp.startswith("hz:"):
@@ -373,7 +373,7 @@ def query_live_sensors(
                     has_hz_status = True
                     bu_init_ok = (parts[0][1] == "1")
                     mv_busy = (parts[0][2] == "1")
-                    hz_bean_empty = (parts[0][3] == "1")
+                    hz_bean_ok = (parts[0][3] == "1")
                     heater_ready_flag = (parts[0][5] == "1")
                     mv_init_ok = (parts[0][6] == "1")
                 if len(parts) > 1:
@@ -582,13 +582,21 @@ def query_live_sensors(
 
             # Evaluate bean hopper level:
             # Multi-layer safety verification:
-            # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
-            #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    Calibrated via configurable threshold (default 99 ± 2):
-            #    - Covered / Charged (beam interrupted / absorbed by coffee beans): delta <= (threshold - hysteresis) -> Beans OK
-            #    - Uncovered / Empty (bare terminal / beam open): delta >= (threshold + hysteresis) -> Fill Beans
-            #    - Boundary hysteresis deadband: latch previous state to prevent boundary flutter
-            # 2. Puck Compression (fallback when optical sensor is absent): cake thickness <= 14 encoder ticks indicates grinder ran empty during dose
+            # Evaluate bean hopper level:
+            # Multi-layer safety verification:
+            # 1. Hardware Firmware Lockout (HZ[0][3] & HZ[8]):
+            #    When the appliance CPU detects empty beans, it clears bit 3 (parts[0][3] == '0')
+            #    and latches a button matrix lockout (button_matrix_hex == '0000').
+            #    This reflects the physical machine's authoritative "Fill beans" state.
+            # 2. Optical IR Sensor (AS: Check Sensor):
+            #    Calibrated via configurable threshold (default 99 ± 2).
+            #    - Covered / Charged: delta <= (threshold - hysteresis) -> Beans OK
+            #    - Uncovered / Empty: delta >= (threshold + hysteresis) -> Fill Beans
+            #    - Extraction Transient Immunity: During mechanical compression (bu_encoder_pos_raw > 250),
+            #      water extraction (flow_pulses_raw > 0 and flow_ml_s > 0), or valve travel, electrical
+            #      load sag causes optical baseline shifts. Spurious empty triggers are suppressed during brew.
+            # 3. Puck Compression Fallback:
+            #    When optical sensor and HZ status are absent, cake thickness <= 14 ticks indicates dry grinder run.
             optical_empty = False
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
             opt_thresh = _optical_bean_threshold
@@ -596,10 +604,20 @@ def query_live_sensors(
             opt_lower = opt_thresh - opt_hyst
             opt_upper = opt_thresh + opt_hyst
 
+            # Detect active brewing cycle to prevent electrical sag false alarms
+            is_active_brew = (
+                bu_encoder_pos_raw > 250
+                or (flow_pulses_raw > 0 and flow_ml_s > 0.0)
+                or mv_busy
+            )
+
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
                 delta = on_adc - off_adc
-                if delta <= opt_lower:
+                if is_active_brew:
+                    # Suppress transient ADC swings during active brew
+                    optical_empty = False
+                elif delta <= opt_lower:
                     optical_empty = False
                 elif delta >= opt_upper:
                     optical_empty = True
@@ -607,14 +625,19 @@ def query_live_sensors(
                     # Latch previous state across hysteresis deadband
                     optical_empty = not getattr(conn, "_cached_beans_ok", True)
 
-                beans_empty = optical_empty
-                beans_ok = not beans_empty
-            else:
-                # Fallback for models without optical sensor (e.g. standard residential lines)
+            # Hardware CPU lockout: on physical hardware, when "Fill beans" is active,
+            # parts[0][3] == '0' accompanied by keypad lockout ('0000') or aux cut
+            cpu_bean_lockout = False
+            if not conn.is_demo and has_hz_status and bu_init_ok:
+                if not hz_bean_ok and (button_matrix_hex == "0000" or "0100" in aux_inputs_bits):
+                    cpu_bean_lockout = True
+
+            beans_empty = cpu_bean_lockout or optical_empty
+            if not cached_adcs and not has_hz_status:
                 puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
                 beans_empty = puck_empty
-                beans_ok = not beans_empty
 
+            beans_ok = not beans_empty
             setattr(conn, "_cached_beans_ok", beans_ok)
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
