@@ -308,6 +308,8 @@ The private repository hosts three parallel active branches, checked out into th
      - Replicated `version.py` and all build number integrations across `spectra`, `spectra-mm`, and `spectra-win`.
 * **Test Status**:
   - `spectra`: 29/29 passing (100%)
+  - `spectra-mm`: 37/37 passing (100%)
+  - `spectra-win`: 37/37 passing (100%)
 * **Next Pending Steps for Coworker**:
   - Use `python3 version.py --bump` whenever committing notable code changes or releases so builds are uniquely timestamped.
   - Keep pre-commit fetch protocol active.
