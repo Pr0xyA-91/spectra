@@ -37,6 +37,9 @@ fi
 if [ -f "SESSION_NOTES.md" ]; then
     git rm -f SESSION_NOTES.md
 fi
+if [ -f "COWORKER_CONTEXT.md" ]; then
+    git rm -f COWORKER_CONTEXT.md
+fi
 
 # Scrub hardcoded user home directories for public portability
 for desktop_file in *.desktop; do
@@ -48,7 +51,7 @@ for desktop_file in *.desktop; do
 done
 
 # Verify no private files or hardcoded home paths remain in tracked files
-if git ls-files | grep -q -E "^(GEMINI|SESSION_NOTES)\.md$"; then
+if git ls-files | grep -q -E "^(GEMINI|SESSION_NOTES|COWORKER_CONTEXT)\.md$"; then
     echo "[-] Error: Private markdown files are still tracked on public-main!" >&2
     exit 1
 fi

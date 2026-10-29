@@ -1,8 +1,8 @@
 # SPECTRA — Universal Hardware Telemetry & Logic Board Diagnostics (`spectra` Main Edition Guidelines)
 
 > **IMPORTANT FOR AGY (ANTIGRAVITY) ON ANY DEVICE**:
-> Always read [`SESSION_NOTES.md`](./SESSION_NOTES.md) at the start of a session for complete hardware testbench details, protocol register mappings, architectural decisions, and multi-device setup instructions.
-> Both `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `spectra_dev.git` only) and must **NEVER** be pushed to the public repository (`spectra.git`).
+> Always read [`COWORKER_CONTEXT.md`](./COWORKER_CONTEXT.md) and [`SESSION_NOTES.md`](./SESSION_NOTES.md) at the start of a session for complete coworker handoff status, hardware testbench details, protocol register mappings, architectural decisions, and multi-device setup instructions.
+> `COWORKER_CONTEXT.md`, `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `spectra_dev.git` only) and must **NEVER** be pushed to the public repository (`spectra.git`).
 
 ## 1. Quick Reference & Entry Points
 - **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `SPECTRA.desktop`.
