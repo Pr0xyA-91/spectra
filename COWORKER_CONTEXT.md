@@ -294,13 +294,13 @@ The private repository hosts three parallel active branches, checked out into th
      - Introduced `version.py` tracking both semantic version (`__version__`) and date-and-time build identifier (`__build__ = "YYYYMMDD.HHMM"`, currently `20261029.1130`).
      - Added in-place CLI bump command: `./version.py --bump` (or `--set <build>`).
   2. **Exposed Build Number Across UI, CLI & Reports**:
-     - GUI Window Title: `SPECTRA — Multi-Manufacturer Telemetry & Diagnostics (v0.5.1_win, build 20261029.1130)`
-     - Top Bar & Hero Overview Header: `SPECTRA v0.5.1_win • build 20261029.1130`
-     - GUI About Dialog: `v0.5.1_win (build 20261029.1130)`
-     - Verification Footer & Watermark in HTML Certificate: `v0.5.1_win, build 20261029.1130`
-     - CLI `--version` / `-V`: `SPECTRA 0.5.1_win (build 20261029.1130)`
-     - Exported Text Reports: `SPECTRA Diagnostics Suite v0.5.1_win (build 20261029.1130)`
-     - Structured JSON Summary: `"spectra_version": "0.5.1_win"`, `"spectra_build": "20261029.1130"`
+     - GUI Window Title: `SPECTRA — Hardware Telemetry & Diagnostics (v0.5.1, build 20261029.1130)`
+     - Top Bar & Hero Overview Header: `SPECTRA v0.5.1 • build 20261029.1130`
+     - GUI About Dialog: `v0.5.1 (build 20261029.1130)`
+     - Verification Footer & Watermark in HTML Certificate: `v0.5.1, build 20261029.1130`
+     - CLI `--version` / `-V`: `SPECTRA 0.5.1 (build 20261029.1130)`
+     - Exported Text Reports: `SPECTRA Diagnostics Suite v0.5.1 (build 20261029.1130)`
+     - Structured JSON Summary: `"spectra_version": "0.5.1"`, `"spectra_build": "20261029.1130"`
      - Developer Memory Mapper: Title and CLI Banner updated with build number.
   3. **Multi-Agent Pre-Commit Protocol**:
      - Codified Rule 0 in `GEMINI.md` and `COWORKER_CONTEXT.md`: Always fetch and check coworker activity (`git fetch origin`) before committing.
@@ -309,9 +309,43 @@ The private repository hosts three parallel active branches, checked out into th
 * **Test Status**:
   - `spectra`: 29/29 passing (100%)
   - `spectra-mm`: 37/37 passing (100%)
+  - `spectra-win`: 37/37 passing (100%)
 * **Next Pending Steps for Coworker**:
   - Use `python3 version.py --bump` whenever committing notable code changes or releases so builds are uniquely timestamped.
   - Keep pre-commit fetch protocol active.
+
+---
+
+### [2026-10-29 12:35] — Agent Workstation #1 (Device 1)
+* **What Was Done**:
+  1. **Fixed Jura A1 (Article 15133) vs ENA Micro 101 Aroma+ (Article 15110) Identification**:
+     - Investigated customer Jura A1 connected on `/dev/ttyUSB0`.
+     - Raw firmware string `EF509M V01.26` was previously mapped exclusively to ENA Micro 101 Aroma+ (15110) in `profiles_data.json`.
+     - Discovered hardware-stored article number in EEPROM words `0x7E` and `0x7F`:
+       * Word `0x7E`: `0x3B00` (byte `0x3B`)
+       * Word `0x7F`: `0x1D00` (byte `0x1D`)
+       * Combined: `(0x3B << 8) | 0x1D = 0x3B1D = 15133` (Jura A1 Piano Black).
+     - Implemented dynamic hardware article number extraction in `stats_collector.py` with `ARTICLE_MODEL_MAP` resolution.
+     - Created `docs/models/EF509M_A1.json` and `docs/models/EF509M_A1.md`.
+     - Updated `profiles_data.json` to assign `EF509M` to A1 (15133) and `EF509P` to A1 (15171).
+     - Updated `profiles_db.py` to allow model specifications in `docs/models/` to override profile attributes.
+  2. **Fixed Beverage Counter Architecture for Single-Cup Models**:
+     - On Jura A1 and ENA Micro single-spout platforms, the machine features only 3 buttons (Ristretto, Espresso, Coffee) with NO dual-cup brewing capability.
+     - Corrected counter mapping:
+       * `0x0002`: Coffee (1,954 preps, 1 cup each)
+       * `0x0004`: Espresso (2,234 preps, 1 cup each)
+       * `0x0006`: Ristretto (477 preps, 1 cup each)
+       * Corrected total cups calculation so Total Preparations == Total Cups == 4,665, eliminating false "2 Espressi" and "2 Special Coffees" double-cup inflation.
+  3. **Offline Demo & Unit Test Verification**:
+     - Added `DEMO-A1` mock machine and 256-word simulated EEPROM to `serial_io.py`.
+     - Added `test_a1_mapping.py` with 5 automated test cases validating memory mapping, article extraction, counter parity, and GS1 EAN calculation.
+  4. **Bumped Build Number**: `20261029.1234`.
+* **Test Status**:
+  - `spectra`: 34/34 passing (100% pass rate)
+* **Hardware Attached**: Customer Jura A1 on `/dev/ttyUSB0`. Strictly read-only operations preserved.
+* **Next Pending Steps for Coworker**:
+  - Replicate changes to `spectra-mm` and `spectra-win`.
+  - Maintain strictly read-only commands (`SAFE_READ_PREFIXES`).
 
 ---
 

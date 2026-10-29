@@ -1274,6 +1274,7 @@ class JuraStatsSession:
                 address_width = 2 if is_two_digit else 4
                 is_z5 = "EF642" in self.ef_code.upper() or "Z5" in self.model_family.upper()
                 is_d4 = "EF529" in self.ef_code.upper() or "D4" in self.model_family.upper()
+                is_a1 = "EF509" in self.ef_code.upper() or "A1" in self.model_family.upper() or "ENA MICRO" in self.model_family.upper()
 
                 # Query Display Sub-Bus Firmware Gateway (TY$:)
                 ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
@@ -1282,11 +1283,12 @@ class JuraStatsSession:
                 elif ty_sub and ty_sub.lower().startswith("ty:"):
                     display_fw = ty_sub[3:].strip()
                 else:
-                    display_fw = self.profile.get("software_version_display", "N/A (Symbol Display)" if is_d4 else "EF518D V02.04")
+                    display_fw = self.profile.get("software_version_display", "N/A (Symbol Display)" if (is_d4 or is_a1) else "EF518D V02.04")
 
                 # Query EEPROM memory blocks
                 blocks = [0x00, 0x10, 0x20, 0x30]
                 if is_z5 or is_two_digit:
+                    blocks.append(0x70)
                     blocks.append(0xE0)
                 elif is_d4:
                     blocks.append(0x0330)
@@ -1326,6 +1328,8 @@ class JuraStatsSession:
                     (0x31, "Serial Word"),
                     (0x32, "Production Date"),
                     (0x15, "Service Counter"),
+                    (0x7E, "Article High"),
+                    (0x7F, "Article Low"),
                     (0xDA, "SPDL Country Code"),
                     (0xDB, "SPDL Download Date"),
                     (0xDC, "SPDL Language Date"),
@@ -1408,6 +1412,25 @@ class JuraStatsSession:
 
                     # D4 Filter changes are stored at 0x000E
                     filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
+                elif is_a1:
+                    # Jura A1 / ENA Micro single-cup architecture:
+                    # Physical panel features only 3 single-serve coffee buttons:
+                    # 0x0002: Coffee (1 cup)
+                    # 0x0004: Espresso (1 cup)
+                    # 0x0006: Ristretto (1 cup)
+                    # All are single-cup preparations (no 2-cup buttons or modes)
+                    cof = eeprom.get(2, 0)
+                    esp = eeprom.get(4, 0)
+                    rist = eeprom.get(6, 0)
+
+                    self.counters[1] = rist
+                    self.counters[2] = esp
+                    self.counters[3] = cof
+
+                    self.total_preparations = rist + esp + cof
+                    self.total_cups = self.total_preparations
+
+                    filter_cycles = eeprom.get(20, 0)
                 else:
                     # Map standard Jura EEPROM statistics addresses
                     esp1 = eeprom.get(1, 0)
@@ -1500,8 +1523,41 @@ class JuraStatsSession:
                 prep_since_intervention = since_prep if since_prep > 0 else since_serv
 
                 # Article Number and Full EAN Code:
-                article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else "13705")))
-                app_type = self.profile.get("appliance_type", self.model_family)
+                # Hardware EEPROM Article Number (words 0x7E/0x7F on EF509/A1/ENA platforms)
+                hw_article = None
+                if 0x7E in eeprom and 0x7F in eeprom:
+                    hi_w = eeprom.get(0x7E, 0)
+                    lo_w = eeprom.get(0x7F, 0)
+                    hi_b = (hi_w >> 8) if (hi_w & 0xFF00) else (hi_w & 0xFF)
+                    lo_b = (lo_w >> 8) if (lo_w & 0xFF00) else (lo_w & 0xFF)
+                    if hi_b > 0 and lo_b > 0:
+                        cand = (hi_b << 8) | lo_b
+                        if 10000 <= cand <= 99999:
+                            hw_article = str(cand)
+
+                ARTICLE_MODEL_MAP = {
+                    "15133": ("A1", "15133 A1 Piano Black", "A-Line"),
+                    "15171": ("A1", "15171 A1 Piano White", "A-Line"),
+                    "15125": ("A1", "15125 A1", "A-Line"),
+                    "15110": ("ENA Micro 101 Aroma+", "15110 ENA Micro 101 Aroma+", "ENA Micro"),
+                    "13594": ("ENA Micro 1", "13594 ENA Micro 1 Micro Black", "ENA Micro"),
+                    "13636": ("ENA Micro 1", "13636 ENA Micro 1 Micro Silver", "ENA Micro"),
+                    "13735": ("ENA Micro 1", "13735 ENA Micro 1", "ENA Micro"),
+                    "15221": ("D4", "15221 D4 Piano Black", "D-Line"),
+                    "13356": ("IMPRESSA Z5", "13356 IMPRESSA Z5 230V CH", "Z-Line"),
+                }
+
+                if hw_article:
+                    article_num = hw_article
+                    if hw_article in ARTICLE_MODEL_MAP:
+                        fam, app_desc, _ = ARTICLE_MODEL_MAP[hw_article]
+                        self.model_family = fam
+                        app_type = app_desc
+                    else:
+                        app_type = f"{hw_article} {self.model_family}"
+                else:
+                    article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else "13705"))))
+                    app_type = self.profile.get("appliance_type", self.model_family)
 
                 ean_code = "N/A"
                 if article_num and serial_number != "N/A":
