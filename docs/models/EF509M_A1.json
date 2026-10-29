@@ -1,0 +1,139 @@
+{
+  "model_family": "A1",
+  "ef_code": "EF509M",
+  "display_ef": "None",
+  "series": "A-Line",
+  "article_number": "15133",
+  "article_numbers": [
+    "15133",
+    "15171",
+    "15125",
+    "15110",
+    "13594",
+    "13636",
+    "13735"
+  ],
+  "appliance_type": "15133 A1 Piano Black",
+  "software_version_display": "N/A (Symbol Display)",
+  "address_width": 2,
+  "max_words": 256,
+  "products": [
+    {
+      "code": 1,
+      "name": "1 Ristretto",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 2,
+      "name": "1 Espresso",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 3,
+      "name": "1 Coffee",
+      "is_double": false,
+      "active": true
+    }
+  ],
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": false,
+    "has_external_plumbing": false,
+    "has_milk_system": false,
+    "pulse_extraction_process": true,
+    "optical_hopper": {
+      "command": "AS:",
+      "empty_adc_threshold": 101,
+      "nominal_adc_threshold": 99,
+      "nominal_delta_max": 2,
+      "empty_delta_min": 10
+    }
+  },
+  "custom_registers": {
+    "0002": {
+      "name": "Total_Coffee",
+      "description": "Single Coffee preparation count"
+    },
+    "0004": {
+      "name": "Total_Espresso",
+      "description": "Single Espresso preparation count"
+    },
+    "0006": {
+      "name": "Total_Ristretto",
+      "description": "Single Ristretto preparation count"
+    },
+    "0007": {
+      "name": "Coffee_System_Rinses",
+      "description": "Total coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Total_Cleaning",
+      "description": "Total cleaning cycles executed"
+    },
+    "0009": {
+      "name": "Total_Descaling",
+      "description": "Total descaling operations executed"
+    },
+    "000A": {
+      "name": "Grinder_Seconds",
+      "description": "Lifetime grinder operating duration in seconds"
+    },
+    "0010": {
+      "name": "Water_Volume_Total",
+      "description": "Cumulative water dispensed (dl)"
+    },
+    "0012": {
+      "name": "Descaling_Agent_Volume",
+      "description": "Cumulative descaling fluid consumed (dl)"
+    },
+    "0014": {
+      "name": "Total_Filter_Change",
+      "description": "Total CLARIS filter change operations"
+    },
+    "0015": {
+      "name": "Service_Counter",
+      "description": "Preparations since last intervention / service"
+    },
+    "0030": {
+      "name": "Appliance_Number",
+      "description": "Unique factory appliance / machine ID (Maschinennummer)"
+    },
+    "0031": {
+      "name": "Serial_Word",
+      "description": "Factory production line / batch serial word"
+    },
+    "0032": {
+      "name": "Production_Date",
+      "description": "Bitfield production date (Day: 0..4, Month: 5..8, Year: 1990 + 9..15)"
+    },
+    "007E": {
+      "name": "Article_Number_High",
+      "description": "Factory article number high byte (e.g. 0x3B for 15133)"
+    },
+    "007F": {
+      "name": "Article_Number_Low",
+      "description": "Factory article number low byte (e.g. 0x1D for 15133)"
+    }
+  },
+  "recipe_buttons": [
+    {
+      "button": 1,
+      "product": "Ristretto",
+      "counter_reg": "0006"
+    },
+    {
+      "button": 2,
+      "product": "Espresso",
+      "counter_reg": "0004"
+    },
+    {
+      "button": 3,
+      "product": "Coffee",
+      "counter_reg": "0002"
+    }
+  ]
+}

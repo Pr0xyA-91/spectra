@@ -185,8 +185,8 @@ def find_profile(raw_model_or_ef: str) -> dict:
     # Dynamic Enrichment: Merge model-specific specifications from docs/models/*.json if available
     spec = get_model_spec(raw_model_or_ef)
     if spec:
-        for k in ("hardware", "custom_registers", "recipe_buttons", "article_numbers"):
-            if k in spec and k not in matched_profile:
+        for k in ("model_family", "article_number", "appliance_type", "series", "products", "hardware", "custom_registers", "recipe_buttons", "article_numbers"):
+            if k in spec:
                 matched_profile[k] = spec[k]
 
     _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile

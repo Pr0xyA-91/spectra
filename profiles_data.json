@@ -31199,45 +31199,28 @@
     ]
   },
   "EF509M": {
-    "model_family": "ENA Micro 101 Aroma+",
+    "model_family": "A1",
     "ef_code": "EF509M",
-    "article_number": "15110",
-    "series": "Jura Consumer",
+    "article_number": "15133",
+    "appliance_type": "15133 A1 Piano Black",
+    "series": "A-Line",
     "products": [
       {
         "code": 1,
-        "name": "1 Espresso",
+        "name": "1 Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "1 Espresso",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "1 Coffee",
         "is_double": false,
-        "active": true
-      },
-      {
-        "code": 4,
-        "name": "2 Espressi",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 5,
-        "name": "2 Coffees",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 6,
-        "name": "2 Special Coffees",
-        "is_double": true,
         "active": true
       }
     ],
@@ -31283,45 +31266,28 @@
     "max_words": 256
   },
   "EF509P": {
-    "model_family": "ENA Micro 101 Aroma+",
+    "model_family": "A1",
     "ef_code": "EF509P",
-    "article_number": "15110",
-    "series": "Jura Consumer",
+    "article_number": "15171",
+    "appliance_type": "15171 A1 Piano White",
+    "series": "A-Line",
     "products": [
       {
         "code": 1,
-        "name": "1 Espresso",
+        "name": "1 Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "1 Espresso",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "1 Coffee",
         "is_double": false,
-        "active": true
-      },
-      {
-        "code": 4,
-        "name": "2 Espressi",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 5,
-        "name": "2 Coffees",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 6,
-        "name": "2 Special Coffees",
-        "is_double": true,
         "active": true
       }
     ],

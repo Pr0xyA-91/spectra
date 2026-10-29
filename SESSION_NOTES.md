@@ -535,5 +535,32 @@ conn.close()
   - Full test suites executed and passing across all branches (29 tests in `spectra`, 37 in `spectra-mm`, 37 in `spectra-win`).
   - Pre-commit fetch protocol verified with live GitHub remote.
 
+---
+
+### Phase 15: Jura A1 (Article 15133) vs ENA Micro 101 Identification & Single-Cup Mapping (2026-10-29)
+* **Problem Statement**:
+  - Customer machine connected on `/dev/ttyUSB0` (Jura A1, Article 15133) was being identified as `ENA Micro 101 Aroma+` (Article 15110).
+  - Furthermore, beverage statistics were falsely reporting "2 Espressi" and "2 Special Coffees" and inflated double-cup totals (7,376 cups) on a machine that has no 2-cup capability.
+* **Root Cause Analysis**:
+  - Both ENA Micro 1 / 101 and Jura A1 share the same Renesas R8C control board architecture and report `TY:EF509M V01.26`.
+  - In `profiles_data.json`, `EF509M` was previously assigned to `ENA Micro 101 Aroma+` (15110) with standard 6-beverage generic mappings (including 2-cup variants).
+  - Physical inspection of live 256-word EEPROM revealed words `0x007E` (`0x3B00`) and `0x007F` (`0x1D00`). The upper bytes encode `0x3B` and `0x1D`, which combine to `0x3B1D` = decimal `15133` (the exact Jura A1 factory article number).
+  - In EEPROM block `0x00`, counter registers are allocated as:
+    * `0x0002`: Coffee (1,954 preps, 1 cup)
+    * `0x0004`: Espresso (2,234 preps, 1 cup)
+    * `0x0006`: Ristretto (477 preps, 1 cup)
+    * Words `0x0001`, `0x0003`, and `0x0005` remain `0x0000`.
+* **Fix & Architecture**:
+  - `stats_collector.py`: Added hardware article number decoding from `0x7E`/`0x7F` with `ARTICLE_MODEL_MAP` lookup; implemented dedicated single-cup counter mapping for `is_a1` (Total Cups == Total Preparations == 4,665).
+  - `docs/models/EF509M_A1.json` & `docs/models/EF509M_A1.md`: Added complete model specification for Jura A1.
+  - `profiles_data.json`: Updated `EF509M` (15133 Piano Black) and `EF509P` (15171 Piano White) with 1-cup product definitions.
+  - `profiles_db.py`: Allowed model specification JSON files to override profile fields.
+  - `serial_io.py`: Added `DEMO-A1` mock machine and simulated EEPROM matching live customer machine.
+  - `test_a1_mapping.py`: Added 5 unit tests validating mapping, article decoding, and GS1 EAN calculation.
+  - Bumped build number to `20261029.1234`.
+* **Validation**:
+  - All 34 tests passing in `spectra` (`Ran 34 tests in 14.033s - OK`).
+
+
 
 
