@@ -276,11 +276,11 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
 
-        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0700 (1792 decimal > 1680)
+        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0718 (1816 decimal > 1688 -> delta = 128 >= 120)
         def mock_query_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077206980000,077207000001"
+                return "as:077206980000,077207180001"
             elif cmd_c == "HZ:":
                 # Machine heated, tray inserted, water present, cake thickness = 14 ticks (empty grind)
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
@@ -343,11 +343,11 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
 
-        # 1. Fast poll with hopper empty (AS: on_adc = 1792 >= 1710)
+        # 1. Fast poll with hopper empty (AS: delta = 128 >= 120)
         def mock_query_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077206980000,077207000001"
+                return "as:077206980000,077207180001"
             elif cmd_c == "HZ:":
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
             return orig_query(cmd, timeout=timeout)
@@ -422,12 +422,12 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         sw_sb = {s["id"]: s for s in res_sb["switches"]}
         self.assertTrue(sw_sb["bean_hopper"]["ok"])
 
-        # Case 3: Empty hopper bare terminal reflection (delta >= 96, e.g. 104)
+        # Case 3: Empty hopper bare terminal reflection (delta >= 120, e.g. 128)
         conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         def mock_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077206980000,077207000001"  # 0x0698=1688, 0x0700=1792 -> delta=104 >= 96
+                return "as:077206980000,077207180001"  # 0x0698=1688, 0x0718=1816 -> delta=128 >= 120
             elif cmd_c == "HZ:":
                 return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
             return ""
@@ -491,21 +491,21 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
     def test_optical_bean_calibration_and_dev_slider(self):
         """Test optical bean sensor threshold calibration and dev branch UI toggle."""
-        # 1. Verify default calibration (nominal 99 counts)
+        # 1. Verify default calibration (nominal 115 counts)
         sc.reset_optical_bean_threshold(save=False)
-        self.assertEqual(sc.get_optical_bean_threshold(), 99)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
         calib = sc.get_optical_bean_calibration()
-        self.assertEqual(calib["lower_bound"], 97)
-        self.assertEqual(calib["upper_bound"], 101)
+        self.assertEqual(calib["lower_bound"], 110)
+        self.assertEqual(calib["upper_bound"], 120)
 
-        # 2. Delta of 105 with default threshold (99) -> Empty (105 >= 101)
+        # 2. Delta of 125 with default threshold (115) -> Empty (125 >= 120)
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
         def mock_query(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                # off_adc = 1600, on_adc = 1705 -> delta = 105
-                return "as:077206400000,077206A90001"
+                # off_adc = 1600, on_adc = 1725 -> delta = 125
+                return "as:077206400000,077206BD0001"
             elif cmd_c == "HZ:":
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
             return orig_query(cmd, timeout=timeout)
@@ -514,30 +514,30 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         res_default = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
         self.assertFalse(res_default["telemetry"]["beans_ok"])
 
-        # 3. Adjust threshold to 110 (bounds 108 / 112) -> Beans OK (105 <= 108)
-        sc.set_optical_bean_threshold(110, save=False)
-        self.assertEqual(sc.get_optical_bean_threshold(), 110)
+        # 3. Adjust threshold to 130 (bounds 125 / 135) -> Beans OK (125 <= 125)
+        sc.set_optical_bean_threshold(130, save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 130)
         res_calib = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
         self.assertTrue(res_calib["telemetry"]["beans_ok"])
-        self.assertEqual(res_calib["telemetry"]["optical_threshold"], 110)
-        self.assertEqual(res_calib["telemetry"]["optical_delta"], 105)
+        self.assertEqual(res_calib["telemetry"]["optical_threshold"], 130)
+        self.assertEqual(res_calib["telemetry"]["optical_delta"], 125)
 
-        # 4. Reset threshold back to 99
+        # 4. Reset threshold back to 115
         sc.reset_optical_bean_threshold(save=False)
-        self.assertEqual(sc.get_optical_bean_threshold(), 99)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
 
         # 5. Verify dev branch GUI slider availability
         import gui
         self.assertTrue(gui.is_dev_branch())
         app = gui.JuraDiagApp()
         self.assertTrue(hasattr(app, "card_dev_calib"))
-        self.assertEqual(app.scale_bean_threshold.get_value(), 99.0)
+        self.assertEqual(app.scale_bean_threshold.get_value(), 115.0)
 
         # Changing slider updates calibration
-        app.scale_bean_threshold.set_value(120.0)
-        self.assertEqual(sc.get_optical_bean_threshold(), 120)
+        app.scale_bean_threshold.set_value(130.0)
+        self.assertEqual(sc.get_optical_bean_threshold(), 130)
         app._on_reset_bean_calibration_clicked(None)
-        self.assertEqual(sc.get_optical_bean_threshold(), 99)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
         app.destroy()
 
     def test_z5_two_digit_addressing_and_ean_decoding(self):
