@@ -490,10 +490,11 @@ class JuraSerialConnection:
     def close(self):
         """Close connection cleanly."""
         if self.fd is not None:
-            try:
-                fcntl.flock(self.fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
+            if HAS_TERMIOS:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
             try:
                 os.close(self.fd)
             except Exception:

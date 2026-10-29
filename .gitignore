@@ -20,6 +20,12 @@ env/
 venv/
 ENV/
 
+# PyInstaller build artifacts
+build/
+dist/
+dist_package/
+*.zip
+
 # Editor directories and files
 .idea/
 .vscode/

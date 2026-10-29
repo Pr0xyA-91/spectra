@@ -1,3 +1,6 @@
 # SPECTRA Windows Dependencies
 # Core serial interface for physical COM adapters
 pyserial>=3.5
+
+# Standalone Windows executable compiler (used by build_windows_exe.bat)
+pyinstaller>=6.0

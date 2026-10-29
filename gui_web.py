@@ -597,6 +597,19 @@ def is_valid_port(port: str) -> bool:
     return False
 
 
+def get_resource_path(filename: str) -> str:
+    """Resolve file path across dev, PyInstaller _MEIPASS, and frozen exe directories."""
+    if hasattr(sys, "_MEIPASS"):
+        bundled = os.path.join(sys._MEIPASS, filename)
+        if os.path.exists(bundled):
+            return bundled
+    if getattr(sys, "frozen", False):
+        adjacent = os.path.join(os.path.dirname(sys.executable), filename)
+        if os.path.exists(adjacent):
+            return adjacent
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
+
 class SpectraWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Silence routine HTTP access logging in terminal
@@ -621,8 +634,22 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             html = HTML_TEMPLATE.replace("__VERSION__", f"{__version__} (build {__build__})")
             self.wfile.write(html.encode("utf-8"))
 
-        elif url.path in ("/logo.svg", "/favicon.ico", "/favicon.svg", "/spectra_logo.svg"):
-            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spectra_logo.svg")
+        elif url.path == "/favicon.ico":
+            ico_path = get_resource_path("icon.ico")
+            if os.path.isfile(ico_path):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self._send_security_headers()
+                self.end_headers()
+                with open(ico_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        elif url.path in ("/logo.svg", "/favicon.svg", "/spectra_logo.svg"):
+            logo_path = get_resource_path("spectra_logo.svg")
             if os.path.isfile(logo_path):
                 self.send_response(200)
                 self.send_header("Content-Type", "image/svg+xml; charset=utf-8")

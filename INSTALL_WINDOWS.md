@@ -26,11 +26,24 @@ A complete, step-by-step installation guide for running **Universal Hardware Tel
 
 ---
 
-## 2. Installation Methods
+## 2. Installation & Running Methods
 
-Choose any of the three installation methods below:
+Choose the method that fits your workflow:
 
-### Method 1: Automated PowerShell Script (Recommended)
+### Method 0: Standalone Executable (Recommended — Zero Python, Zero Scripts)
+If you prefer not to install Python or deal with Windows script execution policies:
+1. Download **`SPECTRA-Windows-x64.zip`** from [GitHub Actions Artifacts or Releases](../../actions).
+2. Extract the archive anywhere on your PC (e.g. `C:\SPECTRA` or Desktop).
+3. Double-click **`spectra.exe`**.
+4. The Web Dashboard opens automatically in your browser (`http://127.0.0.1:8080`).
+
+> [!TIP]
+> **Compiling Your Own Executable**:
+> If you have this repository cloned on a Windows PC, simply double-click **`build_windows_exe.bat`**. It will automatically install PyInstaller, compile `spectra.exe` using `spectra.spec`, and output the self-contained binary to `dist\spectra.exe`.
+
+---
+
+### Method 1: Automated PowerShell Script
 This script automatically checks Python, upgrades `pip`, installs `pyserial`, scans for connected COM ports, and creates an optional Desktop shortcut.
 
 1. Open File Explorer and navigate to your `spectra-win` folder.

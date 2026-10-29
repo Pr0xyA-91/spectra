@@ -5,11 +5,26 @@ Loads and queries machine profiles (products, maintenance items, alerts)
 for over 75 modern Jura coffee machines.
 """
 
+import sys
 import os
 import re
 import json
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
+def _get_data_file() -> str:
+    # 1. PyInstaller bundled temp extraction directory (_MEIPASS)
+    if hasattr(sys, "_MEIPASS"):
+        bundled = os.path.join(sys._MEIPASS, "profiles_data.json")
+        if os.path.exists(bundled):
+            return bundled
+    # 2. Frozen executable directory (onedir mode or portable unpack)
+    if getattr(sys, "frozen", False):
+        adjacent = os.path.join(os.path.dirname(sys.executable), "profiles_data.json")
+        if os.path.exists(adjacent):
+            return adjacent
+    # 3. Standard development directory
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles_data.json")
+
+DATA_FILE = _get_data_file()
 DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
 
 # Default fallback profile if machine model is unknown
