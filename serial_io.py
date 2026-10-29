@@ -207,6 +207,19 @@ class JuraSerialConnection:
         if HAS_TERMIOS:
             try:
                 self.fd = os.open(self.port_name, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+                # Exclusive file lock to prevent multiple processes interleaving wire bytes
+                lock_deadline = time.time() + 1.5
+                locked = False
+                while time.time() < lock_deadline:
+                    try:
+                        fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                        break
+                    except (BlockingIOError, IOError):
+                        time.sleep(0.05)
+                if not locked:
+                    raise IOError(f"Serial port {self.port_name} is locked by another SPECTRA process.")
+
                 attrs = termios.tcgetattr(self.fd)
                 # iflag: Raw input, ignore break condition
                 attrs[0] = termios.IGNBRK
@@ -432,6 +445,10 @@ class JuraSerialConnection:
     def close(self):
         """Close connection cleanly."""
         if self.fd is not None:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
             try:
                 os.close(self.fd)
             except Exception:
