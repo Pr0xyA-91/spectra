@@ -140,6 +140,47 @@ class TestMemoryMapperTool(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.engine.query_safe(cmd)
 
+    def test_memory_mapper_window_optimization_and_styling(self):
+        """Verify MemoryMapperWindow button styling, in-place store updates, and concurrency lock."""
+        if not memory_mapper.HAS_GTK:
+            self.skipTest("GTK3 not available in this test environment")
+
+        win = memory_mapper.MemoryMapperWindow(initial_port=None)
+        try:
+            self.assertTrue(hasattr(win, "engine_lock"))
+            self.assertTrue(win.btn_sweep.get_style_context().has_class("primary-btn"))
+            self.assertTrue(win.btn_baseline.get_style_context().has_class("secondary-btn"))
+            self.assertTrue(win.btn_watch.get_style_context().has_class("toggle-btn"))
+            self.assertTrue(win.btn_map_action.get_style_context().has_class("action-btn"))
+
+            for btn in win.filter_buttons.values():
+                self.assertTrue(btn.get_style_context().has_class("filter-pill"))
+
+            # Populate model using engine
+            win.engine = self.engine
+            self.engine.sweep_eeprom()
+            diff_0 = self.engine.compute_diff(mask_noise=True)
+            win._update_tree_model(diff_0)
+
+            # Check that row_iters is populated with 512 registers
+            self.assertEqual(len(win.row_iters), 512)
+            store_len_initial = len(win.store)
+            self.assertEqual(store_len_initial, 512)
+
+            # In-place update: simulate a change and update model without store.clear()
+            self.conn.set_mock_eeprom_word(0x0040, 0x050D)
+            self.engine.sweep_eeprom()
+            diff_1 = self.engine.compute_diff(mask_noise=True)
+            win._update_tree_model(diff_1)
+
+            # Length of store must remain exactly 512 (in-place mutation, no duplicates/clearing)
+            self.assertEqual(len(win.store), 512)
+            iter_0040 = win.row_iters[0x0040]
+            self.assertEqual(win.store[iter_0040][2], "0x050D")
+        finally:
+            win.destroy()
+            self.assertFalse(win.is_watching)
+
 
 if __name__ == "__main__":
     unittest.main()

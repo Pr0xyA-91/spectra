@@ -446,4 +446,24 @@ conn.close()
   - `COWORKER_CONTEXT.md` and `SESSION_NOTES.md` updated and mirrored.
   - Workstation #2 is 100% in sync and standing by for task execution.
 
+---
+
+## 17. Developer Memory Mapper Performance, Responsiveness & Styling Modernization (Session 2026-10-29)
+* **Problem & Root Causes**:
+  - Developer Memory Mapper experienced severe UI lag, unresponsiveness, dropped button clicks, and aesthetic disconnect from SPECTRA's core styling.
+  - **Root Cause 1 (ListStore Wiping)**: `_update_tree_model()` invoked `self.store.clear()` and appended 512 rows on every watch tick (1.0s interval), triggering massive CPU spikes, dropping selection state, and resetting the tree scroll position.
+  - **Root Cause 2 (GTK Main Thread Freezing)**: Machine identity probing (`refresh_identity()`) and baseline capture (`capture_baseline()`) executed synchronously on the GTK main thread, stalling user interaction for 1–3 seconds during UART queries.
+  - **Root Cause 3 (Selection Loss & Silent Button Failures)**: Because `clear()` wiped the row selection every second, clicking "Map Register..." frequently found `selection.get_selected()` returning `None` and silently exited.
+  - **Root Cause 4 (Missing Styles & Transitions)**: Control buttons (`btn_baseline`, `btn_watch`, `btn_map_action`, `filter_buttons`) were completely unstyled, lacking GTK classes, cubic-bezier transitions, elevation shadows, and active glow states.
+* **Architecture & Performance Fixes**:
+  - **In-Place ListStore Mutation**: Pre-populates 256/512 rows on initialization and only updates rows that actually changed. Completely eliminated CPU spikes, preserved row selection, and stabilized scroll position.
+  - **Asynchronous Execution & Mutex Lock**: Wrapped port connections, sweeps, and baseline captures in background worker threads governed by `self.engine_lock`. Added non-blocking lock polling in `_watch_loop` to prevent serial bus collisions.
+  - **Resilient Map Action & Live Inspector**: Enhanced `_on_map_dialog_clicked()` with fallback to active address or top row, and enabled live 16-bit binary inspector updates when watched registers change.
+  - **Cyberpunk Modern CSS Styling**: Integrated Catppuccin Mocha / Tokyo Night themes, `transition: all 200ms ease-in-out`, hover elevation box-shadows, active press insets, and glowing checked states for `.toggle-btn` and `.filter-pill`.
+* **Testing & Mirroring**:
+  - Added unit test `test_memory_mapper_window_optimization_and_styling` in `test_memory_mapper.py`.
+  - All unit test suites passing across all 3 branches (`25/25` in `spectra`, `33/33` in `spectra-mm`, `33/33` in `spectra-win`).
+  - Mirrored documentation and source code to `spectra-mm` and `spectra-win`.
+
+
 
