@@ -21,10 +21,18 @@ if [ $# -gt 0 ]; then
     exit 0
 fi
 
+# Automatically adopt uucp group if member in /etc/group but current session has not reloaded
+if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER"; then
+    exec newgrp uucp << REEXEC
+exec bash "$PROJECT_DIR/run.sh" "$@"
+REEXEC
+fi
+
 # Check permissions for serial devices
 if [ -e "/dev/ttyUSB0" ] && [ ! -r "/dev/ttyUSB0" ]; then
     echo "[!] Notice: /dev/ttyUSB0 exists but is not readable by $USER."
     echo "[!] To grant permanent permissions, run: sudo usermod -aG uucp $USER"
+    echo "[!] Note: You must log out and log back in for usermod group changes to activate."
 fi
 
 # Launch Desktop GUI by default
