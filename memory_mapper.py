@@ -916,7 +916,7 @@ if HAS_GTK:
         and quick-mapping dialog for filling community blanks.
         """
 
-        def __init__(self, parent_app=None, initial_port: str = ""):
+        def __init__(self, parent_app=None, initial_port: Optional[str] = ""):
             super().__init__(title="SPECTRA — Developer Memory Mapper & Differential Logic Scope")
             self.parent_app = parent_app
             self.initial_port = initial_port
@@ -932,21 +932,32 @@ if HAS_GTK:
 
             self.conn: Optional[serial_io.JuraSerialConnection] = None
             self.engine: Optional[MemoryMapperEngine] = None
+            self.engine_lock = threading.Lock()
             self.is_sweeping: bool = False
+            self.is_capturing_baseline: bool = False
             self.is_watching: bool = False
             self.watch_thread: Optional[threading.Thread] = None
             self.mask_noise: bool = True
             self.current_filter: str = "all"
             self.search_query: str = ""
+            self.current_selected_addr: Optional[int] = None
+            self.row_iters: Dict[int, Gtk.TreeIter] = {}
+            self.prev_row_values: Dict[int, tuple] = {}
 
             self._apply_css()
             self._create_ui()
+            self.connect("destroy", self._on_destroy)
 
-            # Connect port
-            if initial_port:
-                self._connect_to_port(initial_port)
-            else:
-                self._connect_to_port("DEMO / SIMULATION (Jura Impressa XJ5)")
+            # Connect port asynchronously
+            if initial_port is not None:
+                if initial_port:
+                    self._connect_to_port(initial_port)
+                else:
+                    self._connect_to_port("DEMO / SIMULATION (Jura Impressa XJ5)")
+
+        def _on_destroy(self, *args):
+            """Cleanly terminate background threads when window is closed."""
+            self.is_watching = False
 
         def _apply_css(self):
             css_provider = Gtk.CssProvider()
@@ -966,6 +977,10 @@ if HAS_GTK:
                 padding: 4px 10px;
                 font-size: 11px;
                 font-weight: bold;
+                transition: all 200ms ease-in-out;
+            }
+            .pill-badge:hover {
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
             }
             .badge-mapped {
                 background-color: #1b382b;
@@ -992,16 +1007,164 @@ if HAS_GTK:
                 color: #89dceb;
                 border: 1px solid #89dceb;
             }
+
+            button {
+                border-radius: 6px;
+                min-height: 28px;
+                transition: all 200ms ease-in-out;
+            }
+
             button.primary-btn {
-                background-color: #89b4fa;
+                background-image: linear-gradient(to bottom, #89b4fa, #74c7ec);
+                color: #11111b;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px 16px;
+                border: 1px solid #74c7ec;
+                min-height: 28px;
+                transition: all 200ms ease-in-out;
+            }
+            button.primary-btn:hover {
+                background-image: linear-gradient(to bottom, #b4befe, #89b4fa);
+                border-color: #b4befe;
+                box-shadow: 0 2px 10px rgba(137, 180, 250, 0.4);
+            }
+            button.primary-btn:active {
+                background-image: linear-gradient(to bottom, #74c7ec, #89b4fa);
+                box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+            }
+            button.primary-btn:disabled {
+                background-image: none;
+                background-color: #313244;
+                color: #585b70;
+                border: 1px solid #45475a;
+                box-shadow: none;
+            }
+
+            button.secondary-btn {
+                background-color: #24273a;
+                background-image: none;
+                color: #cdd6f4;
+                border-radius: 6px;
+                padding: 6px 14px;
+                border: 1px solid #45475a;
+                min-height: 28px;
+                font-weight: 500;
+                transition: all 200ms ease-in-out;
+            }
+            button.secondary-btn:hover {
+                background-color: #313244;
+                border-color: #89b4fa;
+                color: #89b4fa;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+            button.secondary-btn:active {
+                background-color: #181825;
+                box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+            }
+            button.secondary-btn:disabled {
+                background-color: #1e1e2e;
+                color: #585b70;
+                border-color: #313244;
+                box-shadow: none;
+            }
+
+            button.toggle-btn {
+                background-color: #24273a;
+                background-image: none;
+                color: #cdd6f4;
+                border-radius: 6px;
+                padding: 6px 14px;
+                border: 1px solid #45475a;
+                min-height: 28px;
+                font-weight: 500;
+                transition: all 200ms ease-in-out;
+            }
+            button.toggle-btn:hover {
+                background-color: #313244;
+                border-color: #585b70;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            }
+            button.toggle-btn:checked {
+                background-color: #a6e3a1;
+                background-image: linear-gradient(to bottom, #a6e3a1, #94e2d5);
+                color: #11111b;
+                font-weight: bold;
+                border: 1px solid #a6e3a1;
+                box-shadow: 0 0 12px rgba(166, 227, 161, 0.45);
+            }
+            button.toggle-btn:checked:hover {
+                background-image: linear-gradient(to bottom, #b4befe, #89b4fa);
+                border-color: #b4befe;
+                color: #11111b;
+            }
+
+            button.action-btn {
+                background-image: linear-gradient(to bottom, #fab387, #f9e2af);
                 color: #11111b;
                 font-weight: bold;
                 border-radius: 6px;
                 padding: 6px 14px;
+                border: 1px solid #fab387;
+                min-height: 28px;
+                transition: all 200ms ease-in-out;
             }
-            button.primary-btn:hover {
-                background-color: #b4befe;
+            button.action-btn:hover {
+                background-image: linear-gradient(to bottom, #f9e2af, #fab387);
+                border-color: #f9e2af;
+                box-shadow: 0 2px 10px rgba(250, 179, 135, 0.4);
             }
+            button.action-btn:active {
+                background-image: linear-gradient(to bottom, #fab387, #e0a37e);
+                box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+            }
+            button.action-btn:disabled {
+                background-image: none;
+                background-color: #313244;
+                color: #585b70;
+                border-color: #45475a;
+                box-shadow: none;
+            }
+
+            .filter-pill {
+                background-color: #24273a;
+                background-image: none;
+                color: #a6adc8;
+                border: 1px solid #363a4f;
+                border-radius: 14px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 500;
+                min-height: 26px;
+                transition: all 180ms ease-in-out;
+            }
+            .filter-pill:hover {
+                background-color: #313244;
+                color: #cdd6f4;
+                border-color: #585b70;
+            }
+            .filter-pill:checked {
+                background-color: #89b4fa;
+                background-image: linear-gradient(to bottom, #89b4fa, #74c7ec);
+                color: #11111b;
+                font-weight: bold;
+                border-color: #89b4fa;
+                box-shadow: 0 0 10px rgba(137, 180, 250, 0.4);
+            }
+
+            entry {
+                background-color: #181825;
+                color: #cdd6f4;
+                border: 1px solid #45475a;
+                border-radius: 6px;
+                padding: 4px 8px;
+                transition: all 200ms ease-in-out;
+            }
+            entry:focus {
+                border-color: #89b4fa;
+                box-shadow: 0 0 6px rgba(137, 180, 250, 0.35);
+            }
+
             treeview {
                 background-color: #181825;
                 color: #cdd6f4;
@@ -1011,6 +1174,7 @@ if HAS_GTK:
                 background-color: #45475a;
                 color: #cdd6f4;
             }
+
             .bit-btn {
                 font-family: monospace;
                 font-size: 12px;
@@ -1021,17 +1185,26 @@ if HAS_GTK:
                 border: 1px solid #45475a;
                 background-color: #181825;
                 color: #6c7086;
+                transition: all 150ms ease-in-out;
+            }
+            .bit-btn:hover {
+                border-color: #89b4fa;
+                color: #cdd6f4;
+                background-color: #24273a;
             }
             .bit-on {
                 background-color: #1b382b;
                 color: #a6e3a1;
                 border-color: #a6e3a1;
+                box-shadow: 0 0 8px rgba(166, 227, 161, 0.35);
             }
             .bit-flipped {
                 background-color: #3e2b17;
                 color: #f9e2af;
                 border-color: #f9e2af;
+                box-shadow: 0 0 10px rgba(249, 226, 175, 0.5);
             }
+
             textview text {
                 background-color: #11111b;
                 color: #a6e3a1;
@@ -1102,11 +1275,13 @@ if HAS_GTK:
             header_box.pack_start(self.btn_sweep, False, False, 0)
 
             self.btn_baseline = Gtk.Button(label="📸 Baseline")
+            self.btn_baseline.get_style_context().add_class("secondary-btn")
             self.btn_baseline.set_tooltip_text("Capture current EEPROM values as baseline reference")
             self.btn_baseline.connect("clicked", lambda w: self._on_baseline_clicked())
             header_box.pack_start(self.btn_baseline, False, False, 0)
 
             self.btn_watch = Gtk.ToggleButton(label="⏱️ Live Diff")
+            self.btn_watch.get_style_context().add_class("toggle-btn")
             self.btn_watch.set_tooltip_text("Continuously poll and display real-time memory modifications")
             self.btn_watch.connect("toggled", self._on_watch_toggled)
             header_box.pack_start(self.btn_watch, False, False, 0)
@@ -1132,12 +1307,14 @@ if HAS_GTK:
                     self.filter_buttons.get("all"), lbl
                 )
                 btn.set_mode(False)
+                btn.get_style_context().add_class("filter-pill")
                 btn.connect("toggled", self._on_filter_toggled, tag)
                 filter_box.pack_start(btn, False, False, 0)
                 self.filter_buttons[tag] = btn
 
             # Map Register Action
             self.btn_map_action = Gtk.Button(label="✏️ Map Register...")
+            self.btn_map_action.get_style_context().add_class("action-btn")
             self.btn_map_action.set_tooltip_text("Open mapping editor to name and persist selected register")
             self.btn_map_action.connect("clicked", lambda w: self._on_map_dialog_clicked())
             filter_box.pack_start(self.btn_map_action, False, False, 4)
@@ -1154,7 +1331,6 @@ if HAS_GTK:
             self.tree_filter.set_visible_func(self._filter_row_visible)
 
             self.tree = Gtk.TreeView(model=self.tree_filter)
-            self.tree.set_rules_hint(True)
             self.tree.get_selection().connect("changed", self._on_tree_selection_changed)
             self.tree.connect("row-activated", lambda t, p, c: self._on_map_dialog_clicked())
 
@@ -1254,64 +1430,131 @@ if HAS_GTK:
                 adj.set_value(adj.get_upper() - adj.get_page_size())
 
         def _connect_to_port(self, port_name: str):
-            try:
-                self.conn = serial_io.JuraSerialConnection(port_name)
-                self.engine = MemoryMapperEngine(self.conn)
-                model_str = f"{self.engine.model_family} ({self.engine.ef_code})"
-                spec_str = os.path.basename(self.engine.spec_file_path or 'Draft')
-                self.lbl_subtitle.set_markup(f"<b>Target:</b> {model_str} | <b>Port:</b> {port_name} | <b>Spec:</b> {spec_str}")
-                self._log_event(f"Connected to {model_str} on {port_name}")
+            self.lbl_subtitle.set_markup(f"<i>Connecting to {port_name}...</i>")
+            self.btn_sweep.set_sensitive(False)
+            self.btn_baseline.set_sensitive(False)
+            self.btn_watch.set_sensitive(False)
+            self.btn_map_action.set_sensitive(False)
 
-                # Initial sweep
-                self._on_sweep_clicked()
-            except Exception as e:
-                self.lbl_subtitle.set_text(f"Connection error: {e}")
-                self._log_event(f"Error opening port {port_name}: {e}")
+            def worker():
+                try:
+                    with self.engine_lock:
+                        self.conn = serial_io.JuraSerialConnection(port_name)
+                        self.engine = MemoryMapperEngine(self.conn)
+                    GLib.idle_add(self._on_connect_success, port_name)
+                except Exception as e:
+                    GLib.idle_add(self._on_connect_failed, port_name, str(e))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_connect_success(self, port_name: str):
+            if not self.engine:
+                return
+            model_str = f"{self.engine.model_family} ({self.engine.ef_code})"
+            spec_str = os.path.basename(self.engine.spec_file_path or 'Draft')
+            self.lbl_subtitle.set_markup(f"<b>Target:</b> {model_str} | <b>Port:</b> {port_name} | <b>Spec:</b> {spec_str}")
+            self._log_event(f"Connected to {model_str} on {port_name}")
+
+            self.btn_sweep.set_sensitive(True)
+            self.btn_baseline.set_sensitive(True)
+            self.btn_watch.set_sensitive(True)
+            self.btn_map_action.set_sensitive(True)
+
+            all_btn = self.filter_buttons.get("all")
+            if all_btn:
+                all_btn.set_label(f"All ({self.engine.max_words})")
+
+            # Trigger initial background sweep
+            self._on_sweep_clicked()
+
+        def _on_connect_failed(self, port_name: str, err: str):
+            self.lbl_subtitle.set_markup(f"<span color='#f38ba8'>Connection error: {err}</span>")
+            self._log_event(f"Error opening port {port_name}: {err}")
+            self.btn_sweep.set_sensitive(True)
 
         def _on_sweep_clicked(self):
             if self.is_sweeping or not self.engine:
                 return
             self.is_sweeping = True
             self.btn_sweep.set_sensitive(False)
+            self.btn_sweep.set_label("⏳ Sweeping...")
+            self.btn_baseline.set_sensitive(False)
 
             def worker():
+                diff_res = None
                 try:
-                    self.engine.sweep_eeprom()
-                    if not self.engine.baseline_snapshot:
-                        self.engine.capture_baseline()
-                    diff_res = self.engine.compute_diff(self.mask_noise)
-                    GLib.idle_add(self._update_tree_model, diff_res)
+                    with self.engine_lock:
+                        self.engine.sweep_eeprom()
+                        if not self.engine.baseline_snapshot:
+                            self.engine.capture_baseline()
+                        diff_res = self.engine.compute_diff(self.mask_noise)
                 except Exception as e:
                     self._log_event(f"Sweep error: {e}")
                 finally:
-                    GLib.idle_add(lambda: self.btn_sweep.set_sensitive(True))
-                    self.is_sweeping = False
+                    GLib.idle_add(self._on_sweep_done, diff_res)
 
             threading.Thread(target=worker, daemon=True).start()
 
+        def _on_sweep_done(self, diff_res):
+            self.btn_sweep.set_label("⚡ Full Sweep")
+            self.btn_sweep.set_sensitive(True)
+            self.btn_baseline.set_sensitive(True)
+            self.is_sweeping = False
+            if diff_res is not None:
+                self._update_tree_model(diff_res)
+
         def _on_baseline_clicked(self):
-            if not self.engine:
+            if not self.engine or self.is_sweeping or self.is_capturing_baseline:
                 return
-            self.engine.capture_baseline()
+            self.is_capturing_baseline = True
+            self.btn_baseline.set_sensitive(False)
+            self.btn_baseline.set_label("⏳ Capturing...")
+
+            def worker():
+                diff = None
+                try:
+                    with self.engine_lock:
+                        self.engine.capture_baseline()
+                        diff = self.engine.compute_diff(self.mask_noise)
+                except Exception as e:
+                    self._log_event(f"Baseline error: {e}")
+                finally:
+                    GLib.idle_add(self._on_baseline_done, diff)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_baseline_done(self, diff):
+            self.btn_baseline.set_label("📸 Baseline")
+            self.btn_baseline.set_sensitive(True)
+            self.is_capturing_baseline = False
             self._log_event("Captured new baseline reference.")
-            self._update_tree_model(self.engine.compute_diff(self.mask_noise))
+            if diff is not None:
+                self._update_tree_model(diff)
 
         def _on_watch_toggled(self, btn):
             self.is_watching = btn.get_active()
             if self.is_watching:
+                self.btn_watch.set_label("🔴 Live Diff [ON]")
                 self._log_event("Live Differential Scope watch started.")
                 self.watch_thread = threading.Thread(target=self._watch_loop, daemon=True)
                 self.watch_thread.start()
             else:
+                self.btn_watch.set_label("⏱️ Live Diff")
                 self._log_event("Live Differential Scope watch stopped.")
 
         def _watch_loop(self):
             while self.is_watching and self.engine:
-                time.sleep(1.0)
+                time.sleep(0.8)
+                if not self.is_watching:
+                    break
+                # Non-blocking lock to avoid contention with manual sweeps
+                acquired = self.engine_lock.acquire(blocking=False)
+                if not acquired:
+                    continue
                 try:
                     self.engine.sweep_eeprom()
                     diff = self.engine.compute_diff(self.mask_noise)
-                    changed = diff["changed_registers"]
+                    changed = diff.get("changed_registers", [])
                     if changed:
                         for r in changed:
                             bits = ", ".join(f"b{b}" for b in r.bits_flipped)
@@ -1320,40 +1563,82 @@ if HAS_GTK:
                 except Exception as e:
                     self._log_event(f"Watch error: {e}")
                     break
+                finally:
+                    self.engine_lock.release()
+
+        def _get_badge_markup(self, status: str) -> str:
+            if status == STATUS_MAPPED:
+                return "<span color='#a6e3a1'>● Mapped</span>"
+            elif status == STATUS_THEORETICAL:
+                return "<span color='#fab387'>▲ Theor.</span>"
+            elif status == STATUS_UNKNOWN:
+                return "<span color='#f38ba8'>■ Unknown</span>"
+            else:
+                return "<span color='#6c7086'>○ Blank</span>"
 
         def _update_tree_model(self, diff_res):
             if not self.engine:
                 return
-            self.store.clear()
-            for r in self.engine.classified_registers:
-                # Status markup
-                if r.status == STATUS_MAPPED:
-                    badge_markup = "<span color='#a6e3a1'>● Mapped</span>"
-                elif r.status == STATUS_THEORETICAL:
-                    badge_markup = "<span color='#fab387'>▲ Theor.</span>"
-                elif r.status == STATUS_UNKNOWN:
-                    badge_markup = "<span color='#f38ba8'>■ Unknown</span>"
-                else:
-                    badge_markup = "<span color='#6c7086'>○ Blank</span>"
 
-                # Delta markup
-                if r.is_changed:
-                    delta_str = f"0x{r.baseline_val:04X} ({r.delta:+d})"
-                else:
-                    delta_str = f"0x{r.baseline_val:04X} (+0)"
+            registers = self.engine.classified_registers
+            if not registers:
+                return
 
-                self.store.append([
-                    r.status,
-                    f"0x{r.hex_addr}",
-                    f"0x{r.val:04X}",
-                    f"{r.val}",
-                    delta_str,
-                    r.name,
-                    r.desc,
-                    r.category,
-                    r.addr,
-                    badge_markup
-                ])
+            # Fast in-place updates: only populate from scratch if row count changed or uninitialized
+            if len(self.row_iters) != len(registers):
+                self.store.clear()
+                self.row_iters.clear()
+                self.prev_row_values.clear()
+
+                for r in registers:
+                    badge_markup = self._get_badge_markup(r.status)
+                    delta_str = f"0x{r.baseline_val:04X} ({r.delta:+d})" if r.is_changed else f"0x{r.baseline_val:04X} (+0)"
+                    row_data = [
+                        r.status,
+                        f"0x{r.hex_addr}",
+                        f"0x{r.val:04X}",
+                        f"{r.val}",
+                        delta_str,
+                        r.name,
+                        r.desc,
+                        r.category,
+                        r.addr,
+                        badge_markup
+                    ]
+                    tree_iter = self.store.append(row_data)
+                    self.row_iters[r.addr] = tree_iter
+                    self.prev_row_values[r.addr] = (r.val, r.baseline_val, r.status, r.name, r.desc, r.is_changed)
+                self.tree_filter.refilter()
+            else:
+                # IN-PLACE MUTATION: only update rows that actually changed!
+                had_filter_impact = False
+                for r in registers:
+                    prev = self.prev_row_values.get(r.addr)
+                    curr = (r.val, r.baseline_val, r.status, r.name, r.desc, r.is_changed)
+                    if prev != curr:
+                        tree_iter = self.row_iters.get(r.addr)
+                        if tree_iter:
+                            badge_markup = self._get_badge_markup(r.status)
+                            delta_str = f"0x{r.baseline_val:04X} ({r.delta:+d})" if r.is_changed else f"0x{r.baseline_val:04X} (+0)"
+                            self.store[tree_iter] = [
+                                r.status,
+                                f"0x{r.hex_addr}",
+                                f"0x{r.val:04X}",
+                                f"{r.val}",
+                                delta_str,
+                                r.name,
+                                r.desc,
+                                r.category,
+                                r.addr,
+                                badge_markup
+                            ]
+                            self.prev_row_values[r.addr] = curr
+                            if (prev and prev[5] != curr[5]) or self.current_filter in ("changed", "unknown", "theor", "mapped"):
+                                had_filter_impact = True
+
+                if had_filter_impact:
+                    self.tree_filter.refilter()
+                    self._restore_selection()
 
             # Update scorecards
             stats = self.engine.get_summary_stats()
@@ -1363,17 +1648,32 @@ if HAS_GTK:
             self.pill_blank.set_text(f"⚪ {stats['blank']} Blank")
             self.pill_changed.set_text(f"⚡ {stats['changed']} Delta")
 
-            self.tree_filter.refilter()
+            # Live update 16-bit inspector if currently inspected register changed
+            if self.current_selected_addr is not None:
+                self._update_inspector_for_addr(self.current_selected_addr)
+
+        def _restore_selection(self):
+            if self.current_selected_addr is None:
+                return
+            def find_row(model, path, iter, user_data):
+                if model.get_value(iter, 8) == self.current_selected_addr:
+                    user_data.append(path)
+                    return True
+                return False
+            found = []
+            self.tree_filter.foreach(find_row, found)
+            if found:
+                self.tree.get_selection().select_path(found[0])
 
         def _filter_row_visible(self, model, iter, data):
             if not self.engine:
                 return True
 
-            status = model.get_value(iter, 0)
-            addr_hex = model.get_value(iter, 1).lower()
-            name = model.get_value(iter, 5).lower()
-            desc = model.get_value(iter, 6).lower()
-            delta_str = model.get_value(iter, 4)
+            status = model.get_value(iter, 0) or ""
+            addr_hex = (model.get_value(iter, 1) or "").lower()
+            name = (model.get_value(iter, 5) or "").lower()
+            desc = (model.get_value(iter, 6) or "").lower()
+            delta_str = model.get_value(iter, 4) or ""
 
             # Search text query
             q = self.search_query.lower()
@@ -1389,37 +1689,42 @@ if HAS_GTK:
             elif self.current_filter == "unknown":
                 return status == STATUS_UNKNOWN
             elif self.current_filter == "changed":
-                return "(+0)" not in delta_str
+                return not delta_str.endswith("(+0)")
             return True
 
         def _on_filter_toggled(self, btn, tag):
             if btn.get_active():
                 self.current_filter = tag
                 self.tree_filter.refilter()
+                self._restore_selection()
 
         def _on_search_changed(self, entry):
             self.search_query = entry.get_text().strip()
             self.tree_filter.refilter()
+            self._restore_selection()
 
         def _on_tree_selection_changed(self, selection):
             model, tree_iter = selection.get_selected()
             if not tree_iter:
                 return
-
             addr = model.get_value(tree_iter, 8)
-            val_hex = model.get_value(tree_iter, 2)
-            name = model.get_value(tree_iter, 5)
-            desc = model.get_value(tree_iter, 6)
+            self.current_selected_addr = addr
+            self._update_inspector_for_addr(addr)
 
-            try:
-                val = int(val_hex, 16)
-            except ValueError:
-                val = 0
+        def _update_inspector_for_addr(self, addr: int):
+            if not self.engine:
+                return
 
             # Find matching RegisterEntry
             r_match = next((r for r in self.engine.classified_registers if r.addr == addr), None)
-            base_val = r_match.baseline_val if r_match else val
-            flipped_bits = r_match.bits_flipped if r_match else []
+            if not r_match:
+                return
+
+            val = r_match.val
+            base_val = r_match.baseline_val
+            flipped_bits = r_match.bits_flipped
+            name = r_match.name
+            desc = r_match.desc
 
             # Update bit indicator buttons (b15 down to b0)
             for b in range(16):
@@ -1444,7 +1749,7 @@ if HAS_GTK:
             c2 = chr(lb) if 32 <= lb <= 126 else "."
 
             delta_info = ""
-            if r_match and r_match.is_changed:
+            if r_match.is_changed:
                 delta_info = f" | <span color='#89dceb'><b>Delta: {r_match.delta:+d} (Baseline: 0x{base_val:04X})</b></span>"
 
             markup = (
@@ -1457,8 +1762,30 @@ if HAS_GTK:
         def _on_map_dialog_clicked(self):
             selection = self.tree.get_selection()
             model, tree_iter = selection.get_selected()
+
+            # Resilient selection: if None, restore from active address or first row
+            if not tree_iter and self.current_selected_addr is not None:
+                def find_row(model, path, iter, user_data):
+                    if model.get_value(iter, 8) == self.current_selected_addr:
+                        user_data.append(iter)
+                        return True
+                    return False
+                found = []
+                self.tree_filter.foreach(find_row, found)
+                if found:
+                    tree_iter = found[0]
+                    self.tree.get_selection().select_iter(tree_iter)
+                    model = self.tree_filter
+
             if not tree_iter:
-                return
+                first_iter = self.tree_filter.get_iter_first()
+                if first_iter:
+                    tree_iter = first_iter
+                    self.tree.get_selection().select_iter(tree_iter)
+                    model = self.tree_filter
+                else:
+                    self._log_event("⚠️ Please select a register in the table before clicking Map Register.")
+                    return
 
             addr = model.get_value(tree_iter, 8)
             val_hex = model.get_value(tree_iter, 2)
@@ -1476,6 +1803,13 @@ if HAS_GTK:
                 "💾 Save & Persist", Gtk.ResponseType.OK
             )
             dialog.set_default_size(440, 280)
+
+            btn_ok = dialog.get_widget_for_response(Gtk.ResponseType.OK)
+            if btn_ok:
+                btn_ok.get_style_context().add_class("primary-btn")
+            btn_cancel = dialog.get_widget_for_response(Gtk.ResponseType.CANCEL)
+            if btn_cancel:
+                btn_cancel.get_style_context().add_class("secondary-btn")
 
             content = dialog.get_content_area()
             content.set_spacing(10)
