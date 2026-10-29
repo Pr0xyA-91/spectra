@@ -561,6 +561,29 @@ conn.close()
 * **Validation**:
   - All 34 tests passing in `spectra` (`Ran 34 tests in 14.033s - OK`).
 
+---
+
+### Phase 16: GTK3 Hitbox Desync Resolution, Responsive Header Reflow & Button Styling (2026-10-29)
+* **Problem Statement**:
+  - Buttons in the GUI header (`Read Statistics`, `Memory Mapper`, `Service Receipt`, `Export`) exhibited hit area / active zone desynchronization on Wayland / Hyprland desktops, failing to click or registering off-target.
+* **Root Cause Analysis**:
+  - In commit `0461855`, 11 widgets were attached horizontally in a single row inside `header_grid` without responsive wrapping.
+  - This inflated the window minimum preferred width from `842 px` (in `backup-v0.4.2-pre-ui`) to `1,550 px` (`1,835 px` in `multi-manufacturer`).
+  - When tiled on Hyprland (960 px half-screen) or run on laptop/standard displays, the Wayland compositor clamped the window surface, causing the pointer event coordinate space to severely desync from the rendered button positions.
+  - Furthermore, `_on_window_size_allocate` evaluated `width < 880`, which could never trigger because GTK's layout engine enforced `min_w = 1550 px`.
+* **Fix & Architecture**:
+  - `gui.py`: Implemented responsive 2-row layout in compact mode (< 1480 px in `spectra`, < 1650 px in `spectra-mm`/`spectra-win`):
+    * Row 0: Brand box, status pill, port controls (`min_w = 752 px`).
+    * Row 1: Actions toolbar (`btn_read`, `btn_mapper`, `btn_service_report`, `btn_export`, `btn_about`).
+    * Wide mode (>= 1480 px): Seamless single-row desktop layout.
+  - Initialized `header_grid` and `kpi_grid` in compact mode on startup, completely eliminating minimum width deadlock.
+  - Added missing CSS style classes: `button.action-btn` and `button.secondary-btn` with hover/active/disabled states.
+  - `version.py`: Fixed bug in `update_build` that hardcoded `20261029.1234`; bumped build to `20261029.1354`.
+  - Added `test_gui_responsive_hitbox_bounds_and_compact_layout` to `test_security_and_optimizations.py`.
+* **Validation**:
+  - All 35 tests passing in `spectra`, 43 in `spectra-mm`, 43 in `spectra-win` (121/121 total, 100% pass rate).
+
+
 
 
 

@@ -263,6 +263,48 @@ class JuraDiagApp(Gtk.Window):
             color: #585b70;
             border: 1px solid #45475a;
         }
+        button.action-btn {
+            background-image: linear-gradient(to bottom, #fab387, #f9e2af);
+            color: #11111b;
+            font-weight: bold;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: 1px solid #fab387;
+            min-height: 28px;
+            transition: all 200ms ease-in-out;
+        }
+        button.action-btn:hover {
+            background-image: linear-gradient(to bottom, #f9e2af, #fab387);
+            border-color: #f9e2af;
+            box-shadow: 0 2px 10px rgba(250, 179, 135, 0.4);
+        }
+        button.action-btn:active {
+            background-image: linear-gradient(to bottom, #fab387, #e0a37e);
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+        }
+        button.action-btn:disabled {
+            background-image: none;
+            background-color: #313244;
+            color: #585b70;
+            border-color: #45475a;
+            box-shadow: none;
+        }
+        button.secondary-btn {
+            background-color: #24273a;
+            color: #cdd6f4;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: 1px solid #45475a;
+            min-height: 28px;
+            font-weight: 500;
+        }
+        button.secondary-btn:hover {
+            background-color: #313244;
+            border-color: #585b70;
+        }
+        button.secondary-btn:active {
+            background-color: #1e1e2e;
+        }
         button.toggle-btn {
             background-color: #24273a;
             background-image: none;
@@ -383,6 +425,7 @@ class JuraDiagApp(Gtk.Window):
         self.mfr_combo.append("lamanti-kl", "🏢 Lamanti-KL (Kalerm)")
         self.mfr_combo.append("lamanti-jn", "🥤 Lamanti-JN (Jetinno)")
         self.mfr_combo.set_active_id("auto")
+        self.mfr_combo.set_size_request(140, -1)
         self.mfr_combo.set_valign(Gtk.Align.CENTER)
 
         # Connection Status Pill
@@ -407,26 +450,32 @@ class JuraDiagApp(Gtk.Window):
         self.status_pill.pack_start(status_text_box, False, False, 0)
 
         # Port Selector Label & ComboBox
-        self.lbl_port = Gtk.Label(label="Port / Demo:")
+        self.lbl_port = Gtk.Label(label="Port:")
         self.lbl_port.set_valign(Gtk.Align.CENTER)
 
         self.port_combo = Gtk.ComboBoxText()
         self.port_combo.connect("changed", self._on_port_changed)
-        self.port_combo.set_size_request(160, -1)
+        self.port_combo.set_size_request(130, -1)
         self.port_combo.set_valign(Gtk.Align.CENTER)
         for cell in self.port_combo.get_cells():
             cell.set_property("ellipsize", Pango.EllipsizeMode.END)
-            cell.set_property("width-chars", 16)
-            cell.set_property("max-width-chars", 26)
+            cell.set_property("width-chars", 14)
+            cell.set_property("max-width-chars", 24)
 
         # Refresh Ports Button
-        self.btn_refresh = Gtk.Button(label="🔄 Refresh")
+        self.btn_refresh = Gtk.Button(label="🔄")
+        self.btn_refresh.set_tooltip_text("Refresh Serial Ports")
+        self.btn_refresh.get_style_context().add_class("secondary-btn")
         self.btn_refresh.set_valign(Gtk.Align.CENTER)
         self.btn_refresh.connect("clicked", lambda w: self._refresh_ports())
 
         # Spacer
         self.header_spacer = Gtk.Box()
         self.header_spacer.set_hexpand(True)
+
+        # Actions toolbar container for compact mode
+        self.actions_row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.actions_row_box.set_valign(Gtk.Align.CENTER)
 
         # Read Statistics Button
         self.btn_read = Gtk.Button(label="⚡ Read Statistics")
@@ -436,29 +485,33 @@ class JuraDiagApp(Gtk.Window):
 
         # Memory Mapper Developer Tool Button
         self.btn_mapper = Gtk.Button(label="🔬 Memory Mapper")
+        self.btn_mapper.get_style_context().add_class("action-btn")
         self.btn_mapper.set_tooltip_text("Developer Memory Mapper & Differential Scope Tool")
         self.btn_mapper.set_valign(Gtk.Align.CENTER)
         self.btn_mapper.connect("clicked", lambda w: self._on_mapper_clicked())
 
         # Service Report Button
         self.btn_service_report = Gtk.Button(label="🖨️ Service Receipt")
+        self.btn_service_report.get_style_context().add_class("action-btn")
         self.btn_service_report.set_tooltip_text("Generate Branded Customer Service PDF/HTML Inspection Certificate")
         self.btn_service_report.set_valign(Gtk.Align.CENTER)
         self.btn_service_report.connect("clicked", lambda w: self._on_service_report_clicked())
 
         # Export Report Button
         self.btn_export = Gtk.Button(label="💾 Export")
+        self.btn_export.get_style_context().add_class("action-btn")
         self.btn_export.set_tooltip_text("Export Raw JSON / CSV / Text Diagnostic Report")
         self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
 
         # About Suite Button
         self.btn_about = Gtk.Button(label="ℹ️")
+        self.btn_about.get_style_context().add_class("secondary-btn")
         self.btn_about.set_tooltip_text("About SPECTRA")
         self.btn_about.set_valign(Gtk.Align.CENTER)
         self.btn_about.connect("clicked", lambda w: self._on_about_clicked())
 
-        self._update_header_layout(False)
+        self._update_header_layout(True)
         return self.header_grid
 
     def _update_header_layout(self, is_compact: bool):
@@ -468,12 +521,17 @@ class JuraDiagApp(Gtk.Window):
 
         for w in [self.brand_box, self.lbl_mfr, self.mfr_combo, self.status_pill, self.lbl_port,
                   self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read,
-                  self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
-            if w.get_parent():
-                self.header_grid.remove(w)
+                  self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about, self.actions_row_box]:
+            p = w.get_parent()
+            if p:
+                p.remove(w)
+        for btn in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
+            p = btn.get_parent()
+            if p:
+                p.remove(btn)
 
         if not is_compact:
-            # Single-row desktop layout
+            # Single-row desktop layout (wide displays >= 1580px)
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.lbl_mfr, 2, 0, 1, 1)
@@ -487,26 +545,24 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.btn_service_report, 10, 0, 1, 1)
             self.header_grid.attach(self.btn_export, 11, 0, 1, 1)
             self.header_grid.attach(self.btn_about, 12, 0, 1, 1)
-            self.sub_title.set_visible(True)
+            self.sub_title.show()
         else:
-            # 2-row layout: Row 0 Title + Status + Actions, Row 1 Brand + Port + Refresh
+            # 2-row layout: Row 0 Title + Status + Ports, Row 1 Brand + Actions Toolbar (min_w=942px)
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 2, 0, 1, 1)
-            self.header_grid.attach(self.btn_read, 3, 0, 1, 1)
-            self.header_grid.attach(self.btn_mapper, 4, 0, 1, 1)
-            self.header_grid.attach(self.btn_service_report, 5, 0, 1, 1)
-            self.header_grid.attach(self.btn_export, 6, 0, 1, 1)
-            self.header_grid.attach(self.btn_about, 7, 0, 1, 1)
+            self.header_grid.attach(self.lbl_port, 3, 0, 1, 1)
+            self.header_grid.attach(self.port_combo, 4, 0, 1, 1)
+            self.header_grid.attach(self.btn_refresh, 5, 0, 1, 1)
 
-            self.header_grid.attach(self.lbl_mfr, 0, 1, 1, 1)
-            self.header_grid.attach(self.mfr_combo, 1, 1, 1, 1)
-            self.header_grid.attach(self.lbl_port, 2, 1, 1, 1)
-            self.header_grid.attach(self.port_combo, 3, 1, 1, 1)
-            self.header_grid.attach(self.btn_refresh, 4, 1, 1, 1)
-            self.sub_title.set_visible(False)
+            for item in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
+                self.actions_row_box.pack_start(item, False, False, 0)
+            self.header_grid.attach(self.actions_row_box, 0, 1, 6, 1)
+            self.sub_title.hide()
 
         self.header_grid.show_all()
+        if is_compact:
+            self.sub_title.hide()
 
     def _on_mapper_clicked(self):
         try:
@@ -624,7 +680,7 @@ class JuraDiagApp(Gtk.Window):
         self.lbl_kpi_clean = Gtk.Label(label="---")
 
         self._kpi_cards_list = [self.kpi_health_card, self.kpi_total_card, self.kpi_decalc_card, self.kpi_filter_card]
-        self._update_kpi_layout(False)
+        self._update_kpi_layout(True)
         return self.kpi_grid
 
     def _update_kpi_layout(self, is_compact: bool):
@@ -1345,17 +1401,15 @@ class JuraDiagApp(Gtk.Window):
         return box
 
     def _on_window_size_allocate(self, widget, allocation):
-        header_compact = allocation.width < 920
-        kpi_compact = allocation.width < 820
-        sensor_compact = allocation.width < 860
+        header_compact = allocation.width < 1650
+        kpi_compact = allocation.width < 1180
 
         needs_reflow = (
             self._header_compact != header_compact or
-            self._kpi_compact != kpi_compact or
-            self._sensor_compact != sensor_compact
+            self._kpi_compact != kpi_compact
         )
         if needs_reflow:
-            self._pending_reflow = (header_compact, kpi_compact, sensor_compact)
+            self._pending_reflow = (header_compact, kpi_compact)
             if not getattr(self, "_reflow_scheduled", False):
                 self._reflow_scheduled = True
                 GLib.idle_add(self._do_pending_reflow)
@@ -1363,7 +1417,7 @@ class JuraDiagApp(Gtk.Window):
     def _do_pending_reflow(self):
         self._reflow_scheduled = False
         if hasattr(self, "_pending_reflow") and self._pending_reflow:
-            h_comp, k_comp, s_comp = self._pending_reflow
+            h_comp, k_comp = self._pending_reflow
             self._update_header_layout(h_comp)
             self._update_kpi_layout(k_comp)
             self._pending_reflow = None

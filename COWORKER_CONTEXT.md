@@ -349,9 +349,39 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### [2026-10-29 13:55] — Agent Workstation #2 (Device 2)
+* **What Was Done**:
+  1. **Created Marked Local Backup**:
+     - Compressed archive: `~/Projects/backup/spectra_local_backup_20261029_133123.tar.gz` (1.7 MB, SHA-256: `3a375a7d...`).
+     - Marker file: `~/Projects/backup/MARKER_20261029_133123.txt`.
+  2. **Resolved GTK3 Hitbox & Button Active Zone Coordinate Desync**:
+     - Diagnosed regression where header grid minimum preferred width inflated to 1,550 px (1,835 px in `multi-manufacturer`) due to 11+ horizontal widgets packed in Row 0 without compact wrapping.
+     - Under Wayland / Hyprland fractional scaling and 960 px half-screen tiling, compositor clamped the visible surface, throwing mouse event coordinates completely out of sync with rendered buttons.
+     - Refactored `gui.py` header into a responsive 2-row layout:
+       * Compact mode (< 1480 px in `spectra`, < 1650 px in `spectra-mm`/`spectra-win`): Row 0 contains Identity, Status Pill, and Port controls (min-width ~750 px); Row 1 hosts the Action Toolbar (`Read Statistics`, `Memory Mapper`, `Service Receipt`, `Export`, `About`).
+       * Wide mode (>= 1480 px): Single-row expanded desktop layout.
+     - Corrected responsive reflow deadlock: initialized header and KPI cards in compact mode on startup, allowing smooth window allocation and sizing from 752 px up to 4K.
+     - Added missing CSS style classes in `gui.py`: `button.action-btn` and `button.secondary-btn` with explicit `:hover`, `:active`, and `:disabled` visual feedback.
+  3. **Fixed `version.py` CLI Bump Regex Bug**:
+     - Corrected `update_build(new_build)` in-place regex replacement that previously hardcoded `20261029.1234` instead of using `new_build`.
+     - Bumped build identifier across all editions to `20261029.1354`.
+  4. **Regression Testing & Multi-Repo Mirroring**:
+     - Added `test_gui_responsive_hitbox_bounds_and_compact_layout` to `test_security_and_optimizations.py`.
+     - Mirrored all GUI, version, and test fixes across `spectra`, `spectra-mm`, and `spectra-win`.
+* **Test Status**:
+  - `spectra`: 35/35 passing (100%)
+  - `spectra-mm`: 43/43 passing (100%)
+  - `spectra-win`: 43/43 passing (100%)
+* **Hardware Attached**: No direct physical UART attached to Workstation #2; mock drivers and virtual hardware operational.
+* **Next Pending Steps for Coworker**:
+  - Integrate latest commits via `git pull --rebase origin <branch>`.
+  - Maintain pre-commit fetch protocol.
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
-### [YYYY-MM-DD HH:MM] — Agent Workstation #2 (Device 2)
+### [YYYY-MM-DD HH:MM] — Agent Workstation #1 (Device 1)
 * **What Was Done**:
   - ...
 * **Test Status**:
