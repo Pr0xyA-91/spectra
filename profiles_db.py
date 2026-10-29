@@ -8,6 +8,7 @@ for over 75 modern Jura coffee machines.
 import os
 import re
 import json
+from typing import Optional, Dict, Any, List
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
 DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
