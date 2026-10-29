@@ -9835,7 +9835,7 @@
         "code": 13,
         "name": "Hotwater Portion(normal)",
         "is_double": false,
-        "active": false
+        "active": true
       },
       {
         "code": 49,
@@ -10138,7 +10138,13 @@
         "blocking": true,
         "name": "SwitchOff Delay active"
       }
-    ]
+    ],
+    "ef_code": "EF529M",
+    "article_number": "15221",
+    "appliance_type": "15221 D4 Piano Black",
+    "software_version_display": "N/A (Symbol Display)",
+    "address_width": 4,
+    "max_words": 1024
   },
   "EF532": {
     "model_family": "E6",
@@ -36703,5 +36709,335 @@
     ],
     "appliance_type": "13705 IMPRESSA XJ5 Professional GII Smart Connect TB Brillantsilber EU",
     "software_version_display": "EF518D V02.04"
+  },
+  "EF529M": {
+    "model_family": "D4",
+    "products": [
+      {
+        "code": 2,
+        "name": "Espresso",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 3,
+        "name": "Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "Hotwater Portion(normal)",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 49,
+        "name": "2 Espressi",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 54,
+        "name": "2 Coffee",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 1,
+        "name": "Ristretto (only JOE)",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 40,
+        "name": "Cafe Barista (only JOE)",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 41,
+        "name": "Barista Lungo (only JOE)",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 48,
+        "name": "Espresso Doppio (only JOE)",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 17,
+        "name": "2 Ristretti (only JOE)",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 15,
+        "name": "Powderproduct",
+        "is_double": false,
+        "active": false
+      }
+    ],
+    "maintenance_counters": [
+      "Cleaning",
+      "FilterChange",
+      "Decalc",
+      "CoffeeRinse"
+    ],
+    "maintenance_percentages": [
+      "Cleaning",
+      "FilterChange",
+      "Decalc"
+    ],
+    "alerts": [
+      {
+        "bit": 0,
+        "blocking": true,
+        "name": "insert tray"
+      },
+      {
+        "bit": 1,
+        "blocking": true,
+        "name": "fill water"
+      },
+      {
+        "bit": 2,
+        "blocking": true,
+        "name": "empty grounds"
+      },
+      {
+        "bit": 3,
+        "blocking": true,
+        "name": "empty tray"
+      },
+      {
+        "bit": 4,
+        "blocking": true,
+        "name": "insert coffee bin"
+      },
+      {
+        "bit": 5,
+        "blocking": false,
+        "name": "outlet missing"
+      },
+      {
+        "bit": 6,
+        "blocking": false,
+        "name": "rear cover missing"
+      },
+      {
+        "bit": 7,
+        "blocking": false,
+        "name": "milk alert"
+      },
+      {
+        "bit": 8,
+        "blocking": true,
+        "name": "fill system"
+      },
+      {
+        "bit": 9,
+        "blocking": false,
+        "name": "system filling"
+      },
+      {
+        "bit": 10,
+        "blocking": false,
+        "name": "no beans"
+      },
+      {
+        "bit": 11,
+        "blocking": false,
+        "name": "welcome"
+      },
+      {
+        "bit": 12,
+        "blocking": false,
+        "name": "heating up"
+      },
+      {
+        "bit": 13,
+        "blocking": false,
+        "name": "coffee ready"
+      },
+      {
+        "bit": 14,
+        "blocking": false,
+        "name": "no milk (milk sensor)"
+      },
+      {
+        "bit": 15,
+        "blocking": false,
+        "name": "error milk (milk sensor)"
+      },
+      {
+        "bit": 16,
+        "blocking": false,
+        "name": "no signal (milk sensor)"
+      },
+      {
+        "bit": 17,
+        "blocking": true,
+        "name": "please wait"
+      },
+      {
+        "bit": 18,
+        "blocking": false,
+        "name": "coffee rinsing"
+      },
+      {
+        "bit": 19,
+        "blocking": false,
+        "name": "ventilation closed"
+      },
+      {
+        "bit": 20,
+        "blocking": false,
+        "name": "close powder cover"
+      },
+      {
+        "bit": 21,
+        "blocking": false,
+        "name": "fill powder"
+      },
+      {
+        "bit": 22,
+        "blocking": false,
+        "name": "system emptying"
+      },
+      {
+        "bit": 23,
+        "blocking": false,
+        "name": "not enough powder"
+      },
+      {
+        "bit": 24,
+        "blocking": false,
+        "name": "remove water tank"
+      },
+      {
+        "bit": 25,
+        "blocking": false,
+        "name": "press rinse"
+      },
+      {
+        "bit": 26,
+        "blocking": false,
+        "name": "goodbye"
+      },
+      {
+        "bit": 27,
+        "blocking": false,
+        "name": "periphery alert"
+      },
+      {
+        "bit": 28,
+        "blocking": false,
+        "name": "powder product"
+      },
+      {
+        "bit": 29,
+        "blocking": true,
+        "name": "program-mode status"
+      },
+      {
+        "bit": 30,
+        "blocking": true,
+        "name": "error status"
+      },
+      {
+        "bit": 31,
+        "blocking": false,
+        "name": "enjoy product"
+      },
+      {
+        "bit": 32,
+        "blocking": false,
+        "name": "filter alert"
+      },
+      {
+        "bit": 33,
+        "blocking": false,
+        "name": "decalc alert"
+      },
+      {
+        "bit": 34,
+        "blocking": false,
+        "name": "cleaning alert"
+      },
+      {
+        "bit": 35,
+        "blocking": false,
+        "name": "cappu rinse alert"
+      },
+      {
+        "bit": 36,
+        "blocking": false,
+        "name": "energy safe"
+      },
+      {
+        "bit": 37,
+        "blocking": false,
+        "name": "active RF filter"
+      },
+      {
+        "bit": 38,
+        "blocking": false,
+        "name": "RemoteScreen"
+      },
+      {
+        "bit": 39,
+        "blocking": false,
+        "name": "LockedKeys"
+      },
+      {
+        "bit": 40,
+        "blocking": true,
+        "name": "close tab"
+      },
+      {
+        "bit": 41,
+        "blocking": false,
+        "name": "cappu clean alert"
+      },
+      {
+        "bit": 42,
+        "blocking": false,
+        "name": "Info - cappu clean alert"
+      },
+      {
+        "bit": 43,
+        "blocking": false,
+        "name": "Info - coffee clean alert"
+      },
+      {
+        "bit": 44,
+        "blocking": false,
+        "name": "Info - decalc alert"
+      },
+      {
+        "bit": 45,
+        "blocking": false,
+        "name": "Info - filter used up alert"
+      },
+      {
+        "bit": 46,
+        "blocking": false,
+        "name": "steam ready"
+      },
+      {
+        "bit": 47,
+        "blocking": true,
+        "name": "SwitchOff Delay active"
+      }
+    ],
+    "ef_code": "EF529M",
+    "article_number": "15221",
+    "appliance_type": "15221 D4 Piano Black",
+    "software_version_display": "N/A (Symbol Display)",
+    "address_width": 4,
+    "max_words": 1024
   }
 }

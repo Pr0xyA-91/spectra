@@ -8,7 +8,10 @@ __pycache__/
 live_report.txt
 compare_*.txt
 jura_diag_*.txt
+spectra_diag_*.txt
 demo_test_report.txt
+*.csv
+*_eeprom_*.json
 
 # Virtual environments
 .env
