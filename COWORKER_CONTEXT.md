@@ -47,6 +47,8 @@ Every clone of SPECTRA maintains two git remotes:
   └────────────────────────────────────────────────────────┘
 ```
 
+* **RULE 0: ALWAYS Fetch & Check What Was Done Before Committing**:
+  Because two AGY agents collaborate actively across separate physical workstations, **ALWAYS run `git fetch origin` and inspect recent remote commits (`git log -n 5 origin/<branch>`) and handoff notes before committing or starting work**. Never commit or push without verifying your coworker's latest changes first.
 * **RULE 1: Push Strictly to `origin` (`spectra_dev.git`)**:
   All agent commits must be pushed to `origin <branch>`.
 * **RULE 2: NEVER Push Directly to `public`**:

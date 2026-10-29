@@ -37,3 +37,10 @@ The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts th
   * **Schmitt Trigger Deadband**: The boundary between $89$ and $91$ counts ($90\\text{ counts}$) latches the previous state to eliminate 1-second boundary flickering.
   * **Never Override with Unverified HZ Bits**: Do not gate `beans_ok` solely on `HZ[0][3]`; `AS:` is the physical ground truth on optical-equipped models.
 - **Legacy Preservation**: Never alter `/home/a91/Projects/Jura SW/` (the legacy 2016 suite).
+
+## 4. Multi-Agent Teamwork & Pre-Commit Synchronization Protocol
+- **MANDATORY PRE-COMMIT CHECK**: Since two AGY agents collaborate on this repository across two devices, **ALWAYS fetch and check what was done before committing**. Run `git fetch origin` and `git log -n 5 --oneline origin/<branch>` before starting work or committing.
+- **Inspect Coworker Activity**: Always check [`COWORKER_CONTEXT.md`](./COWORKER_CONTEXT.md) and [`SESSION_NOTES.md`](./SESSION_NOTES.md) to understand what your coworker has recently implemented, tested, or changed.
+- **Pull / Rebase First**: If remote commits are present, integrate them (`git pull --rebase origin <branch>`) and verify all test suites before committing new changes.
+- **Mutual Handoff Logging**: After every work session, log your progress, attached hardware status, and next pending steps in [`COWORKER_CONTEXT.md`](./COWORKER_CONTEXT.md) so your coworker agent stays fully up to date.
+- **Push Strictly to Private `origin` (`spectra_dev.git`)**: Never push directly to `public` (`spectra.git`). Releases are published exclusively via `./publish_release.sh`.
