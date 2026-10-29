@@ -1269,6 +1269,7 @@ class JuraStatsSession:
                 )
                 address_width = 2 if is_two_digit else 4
                 is_z5 = "EF642" in self.ef_code.upper() or "Z5" in self.model_family.upper()
+                is_d4 = "EF529" in self.ef_code.upper() or "D4" in self.model_family.upper()
 
                 # Query Display Sub-Bus Firmware Gateway (TY$:)
                 ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
@@ -1277,12 +1278,14 @@ class JuraStatsSession:
                 elif ty_sub and ty_sub.lower().startswith("ty:"):
                     display_fw = ty_sub[3:].strip()
                 else:
-                    display_fw = self.profile.get("software_version_display", "EF518D V02.04")
+                    display_fw = self.profile.get("software_version_display", "N/A (Symbol Display)" if is_d4 else "EF518D V02.04")
 
                 # Query EEPROM memory blocks
                 blocks = [0x00, 0x10, 0x20, 0x30]
                 if is_z5 or is_two_digit:
                     blocks.append(0xE0)
+                elif is_d4:
+                    blocks.append(0x0330)
 
                 update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
                 eeprom: Dict[int, int] = {}
@@ -1380,6 +1383,27 @@ class JuraStatsSession:
                     self.total_cups = single_preps + (double_preps * 2)
 
                     filter_cycles = eeprom.get(0x22, eeprom.get(20, 0))
+                elif is_d4:
+                    # Jura D4 (EF529M / RL78 platform) stores beverage counters in Block 0x0330
+                    esp1 = eeprom.get(0x0330, 0)
+                    cof1 = eeprom.get(0x0331, 0)
+                    esp2 = eeprom.get(0x0332, 0)
+                    cof2 = eeprom.get(0x0333, 0)
+                    water = eeprom.get(0x0334, 0)
+
+                    self.counters[2] = esp1
+                    self.counters[3] = cof1
+                    self.counters[49] = esp2
+                    self.counters[54] = cof2
+                    self.counters[13] = water
+
+                    single_preps = esp1 + cof1 + water
+                    double_preps = esp2 + cof2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    # D4 Filter changes are stored at 0x000E
+                    filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
                 else:
                     # Map standard Jura EEPROM statistics addresses
                     esp1 = eeprom.get(1, 0)
@@ -1461,7 +1485,10 @@ class JuraStatsSession:
                 spdl_lang_str = f"{spdl_lang_dt.day}.{spdl_lang_dt.month}.{spdl_lang_dt.year}" if spdl_lang_dt else "N/A"
 
                 # Water Hardness:
-                water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
+                if is_d4 and 0x11 in eeprom and eeprom[0x11] > 0:
+                    water_hardness = eeprom[0x11]
+                else:
+                    water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
 
                 # Cups and preparations since last service intervention:
                 retail_ref = (retail_high * 65536) + retail_low
@@ -1469,7 +1496,7 @@ class JuraStatsSession:
                 prep_since_intervention = since_prep if since_prep > 0 else since_serv
 
                 # Article Number and Full EAN Code:
-                article_num = str(self.profile.get("article_number", "13356" if is_z5 else "13705"))
+                article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else "13705")))
                 app_type = self.profile.get("appliance_type", self.model_family)
 
                 ean_code = "N/A"

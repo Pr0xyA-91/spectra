@@ -244,6 +244,44 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### [2026-10-29 11:05] — Agent Workstation #1 (Device 1)
+* **What Was Done**:
+  1. **Discovered Renesas RL78 1024-Word EEPROM Architecture**: Mapped Jura D4 (`EF529M V01.02`, `BL_RL78 V01.30`, IC: `5700`). Discovered that RL78 platforms utilize a 1024-word (2KB) EEPROM address space (`0x0000`..`0x03FF`), wrapping around at `0x0400`.
+  2. **Located D4 Beverage Statistics Bank at Block `0x0330`**: Unlike legacy machines with counters at `0x0001`..`0x0006`, D4 stores drink counters in block `0x0330`:
+     - `0x0330`: Espresso (`2,061`)
+     - `0x0331`: Coffee (`9,755`)
+     - `0x0332`: 2 x Espresso (`2`)
+     - `0x0333`: 2 x Coffee (`3`)
+     - `0x0334`: Hot water (`7`)
+     - Total preparations: `11,828` | Total cups: `11,833` (100% exact parity with official JOE export `D4.csv`).
+  3. **Mapped Hygiene, Telemetry & Identification Registers**:
+     - `0x0007`: Coffee system rinsing operations (`15,105`)
+     - `0x0008`: Cleaning operations (`85`)
+     - `0x0009`: Descaling operations (`30`)
+     - `0x000E`: Filter changes (`1`)
+     - `0x0010`: Water dispensed (`29,074` dl = `2,907.4` L)
+     - `0x0011`: Water hardness (`14` °dH)
+     - `0x0012`: Descaling agent consumed (`143` dl = `14.3` L)
+     - `0x0015`: Service counter / preparations since last service (`11,851`)
+     - `0x0030`: Appliance Number (`52,772`) | `0x0031`: Serial Word (`2`) | `0x0032`: Production Date (`16.7.2019`)
+     - Article Number: `15221` (D4 Piano Black) | EAN: `(01)07610917152216(21)20190716052772`
+  4. **Engineered Multi-Bank Memory Mapper & Stats Collector**:
+     - Updated `memory_mapper.py` to dynamically size sweeps based on `max_words` (`1024` words / `64` blocks on D4).
+     - Updated `stats_collector.py` with `is_d4` detection, Block `0x0330` beverage extraction, `0x000E` filter extraction, and `0x0011` water hardness extraction.
+     - Updated `profiles_data.json` for `EF529` and `EF529M` with `article_number: "15221"` and `max_words: 1024`.
+     - Created `docs/models/EF529M_D4.json` and `docs/models/EF529M_D4.md`.
+     - Added D4 mock device in `serial_io.py` and unit test suite in `test_d4_mapping.py`.
+* **Test Status**:
+  - `spectra`: 28/28 tests passing (`Ran 28 tests in 11.194s - OK`)
+  - Live hardware interrogation verified on `/dev/ttyUSB0` (matches JOE export `D4.csv` with 100% precision).
+* **Hardware Attached**: Customer Jura D4 on `/dev/ttyUSB0`. Strictly read-only operations preserved.
+* **Next Pending Steps for Coworker**:
+  - Synchronize updates to `spectra-mm` and `spectra-win`.
+  - Maintain strictly read-only commands (`SAFE_READ_PREFIXES`). Under no circumstances send write commands (`WE:`, `FA:`, `WT:`, `DA:`).
+  - Push strictly to private `origin` (`spectra_dev.git`). Never push private files to `public`.
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
 ### [YYYY-MM-DD HH:MM] — Agent Workstation #2 (Device 2)

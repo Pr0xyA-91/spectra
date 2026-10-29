@@ -285,7 +285,7 @@ class MemoryMapperEngine:
             or any(self.ef_code.upper().startswith(p) for p in TWO_DIGIT_ADDRESS_EFS)
         )
         self.address_width = 2 if self.is_two_digit else 4
-        self.max_words = 256 if self.is_two_digit else 512
+        self.max_words = profile.get("max_words", 256 if self.is_two_digit else 512)
         self.current_eeprom = {i: 0 for i in range(self.max_words)}
 
         self._load_or_init_model_spec()
@@ -342,10 +342,10 @@ class MemoryMapperEngine:
 
     def sweep_eeprom(self, progress_callback=None) -> Dict[int, int]:
         """
-        Perform complete EEPROM sweep (16 blocks for 2-digit models, 32 blocks for 4-digit models),
+        Perform complete EEPROM sweep (16 blocks for 2-digit models, 32/64 blocks for 4-digit models),
         falling back to individual word reads (RE:) where blocks fail.
         """
-        total_blocks = 16 if self.address_width == 2 else 32
+        total_blocks = max(1, self.max_words // 16)
         for b_idx in range(total_blocks):
             blk = b_idx * 16
             blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
@@ -800,8 +800,8 @@ def run_cli(engine: MemoryMapperEngine, initial_sweep: bool = True):
                 print(f"Invalid hexadecimal address: '{args[0]}'")
                 continue
 
-            if not (0 <= addr < 512):
-                print(f"Address out of range (0x0000..0x01FF): 0x{addr:04X}")
+            if not (0 <= addr < engine.max_words):
+                print(f"Address out of range (0x0000..0x{engine.max_words - 1:04X}): 0x{addr:04X}")
                 continue
 
             entries = {r.addr: r for r in (engine.classified_registers or engine.classify_all())}
@@ -1301,7 +1301,8 @@ if HAS_GTK:
 
             # Filter Radio/Pills
             self.filter_buttons = {}
-            for tag, lbl in [("all", "All (512)"), ("mapped", "🟢 Mapped"), ("theor", "🟠 Theor."),
+            max_w = self.engine.max_words if self.engine else 512
+            for tag, lbl in [("all", f"All ({max_w})"), ("mapped", "🟢 Mapped"), ("theor", "🟠 Theor."),
                              ("unknown", "🔴 Unknown"), ("changed", "⚡ Changed")]:
                 btn = Gtk.RadioButton.new_with_label_from_widget(
                     self.filter_buttons.get("all"), lbl

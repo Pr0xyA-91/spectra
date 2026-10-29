@@ -466,4 +466,49 @@ conn.close()
   - Mirrored documentation and source code to `spectra-mm` and `spectra-win`.
 
 
+---
+
+### Phase 13: Jura D4 (EF529M / Renesas RL78) 1024-Word EEPROM Mapping & Statistics Resolution (2026-10-29)
+* **Problem**:
+  - Customer Jura D4 connected on `/dev/ttyUSB0` (`EF529M V01.02`, `BL_RL78 V01.30`, IC: `5700`) reported 0 cups and 0 preparations in SPECTRA.
+  - User provided official JOE CSV export (`~/Downloads/D4.csv`) as ground truth:
+    - Model: `D4` (Article `15221`)
+    - Firmware: `EF529M V01.02` (Bootloader: `BL_RL78 V01.30`, IC: `5700`)
+    - Total Products: `11,828` | Total Cups: `11,833`
+    - Espresso: `2,061` | Coffee: `9,755` | 2 x Espresso: `2` | 2 x Coffee: `3` | Hot water: `7`
+    - Cleaning: `85` | Filter change: `1` | Descaling: `30` | Rinses: `15,105`
+* **Investigation & Memory Architecture Discovery**:
+  - Initial investigation observed that standard Top-Tronic beverage words `0x0001`..`0x0006` in Block `0x0000` were all `0x0000`.
+  - Sweeping past 512 words (`0x0200`..`0x03FF`) revealed that the Renesas RL78 platform incorporates a **1024-word (2KB) EEPROM address space** with physical wrap-around at `0x0400` (`RT:0400` mirrors `RT:0000`).
+  - **Beverage Statistics Bank Discovery**:
+    - Discovered that D4 allocates a dedicated beverage counter block at **`0x0330`**:
+      - `0x0330`: Espresso (`2,061`)
+      - `0x0331`: Coffee (`9,755`)
+      - `0x0332`: 2 x Espresso (`2`)
+      - `0x0333`: 2 x Coffee (`3`)
+      - `0x0334`: Hot water (`7`)
+      - Sum = $2061 + 9755 + 2 + 3 + 7 = 11,828$ total preparations (exact match with `D4.csv`!).
+  - **Hygiene & Telemetry Mapping**:
+    - `0x0007`: Total Rinsing operations (`15,105`)
+    - `0x0008`: Total Cleaning operations (`85`)
+    - `0x0009`: Total Descaling operations (`30`)
+    - `0x000E`: Total Filter Change operations (`1`)
+    - `0x0010`: Water volume dispensed (`29,074` dl = `2,907.4` L)
+    - `0x0011`: Configured water hardness (`14` °dH)
+    - `0x0012`: Descaling agent consumed (`143` dl = `14.3` L)
+    - `0x0015`: Preparations since last service intervention (`11,851`)
+    - `0x0030`: Appliance Number (`52,772`) | `0x0031`: Serial Word (`2`) | `0x0032`: Production Date (`16.7.2019`)
+    - Serial Number: `20190716052772` | EAN: `(01)07610917152216(21)20190716052772`
+* **Implementation & Code Changes**:
+  - `memory_mapper.py`: Dynamic sweep bounds calculation (`max_words // 16`, 64 blocks for 1024 words).
+  - `stats_collector.py`: Added `is_d4` handler, queries block `0x0330`, maps counters to profile codes 2, 3, 49, 54, 13, extracts filter change from `0x000E` and water hardness from `0x0011`.
+  - `profiles_data.json`: Updated `EF529` and added `EF529M` with `article_number: "15221"`, `max_words: 1024`, and activated Hotwater product.
+  - `docs/models/EF529M_D4.json` & `docs/models/EF529M_D4.md`: Added complete technical specification for D4.
+  - `serial_io.py`: Added D4 simulated machine (`DEMO-D4`) with 1024-word mock EEPROM.
+  - `test_d4_mapping.py`: Added unit test suite validating 1024-word sweeps, register mapping, and exact numerical parity with `D4.csv`.
+* **Verification & Safety**:
+  - Live interrogation against connected customer machine on `/dev/ttyUSB0` passed with 100% data parity.
+  - All commands strictly read-only (`SAFE_READ_PREFIXES`).
+  - Unit test suite: 28/28 tests passing.
+
 

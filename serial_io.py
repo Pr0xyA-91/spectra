@@ -111,6 +111,8 @@ class JuraSerialConnection:
                 self.mock_machine = MockJuraMachine(model_ef="EF545 V01.20", model_name="Z10")
             elif "E8" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
+            elif "D4" in port_name.upper():
+                self.mock_machine = MockJuraMachine(model_ef="EF529M V01.02", model_name="D4")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
             self._init_mock_eeprom()
@@ -120,7 +122,31 @@ class JuraSerialConnection:
             self._open_hardware_port()
 
     def _init_mock_eeprom(self):
-        """Initialize complete 512-word simulated EEPROM for offline demo & developer differential testing."""
+        """Initialize complete simulated EEPROM for offline demo & developer differential testing."""
+        if "D4" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(1024)}
+            self._mock_eeprom[0x0007] = 15105  # Rinses
+            self._mock_eeprom[0x0008] = 85     # Cleanings
+            self._mock_eeprom[0x0009] = 30     # Descalings
+            self._mock_eeprom[0x000A] = 28672  # Grinder operating seconds
+            self._mock_eeprom[0x000E] = 1      # Filter changes
+            self._mock_eeprom[0x0010] = 29074  # Water dispensed (dl)
+            self._mock_eeprom[0x0011] = 14     # Water hardness (°dH)
+            self._mock_eeprom[0x0012] = 143    # Descaling agent (dl)
+            self._mock_eeprom[0x0015] = 11851  # Service counter
+            self._mock_eeprom[0x0030] = 52772  # Appliance Number
+            self._mock_eeprom[0x0031] = 2      # Serial Word
+            self._mock_eeprom[0x0032] = 15088  # Production Date: 16.07.2019
+            self._mock_eeprom[0x0041] = 230    # BU Mill Target
+            self._mock_eeprom[0x0047] = 1296   # BU Upper Limit
+            self._mock_eeprom[0x0056] = 37     # BU Init count
+            self._mock_eeprom[0x0330] = 2061   # Single Espresso
+            self._mock_eeprom[0x0331] = 9755   # Single Coffee
+            self._mock_eeprom[0x0332] = 2      # 2 Espressi
+            self._mock_eeprom[0x0333] = 3      # 2 Coffee
+            self._mock_eeprom[0x0334] = 7      # Hot water
+            return
+
         self._mock_eeprom = {i: 0x0000 for i in range(512)}
         # Block seeds matching real machine captures
         seeds = {
@@ -155,12 +181,12 @@ class JuraSerialConnection:
     def set_mock_eeprom_word(self, addr: int, val: int):
         """Developer/testing utility to update a simulated EEPROM register."""
         if hasattr(self, "_mock_eeprom"):
-            self._mock_eeprom[addr & 0x01FF] = val & 0xFFFF
+            self._mock_eeprom[addr & 0x03FF] = val & 0xFFFF
 
     def get_mock_eeprom_word(self, addr: int) -> int:
         """Developer/testing utility to inspect a simulated EEPROM register."""
         if hasattr(self, "_mock_eeprom"):
-            return self._mock_eeprom.get(addr & 0x01FF, 0)
+            return self._mock_eeprom.get(addr & 0x03FF, 0)
         return 0
 
     def _open_hardware_port(self):
@@ -339,14 +365,24 @@ class JuraSerialConnection:
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"
             elif cmd_clean == "TL:":
+                if "D4" in self.port_name.upper():
+                    return "tl:BL_RL78 V01.30"
                 return "tl:R8Cx Loader V01.00"
             elif cmd_clean == "TY$:":
+                if "D4" in self.port_name.upper():
+                    return None
                 return f"ty$:{self.mock_machine.model_ef.replace('M', 'D')}"
             elif cmd_clean == "TL$:":
+                if "D4" in self.port_name.upper():
+                    return None
                 return "tl$:SubLoader V01.00"
             elif cmd_clean == "CS$:":
+                if "D4" in self.port_name.upper():
+                    return None
                 return "cs$:1A2B"
             elif cmd_clean == "IC:":
+                if "D4" in self.port_name.upper():
+                    return "ic:5700"
                 return "ic:230A"
             elif cmd_clean == "HZ:":
                 if "Z10" in self.port_name.upper():
