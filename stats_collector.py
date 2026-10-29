@@ -30,7 +30,7 @@ import json
 import csv
 import io
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Tuple
 
 import jura_protocol as jp
 import profiles_db

@@ -9,6 +9,7 @@ import sys
 import os
 import re
 import json
+from typing import Optional, Dict, Any, List
 
 def _get_data_file() -> str:
     # 1. PyInstaller bundled temp extraction directory (_MEIPASS)
