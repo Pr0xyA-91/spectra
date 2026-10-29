@@ -125,6 +125,49 @@ class TestSecurityAndOptimizations(unittest.TestCase):
 
 
 
+    def test_gui_responsive_hitbox_bounds_and_compact_layout(self):
+        """Verify JuraDiagApp header and action buttons fit within 960px without offscreen clipping."""
+        try:
+            import gui
+            import gi
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk, Gdk
+
+            win = gui.JuraDiagApp()
+            win.show_all()
+
+            # Verify compact minimum widths
+            hdr_min, _ = win.header_grid.get_preferred_size()
+            win_min, _ = win.get_preferred_size()
+            self.assertLessEqual(hdr_min.width, 960, "Header grid overflows 960px split-screen width")
+            self.assertLessEqual(win_min.width, 960, "Window minimum preferred size overflows 960px")
+
+            # Allocate 960px split-screen geometry
+            alloc = Gdk.Rectangle()
+            alloc.x = 0
+            alloc.y = 0
+            alloc.width = 960
+            alloc.height = 700
+            win.size_allocate(alloc)
+
+            # Validate each button is completely bounded within visible surface
+            for btn in [win.btn_read, win.btn_mapper, win.btn_service_report, win.btn_export, win.btn_about]:
+                b_alloc = btn.get_allocation()
+                self.assertGreaterEqual(b_alloc.x, 0, f"{btn} starts offscreen to left")
+                self.assertLessEqual(b_alloc.x + b_alloc.width, 960, f"{btn} overflows right boundary at 960px")
+
+            # Validate button styling classes
+            self.assertTrue(win.btn_read.get_style_context().has_class("primary-btn"))
+            self.assertTrue(win.btn_mapper.get_style_context().has_class("action-btn"))
+            self.assertTrue(win.btn_service_report.get_style_context().has_class("action-btn"))
+            self.assertTrue(win.btn_export.get_style_context().has_class("action-btn"))
+            win.destroy()
+        except Exception as e:
+            if "cannot open display" in str(e).lower():
+                self.skipTest("Headless environment without display")
+            else:
+                raise
+
     def test_web_port_sanitization(self):
         """Verify is_valid_port rejects dangerous injection payloads."""
         try:
