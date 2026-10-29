@@ -20,7 +20,11 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib, Pango
 
-__version__ = "0.5.1"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1"
+    __build__ = "20261029.1130"
 
 
 # ============================================================================
@@ -1300,7 +1304,7 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
     </div>
 
     <div class="footer">
-        <span>Verified by SPECTRA Hardware Interrogation Engine (v{__version__})</span>
+        <span>Verified by SPECTRA Hardware Interrogation Engine (v{__version__}, build {__build__})</span>
         <span>Checksum: SHA256-AUTHENTICATED • Non-invasive Optical Bus Telemetry</span>
     </div>
 </div>

@@ -33,6 +33,12 @@ import json
 import time
 import copy
 import datetime
+
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1"
+    __build__ = "20261029.1130"
 import threading
 import argparse
 from typing import Dict, List, Tuple, Optional, Any, Set
@@ -643,7 +649,7 @@ def print_banner():
     banner = f"""{ANSI.BOLD}{ANSI.CYAN}
 ================================================================================
        SPECTRA — Developer Memory Mapper & Differential Logic Scope
-               Universal Firmware Reverse Engineering Toolkit
+               (v{__version__}, build {__build__})
 ================================================================================{ANSI.RESET}"""
     print(banner)
 
@@ -917,7 +923,7 @@ if HAS_GTK:
         """
 
         def __init__(self, parent_app=None, initial_port: Optional[str] = ""):
-            super().__init__(title="SPECTRA — Developer Memory Mapper & Differential Logic Scope")
+            super().__init__(title=f"SPECTRA — Developer Memory Mapper & Differential Logic Scope (v{__version__}, build {__build__})")
             self.parent_app = parent_app
             self.initial_port = initial_port
 

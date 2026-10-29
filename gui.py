@@ -31,7 +31,11 @@ import profiles_db
 import stats_collector as sc
 import gui_widgets
 
-__version__ = "0.5.1"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1"
+    __build__ = "20261029.1130"
 
 
 def is_dev_branch() -> bool:
@@ -74,7 +78,7 @@ class JuraDiagApp(Gtk.Window):
         return None
 
     def __init__(self):
-        super().__init__(title=f"SPECTRA — Hardware Telemetry & Diagnostics (v{__version__})")
+        super().__init__(title=f"SPECTRA — Hardware Telemetry & Diagnostics (v{__version__}, build {__build__})")
 
         # Dynamic monitor-aware initial sizing
         display = Gdk.Display.get_default()
@@ -344,7 +348,7 @@ class JuraDiagApp(Gtk.Window):
         self.title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self.title_box.set_valign(Gtk.Align.CENTER)
         app_title = Gtk.Label()
-        app_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
+        app_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA</span> <span size='small' color='#f9e2af'>v{__version__}</span> <span size='x-small' color='#a6adc8'>build {__build__}</span></b>")
         app_title.set_xalign(0.0)
         app_title.set_yalign(0.5)
         self.sub_title = Gtk.Label(label="Universal Hardware Telemetry & Logic Board Diagnostics")
@@ -496,7 +500,7 @@ class JuraDiagApp(Gtk.Window):
     def _on_about_clicked(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True)
         about.set_program_name("SPECTRA")
-        about.set_version(f"v{__version__}")
+        about.set_version(f"v{__version__} (build {__build__})")
         about.set_comments(
             "Universal Hardware Telemetry & Logic Board Diagnostics\n"
             "Non-invasive machine interrogation, optical serial bus protocol, and multi-point telemetry."
@@ -1254,7 +1258,7 @@ class JuraDiagApp(Gtk.Window):
         hero_text_box.set_valign(Gtk.Align.CENTER)
 
         hero_title = Gtk.Label()
-        hero_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA Diagnostic Suite</span> <span size='small' color='#f9e2af'>v{__version__}</span></b>")
+        hero_title.set_markup(f"<b><span size='large' color='#89b4fa'>SPECTRA Diagnostic Suite</span> <span size='small' color='#f9e2af'>v{__version__}</span> <span size='x-small' color='#a6adc8'>build {__build__}</span></b>")
         hero_title.set_xalign(0.0)
 
         hero_desc = Gtk.Label()

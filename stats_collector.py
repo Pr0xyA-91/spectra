@@ -36,7 +36,11 @@ import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.5.1"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1"
+    __build__ = "20261029.1130"
 
 # ---------------------------------------------------------------------------
 # Optical Bean Sensor Calibration Settings (Dev-configurable)
@@ -1735,6 +1739,8 @@ class JuraStatsSession:
             })
 
         return {
+            "spectra_version": __version__,
+            "spectra_build": __build__,
             "timestamp": datetime.now().isoformat(),
             "port": self.port_name,
             "machine_model": self.model_family,
@@ -1771,7 +1777,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"SPECTRA Diagnostics Suite v{__version__} (Hardware Telemetry - Jura Module)")
+        out.append(f"SPECTRA Diagnostics Suite v{__version__} (build {__build__}) (Hardware Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")

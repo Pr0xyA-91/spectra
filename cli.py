@@ -13,27 +13,31 @@ import serial_io
 import profiles_db
 import stats_collector as sc
 
-__version__ = "0.5.1"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __version__ = "0.5.1"
+    __build__ = "20261029.1130"
 
 
 def print_banner():
-    banner = r"""
+    banner = rf"""
   ███████╗██████╗ ███████╗ ██████╗████████╗██████╗  █████╗ 
   ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔══██╗
   ███████╗██████╔╝█████╗  ██║        ██║   ██████╔╝███████║
   ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══██║
   ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝
-   — Universal Hardware Telemetry & Logic Board Diagnostics (v0.5.1) —
+   — Universal Hardware Telemetry & Logic Board Diagnostics (v{__version__}, build {__build__}) —
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v0.5.1)"
+        description=f"SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v{__version__}, build {__build__})"
     )
-    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (Hardware Telemetry & Logic Board Diagnostics)")
+    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (build {__build__}) (Hardware Telemetry & Logic Board Diagnostics)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")
