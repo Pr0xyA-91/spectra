@@ -379,6 +379,35 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### [2026-10-29 17:00] — Agent Workstation #1 (Device 1)
+* **What Was Done**:
+  1. **Optical Bean Sensor Thermal Calibration & Asymmetric Latching Logic**:
+     - Investigated intermittent "Fill Beans" warning and non-detection of beans on Jura XJ5 Professional GII (`EF518M V02.20`, Display `EF518D V02.04`).
+     - Conducted live cover/uncover sensor telemetry test (`AS:`, `HZ:`). Proved analog differential $\Delta = \text{ON} - \text{OFF}$ drifts between $85$ counts (cold) and $105$ counts ($96^\circ\text{C}$ thermoblock) with a constant optical circuit gain of $1.060 \pm 0.001$.
+     - Upgraded default threshold from legacy $99 \pm 2$ to $115 \pm 5$ counts ($\le 110$ is Charged/Beans OK, $\ge 120$ is Empty) across `stats_collector.py`, `gui.py`, and test suites. Added automatic config migration in `~/.config/spectra/calibration.json`.
+     - Documented asymmetric latching architecture: active checking during "Fill Beans" (clears instantly upon filling) vs. lazy brew-time checking during "Ready".
+     - Removed spurious CPU lockout logic based on grinder triac and puck thickness (`parts[0][3]` and `parts[8]`).
+  2. **Serial Bus Concurrency & Power Collision Prevention**:
+     - Discovered that concurrent serial access by CLI probes while GUI was running caused ASCII byte interleaving on UART TX, inadvertently forming `AN:\r\n` (Jura standby toggle command) and shutting down the appliance.
+     - Added POSIX non-blocking exclusive locking (`fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)`) with retry/timeout in `_open_hardware_port()` and unlock in `close()` across `serial_io.py`.
+  3. **Windows Standalone Executable Packaging (`spectra.exe`)**:
+     - Addressed Windows script execution resistance (PowerShell `ExecutionPolicy` restrictions and environment PATH issues).
+     - Created single-file standalone PyInstaller build pipeline in `spectra-win`: `spectra_app.py`, `spectra.spec`, `build_windows_exe.bat`, and native multi-resolution `icon.ico`.
+     - Added `sys._MEIPASS` dynamic resource resolution in `profiles_db.py` and `gui_web.py` to seamlessly embed `profiles_data.json`, `spectra_logo.svg`, and `icon.ico`.
+     - Tested CLI and automated zero-dependency Web UI fallback (`http://127.0.0.1:8080`).
+  4. **GEMINI Guidelines Synchronization**:
+     - Updated `GEMINI.md` across all 3 repositories with bean sensor calibration rules, serial concurrency lock guardrails, Windows executable architecture, and GitHub OAuth workflow scope constraint.
+* **Test Status**:
+  - `spectra`: 35/35 passing (100%)
+  - `spectra-mm`: 43/43 passing (100%)
+  - `spectra-win`: 43/43 passing (100%)
+* **Hardware Attached**: Jura IMPRESSA XJ5 Professional GII (`EF518M V02.20`, Display `EF518D V02.04`) connected via FTDI USB adapter on `/dev/serial/by-id/usb-FTDI_USB__-__Serial-if00-port0` (`/dev/ttyUSB0`).
+* **Next Pending Steps for Coworker**:
+  - Maintain exclusive serial file lock when implementing background hardware scripts.
+  - Follow Rule 0 (`git fetch origin`) and push strictly to private `origin` (`spectra_dev.git`).
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
 ### [YYYY-MM-DD HH:MM] — Agent Workstation #1 (Device 1)

@@ -6,7 +6,7 @@
 
 ## 1. Quick Reference & Entry Points
 - **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `SPECTRA.desktop`.
-- **Unit Tests**: Run `python3 -m unittest discover -s .` (10/10 tests must pass).
+- **Unit Tests**: Run `python3 -m unittest discover -s .` (all tests must pass).
 - **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/spectra/` on primary workstation).
 
 ## 2. Repository & Branch Topology (3-Branch Architecture)
@@ -15,7 +15,7 @@ The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts th
    - Remotes: `origin` (`spectra_dev.git` — private) and `public` (`spectra.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
 2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.5.1_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
-3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.5.1_win`: includes `.bat` launchers, `install_windows.ps1`, `COM*` auto-discovery, zero-dependency Web UI fallback).
+3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.5.1_win`: includes PyInstaller standalone compiler `spectra.spec`, `build_windows_exe.bat`, `COM*` auto-discovery, zero-dependency Web UI fallback).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules
@@ -24,18 +24,28 @@ The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts th
 - **Dual-Mode Interrogation Engine**:
   * **ASCII Optical/Service Port Protocol**: 4-byte UART carrier (`8ms` inter-bit, `16ms` inter-char pacing), optical loopback echo stripping, `RT:` / `RE:` EEPROM reads, and `HZ:` / `CS:` / `IC:` live sensor telemetry.
   * **Encrypted Smart Connect (`@`-Protocol)**: 4:1 wire carrier, `&`-framing, and recovered nibble cipher.
+- **Serial Bus Concurrency & Machine Power Safety**:
+  * **Never Query Hardware Concurrently**: Multiple processes opening `/dev/ttyUSB*` simultaneously cause ASCII character interleaving on the TX line. Interleaved commands can accidentally produce `AN:\r\n` (Jura standby toggle command), unexpectedly powering off the machine.
+  * **Exclusive File Locking**: Always acquire an exclusive non-blocking lock (`fcntl.flock(fd, LOCK_EX | LOCK_NB)`) before issuing serial commands on hardware ports. Background scripts must release the port or fail gracefully if the GUI is active.
 - **Live Readiness vs. Historical EEPROM Faults**:
   * **NEVER** gate live operational readiness (`machine_ready`) on non-volatile EEPROM registers (`RE:0028` last fault latch or `RE:01B4` lifetime flowmeter timeouts).
   * `machine_ready` depends strictly on 5 real-time physical inputs from `HZ:`: Drip Tray inserted, Water Tank full, Grounds Container not full, Coffee Thermoblock $\ge 80.0\,^\circ\text{C}$, and Appliance idle (`parts[0][0] == '0'`).
   * `parts[7][3]` in `HZ:` is a 1 Hz MCU heartbeat clock tick, **not** an alarm bit.
 - **Fast Auto-Poll (`fast_poll=True`)**: Queries only dynamic `HZ:` telemetry (~50ms latency) and omits static EEPROM settings (`water_hardness_dh` from `RE:00C3`) so the UI never overwrites verified static settings with fallback defaults.
-- **Optical Infrared Bean Hopper Sensor (`AS:`) & Firmware Lazy-Update**:
-  * **Photodiode Reflection Delta**: Evaluates net ambient-subtracted pulsed IR reflection ($\\Delta = \\text{ON\\_ADC} - \\text{OFF\\_ADC}$).
-    - **Covered / Beans Present**: $\\Delta \\le 89\\text{ counts}$ (live calibrated at $86$–$89$). Appliance clears lockout immediately and displays *"Ready"*.
-    - **Uncovered / Empty Hopper**: $\\Delta \\ge 91\\text{ counts}$ (live calibrated at $91$–$96$).
-  * **Firmware Lazy Update Invariant**: When beans run out, the appliance CPU defers updating the front LCD until a beverage is selected. Only when a brew button is pressed does the MCU check `AS:`, abort the grind, and prompt *"Fill beans"*. SPECTRA detects this proactively from `AS:` before the user attempts a brew.
-  * **Schmitt Trigger Deadband**: The boundary between $89$ and $91$ counts ($90\\text{ counts}$) latches the previous state to eliminate 1-second boundary flickering.
-  * **Never Override with Unverified HZ Bits**: Do not gate `beans_ok` solely on `HZ[0][3]`; `AS:` is the physical ground truth on optical-equipped models.
+- **Optical Infrared Bean Hopper Sensor (`AS:`) & Thermal Drift Invariant**:
+  * **Photodiode Reflection Delta & Gain**: Fixed optical/circuit gain $\frac{\text{ON}}{\text{OFF}} \approx 1.060 \pm 0.001$. Net reflection delta $\Delta = \text{ON\_ADC} - \text{OFF\_ADC}$ drifts from $85$ counts (cold) up to $105$ counts at operating temperature ($96^\circ\text{C}$).
+  * **Nominal Calibration Threshold ($115 \pm 5$ counts)**:
+    - **Covered / Beans Present**: $\Delta \le 110\text{ counts}$ (nominal operating band $85 \dots 105$). UI reports solid green *"Beans OK (Hopper Charged)"*.
+    - **Uncovered / Empty Hopper**: $\Delta \ge 120\text{ counts}$ (bare funnel reflection). UI reports *"Fill Beans"*.
+    - **Hysteresis Band**: $110 < \Delta < 120$ counts retains previous latch state to eliminate thermal fluttering.
+  * **Asymmetric Latching State Architecture**:
+    - **Active Recovery**: When *"Fill Beans"* is active on the physical machine, the MCU actively monitors the sensor; covering it or adding beans clears the warning immediately to *"Ready"*.
+    - **Lazy Brew-Time Verification**: When *"Ready"*, the MCU does not instantly trigger *"Fill Beans"* at idle if uncovered (preventing false trips from bean tumbling or opening the hopper lid). Verification occurs during active grinding and puck compression.
+  * **Never Override with Unverified HZ Bits**: Do not gate `beans_ok` on `HZ[0][3]` (grinder triac) or `parts[8]` (puck thickness); `AS:` is physical ground truth on optical-equipped models.
+- **Windows Standalone Executable (`spectra.exe`) Architecture**:
+  * **Zero Script Dependency**: Windows default execution policies restrict `.ps1` and environment PATH issues break `.bat` launchers. The primary Windows distribution target is a single-file standalone executable (`dist\spectra.exe`) generated via PyInstaller (`spectra.spec`).
+  * **Dual CLI / Web UI Entrypoint**: Double-clicking `spectra.exe` with no flags automatically spins up `gui_web.py` and opens `http://127.0.0.1:8080`. Passing flags (e.g. `--port COM3`, `--demo`) runs CLI diagnostic routines.
+  * **Asset Path Resolution (`sys._MEIPASS`)**: All resources (`profiles_data.json`, `spectra_logo.svg`, `icon.ico`) must use `sys._MEIPASS` when frozen, falling back to executable directory or `__file__`.
 - **Legacy Preservation**: Never alter `/home/a91/Projects/Jura SW/` (the legacy 2016 suite).
 
 ## 4. Multi-Agent Teamwork & Pre-Commit Synchronization Protocol
@@ -44,3 +54,4 @@ The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts th
 - **Pull / Rebase First**: If remote commits are present, integrate them (`git pull --rebase origin <branch>`) and verify all test suites before committing new changes.
 - **Mutual Handoff Logging**: After every work session, log your progress, attached hardware status, and next pending steps in [`COWORKER_CONTEXT.md`](./COWORKER_CONTEXT.md) so your coworker agent stays fully up to date.
 - **Push Strictly to Private `origin` (`spectra_dev.git`)**: Never push directly to `public` (`spectra.git`). Releases are published exclusively via `./publish_release.sh`.
+- **GitHub Workflow File Scope Constraint**: Avoid creating or modifying files in `.github/workflows/` unless the active Git credentials/token explicitly include the `workflow` OAuth scope. Pushes containing workflow changes will be rejected by GitHub when using standard repo-scoped tokens.
