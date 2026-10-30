@@ -43,9 +43,10 @@ import {
 import OscilloscopeStripChart from './OscilloscopeStripChart';
 import DigitalTwinSchematic from './DigitalTwinSchematic';
 import DiagnosticAdvisorTab from './DiagnosticAdvisorTab';
+import MemMapperTab from './MemMapperTab';
 
 // ============================================================================
-// 1. THEMES DEFINITION (THE 5 DESIGN PARADIGMS)
+// 1. THEME DEFINITION (STRICT NETRUNNER PARADIGM ONLY)
 // ============================================================================
 export const THEMES = {
   cyberpunk: {
@@ -72,106 +73,10 @@ export const THEMES = {
     textMuted: 'text-zinc-400',
     surfaceClass: 'bg-[#0E0E12]/95 border border-[#FCEE09]/30 clip-cyber',
   },
-  oscilloscope: {
-    id: 'oscilloscope',
-    name: '02 // TEK-DARK',
-    subtitle: '24MHz 8-CH MIXED SIGNAL DSO & LOGIC ANALYZER',
-    bg: 'bg-[#0B0F17]',
-    panelBg: 'bg-[#111722]',
-    headerBg: 'bg-[#151C28]',
-    border: 'border-[#1E293B]',
-    borderActive: 'border-[#00FF66]',
-    primary: '#00FF66', // Phosphor Green
-    secondary: '#FFB000', // Amber
-    danger: '#FF4444',
-    success: '#00FF66',
-    canvasBg: '#070B10',
-    gridColor: 'rgba(0, 255, 102, 0.14)',
-    clipClass: 'rounded-md',
-    font: 'font-mono',
-    isScanline: false,
-    accentGlow: 'shadow-[0_0_12px_rgba(0,255,102,0.4)]',
-    textPrimary: 'text-[#00FF66]',
-    textSecondary: 'text-[#FFB000]',
-    textMuted: 'text-slate-400',
-    surfaceClass: 'bg-[#111722] border border-[#1E293B] rounded-md shadow-inner',
-  },
-  omarchy: {
-    id: 'omarchy',
-    name: '03 // HYPR-TUI',
-    subtitle: 'WAYLAND TILING WM :: /dev/ttyUSB0 @ 115200bps',
-    bg: 'bg-[#1A1B26]',
-    panelBg: 'bg-[#16161E]',
-    headerBg: 'bg-[#16161E]',
-    border: 'border-2 border-[#3B4261]',
-    borderActive: 'border-[#7AA2F7]',
-    primary: '#7AA2F7', // TokyoNight Blue
-    secondary: '#BB9AF7', // Purple
-    danger: '#F7768E',
-    success: '#9ECE6A',
-    canvasBg: '#13141C',
-    gridColor: 'rgba(122, 162, 247, 0.12)',
-    clipClass: 'border-2 border-[#3B4261]',
-    font: 'font-mono',
-    isScanline: false,
-    accentGlow: 'shadow-none',
-    textPrimary: 'text-[#7AA2F7]',
-    textSecondary: 'text-[#BB9AF7]',
-    textMuted: 'text-[#787C99]',
-    surfaceClass: 'bg-[#16161E] border-2 border-[#3B4261]',
-  },
-  expanse: {
-    id: 'expanse',
-    name: '04 // ROCINANTE',
-    subtitle: 'MCRN TACTICAL // PDC & DRIVE CORE BUS DIAGNOSTICS',
-    bg: 'bg-[#060911]',
-    panelBg: 'bg-[#0A101D]/90',
-    headerBg: 'bg-[#090E1A]',
-    border: 'border-[#38BDF8]/30',
-    borderActive: 'border-[#FF7700]',
-    primary: '#FF7700', // MCRN Tactical Amber
-    secondary: '#38BDF8', // Ice Vector Blue
-    danger: '#EF4444',
-    success: '#38BDF8',
-    canvasBg: '#04070D',
-    gridColor: 'rgba(56, 189, 248, 0.10)',
-    clipClass: 'clip-expanse',
-    font: 'font-mono',
-    isScanline: false,
-    accentGlow: 'shadow-[0_0_12px_rgba(255,119,0,0.5)]',
-    textPrimary: 'text-[#FF7700]',
-    textSecondary: 'text-[#38BDF8]',
-    textMuted: 'text-sky-300/60',
-    surfaceClass: 'bg-[#0A101D]/90 border border-[#38BDF8]/30 clip-expanse',
-  },
-  swiss: {
-    id: 'swiss',
-    name: '05 // BRAUN-ENG',
-    subtitle: 'ABT. ELEKTRONIK // DIN-ISO 9001 PRÜFSTAND',
-    bg: 'bg-[#F4F3EF]',
-    panelBg: 'bg-[#FFFFFF]',
-    headerBg: 'bg-[#EAE8E1]',
-    border: 'border-[#18181B]/20',
-    borderActive: 'border-[#FF4F00]',
-    primary: '#FF4F00', // International Orange
-    secondary: '#18181B', // Stark Charcoal
-    danger: '#DC2626',
-    success: '#15803D',
-    canvasBg: '#FAF9F5',
-    gridColor: 'rgba(24, 24, 27, 0.10)',
-    clipClass: 'border border-[#18181B]/20',
-    font: 'font-mono',
-    isScanline: false,
-    accentGlow: 'shadow-sm',
-    textPrimary: 'text-[#FF4F00]',
-    textSecondary: 'text-[#18181B]',
-    textMuted: 'text-zinc-600',
-    surfaceClass: 'bg-[#FFFFFF] border border-[#18181B]/20 shadow-sm text-zinc-900',
-  },
 };
 
 // ============================================================================
-// WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS)
+// WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS + DEV MEM MAPPER)
 // ============================================================================
 const WORKSPACE_TABS = [
   { id: 'overview', label: '01 // OVERVIEW', desc: 'Health Scorecard & AI Advisor' },
@@ -181,11 +86,11 @@ const WORKSPACE_TABS = [
   { id: 'alerts', label: '05 // ALERTS', desc: 'Active Lockouts & System Flags' },
   { id: 'system', label: '06 // IDENTITY', desc: 'EEPROM String, Power & Barcode' },
   { id: 'bus_log', label: '07 // COMMAND INJECTOR', desc: 'Safe UART Wire Injection' },
+  { id: 'mem_mapper', label: '08 // MEM MAPPER [DEV]', desc: 'EEPROM Register Matrix, Differential Scope & Raw Sensor Mapping' },
 ];
 
 export default function SpectraWorkspace() {
-  const [activeThemeId, setActiveThemeId] = useState('cyberpunk');
-  const theme = THEMES[activeThemeId] || THEMES.cyberpunk;
+  const theme = THEMES.cyberpunk;
 
   // Active Workspace Tab (Default: overview)
   const [activeTab, setActiveTab] = useState('overview');
@@ -473,36 +378,23 @@ export default function SpectraWorkspace() {
   return (
     <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-colors duration-200 select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
       {/* ==================================================================== */}
-      {/* ZONE 1: TOP PARADIGM SWITCHER & HARDWARE CONNECTION BAR */}
+      {/* ZONE 1: TOP BRANDING & HARDWARE CONNECTION BAR (NETRUNNER PARADIGM) */}
       {/* ==================================================================== */}
       <header className={`sticky top-0 z-50 px-4 py-2 flex flex-wrap items-center justify-between border-b ${theme.border} ${theme.headerBg} backdrop-blur-md gap-3`}>
-        {/* Left: 5 Paradigm Switcher Buttons */}
+        {/* Left: NETRUNNER Paradigm Branding */}
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5">
-            <Compass className={`w-4 h-4 ${theme.textPrimary}`} />
-            <span className="text-[11px] uppercase font-bold tracking-wider text-gray-400">
-              PARADIGM:
+          <div className="flex items-center space-x-2">
+            <Zap className="w-5 h-5 text-[#FCEE09] animate-pulse" />
+            <span className="text-sm font-black tracking-widest text-[#FCEE09] font-mono uppercase">
+              SPECTRA // NETRUNNER
             </span>
           </div>
-
-          <div className="flex flex-wrap gap-1">
-            {Object.values(THEMES).map((t) => {
-              const active = t.id === activeThemeId;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setActiveThemeId(t.id)}
-                  className={`text-[11px] px-2.5 py-1 font-bold tracking-wide transition-all duration-150 ${
-                    active
-                      ? `${t.bg} ${t.textPrimary} border ${t.borderActive} ${t.accentGlow}`
-                      : 'bg-black/30 text-gray-400 border border-transparent hover:border-gray-600'
-                  } ${t.clipClass}`}
-                >
-                  {t.name}
-                </button>
-              );
-            })}
-          </div>
+          <span className="text-[10px] px-2 py-0.5 bg-black/60 text-[#00F0FF] border border-[#00F0FF]/40 font-mono font-bold tracking-wider rounded">
+            神経接続・バス解析システム v9.4
+          </span>
+          <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
+            HARDWARE TELEMETRY &amp; MEMORY REVERSE-ENGINEERING
+          </span>
         </div>
 
         {/* Right: Hardware Port Controls & Report Actions */}
@@ -726,6 +618,7 @@ export default function SpectraWorkspace() {
       <nav className={`px-4 pt-2 border-b ${theme.border} ${theme.panelBg} flex flex-wrap gap-1 text-xs`}>
         {WORKSPACE_TABS.map((tab) => {
           const isActive = activeTab === tab.id;
+          const isDev = tab.id === 'mem_mapper' || tab.label.includes('[DEV]');
           return (
             <button
               key={tab.id}
@@ -736,7 +629,12 @@ export default function SpectraWorkspace() {
                   : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600'
               }`}
             >
-              <span>{tab.label}</span>
+              <span>{tab.label.replace(' [DEV]', '')}</span>
+              {isDev && (
+                <span className="text-[9px] px-1.5 py-0.2 bg-red-950/80 text-red-400 border border-red-500/70 font-mono font-extrabold rounded">
+                  DEV
+                </span>
+              )}
             </button>
           );
         })}
@@ -1193,6 +1091,15 @@ export default function SpectraWorkspace() {
               )}
             </div>
           </div>
+        )}
+
+        {/* TAB 8: MEM MAPPER [DEV ONLY] (EEPROM REGISTER MATRIX & RAW SENSORS) */}
+        {activeTab === 'mem_mapper' && (
+          <MemMapperTab
+            theme={theme}
+            selectedPort={selectedPort}
+            liveData={liveData}
+          />
         )}
       </main>
 
