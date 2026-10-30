@@ -4,16 +4,18 @@
 #ifndef _UNICODE
 #define _UNICODE
 #endif
+
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 #include <shellapi.h>
+#include <conio.h>
 
 #define SPECTRA_VERSION      "0.6.0-alpha"
 #define SPECTRA_BUILD        "20261030.1515"
-#define SPECTRA_EDITION      "Windows Edition"
+#define SPECTRA_EDITION      "Windows Standalone Edition"
 
 static void print_banner(void) {
     wprintf(L"==============================================================================\n");
@@ -22,9 +24,107 @@ static void print_banner(void) {
     wprintf(L"==============================================================================\n");
 }
 
+static void pause_exit(DWORD code) {
+    if (code != 0) {
+        wprintf(L"\n[!] SPECTRA exited with status code: %lu\n", code);
+    }
+    wprintf(L"[*] Press any key to close this window...\n");
+    _getch();
+}
+
 static BOOL file_exists(const wchar_t *path) {
     DWORD attr = GetFileAttributesW(path);
     return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+static BOOL dir_exists(const wchar_t *path) {
+    DWORD attr = GetFileAttributesW(path);
+    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+static void create_dir_recursive(const wchar_t *path) {
+    wchar_t temp[MAX_PATH];
+    wcsncpy(temp, path, MAX_PATH);
+    size_t len = wcslen(temp);
+    for (size_t i = 1; i < len; i++) {
+        if (temp[i] == L'\\' || temp[i] == L'/') {
+            temp[i] = L'\0';
+            CreateDirectoryW(temp, NULL);
+            temp[i] = L'\\';
+        }
+    }
+    CreateDirectoryW(temp, NULL);
+}
+
+static BOOL extract_embedded_payload(const wchar_t *target_dir) {
+    HRSRC hRes = FindResourceW(NULL, MAKEINTRESOURCEW(101), RT_RCDATA);
+    if (!hRes) return FALSE;
+
+    HGLOBAL hData = LoadResource(NULL, hRes);
+    if (!hData) return FALSE;
+
+    DWORD size = SizeofResource(NULL, hRes);
+    void *pData = LockResource(hData);
+    if (!pData || size == 0) return FALSE;
+
+    create_dir_recursive(target_dir);
+
+    wchar_t zip_path[MAX_PATH];
+    swprintf(zip_path, MAX_PATH, L"%ls\\bundle.zip", target_dir);
+
+    wprintf(L"[*] Extracting standalone SPECTRA runtime (first run initialization)...\n");
+    HANDLE hFile = CreateFileW(zip_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        wprintf(L"[-] Failed to write temporary bundle to %ls (Error: %lu)\n", zip_path, GetLastError());
+        return FALSE;
+    }
+
+    DWORD written = 0;
+    WriteFile(hFile, pData, size, &written, NULL);
+    CloseHandle(hFile);
+
+    // Extraction command via Windows tar.exe (built-in Windows 10/11)
+    wchar_t cmd[4096];
+    swprintf(cmd, 4096, L"tar.exe -xf \"%ls\" -C \"%ls\"", zip_path, target_dir);
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    ZeroMemory(&pi, sizeof(pi));
+
+    BOOL extracted = FALSE;
+    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 30000);
+        DWORD code = 0;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        if (code == 0) extracted = TRUE;
+    }
+
+    // Fallback to PowerShell Expand-Archive (Win7+)
+    if (!extracted) {
+        swprintf(cmd, 4096, L"powershell.exe -NoProfile -NonInteractive -Command \"Expand-Archive -Path '%ls' -DestinationPath '%ls' -Force\"", zip_path, target_dir);
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        ZeroMemory(&pi, sizeof(pi));
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 60000);
+            DWORD code = 0;
+            GetExitCodeProcess(pi.hProcess, &code);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            if (code == 0) extracted = TRUE;
+        }
+    }
+
+    DeleteFileW(zip_path);
+    return extracted;
 }
 
 static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_dir) {
@@ -42,7 +142,7 @@ static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_di
         return TRUE;
     }
 
-    // 2. Search in system PATH for python.exe, py.exe, pythonw.exe
+    // 2. Search in system PATH for python.exe, py.exe, python3.exe
     if (SearchPathW(NULL, L"python.exe", NULL, MAX_PATH, candidate, NULL) > 0) {
         wcsncpy(out_path, candidate, max_len);
         return TRUE;
@@ -56,7 +156,7 @@ static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_di
         return TRUE;
     }
 
-    // 3. Check common LocalAppData Python installations (e.g. %LOCALAPPDATA%\Programs\Python\Python3*\python.exe)
+    // 3. Check common LocalAppData Python installations
     wchar_t local_app_data[MAX_PATH];
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH) > 0) {
         const wchar_t *subdirs[] = {
@@ -111,44 +211,111 @@ int wmain(int argc, wchar_t *argv[]) {
         }
     }
 
-    // Get executable directory
-    wchar_t app_path[MAX_PATH];
-    GetModuleFileNameW(NULL, app_path, MAX_PATH);
-    wchar_t *last_slash = wcsrchr(app_path, L'\\');
+    // Determine executable directory
+    wchar_t exe_dir[MAX_PATH];
+    GetModuleFileNameW(NULL, exe_dir, MAX_PATH);
+    wchar_t *last_slash = wcsrchr(exe_dir, L'\\');
     if (last_slash) *last_slash = L'\0';
 
-    // Locate Python
-    wchar_t python_exe[MAX_PATH];
-    if (!find_python(python_exe, MAX_PATH, app_path)) {
-        print_banner();
-        wprintf(L"\n[!] ERROR: Python 3.10+ runtime was not found.\n");
-        wprintf(L"    SPECTRA requires Python 3.10+ and pyserial to communicate with\n");
-        wprintf(L"    FTDI optical transceivers and COM serial ports.\n\n");
-        wprintf(L"    Please install Python from: https://www.python.org/downloads/windows/\n");
-        wprintf(L"    (Ensure 'Add Python to PATH' is checked during installation)\n\n");
+    wchar_t app_dir[MAX_PATH];
+    wcsncpy(app_dir, exe_dir, MAX_PATH);
 
-        int resp = MessageBoxW(
-            NULL,
-            L"SPECTRA requires Python 3.10+ to interface with physical COM serial ports.\n\n"
-            L"Python was not detected in PATH or standard installation folders.\n\n"
-            L"Would you like to open the official Python download page now?",
-            L"SPECTRA — Python Runtime Required",
-            MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON1
-        );
-        if (resp == IDYES) {
-            ShellExecuteW(NULL, L"open", L"https://www.python.org/downloads/windows/", NULL, NULL, SW_SHOWNORMAL);
+    // 1. Check if spectra_app.py exists adjacent, in parent directory (bin/), or grand-parent
+    wchar_t candidate_script[MAX_PATH];
+    BOOL found_local = FALSE;
+
+    // Check adjacent
+    swprintf(candidate_script, MAX_PATH, L"%ls\\spectra_app.py", app_dir);
+    if (file_exists(candidate_script)) {
+        found_local = TRUE;
+    } else {
+        // Check parent directory (e.g. if running inside bin\ or dist\)
+        swprintf(candidate_script, MAX_PATH, L"%ls\\..\\spectra_app.py", app_dir);
+        if (file_exists(candidate_script)) {
+            wchar_t full_parent[MAX_PATH];
+            GetFullPathNameW(candidate_script, MAX_PATH, full_parent, NULL);
+            wchar_t *slash = wcsrchr(full_parent, L'\\');
+            if (slash) *slash = L'\0';
+            wcsncpy(app_dir, full_parent, MAX_PATH);
+            found_local = TRUE;
         }
+    }
+
+    wchar_t python_exe[MAX_PATH];
+    python_exe[0] = L'\0';
+
+    // 2. If not found locally, check or extract embedded standalone bundle
+    if (!found_local) {
+        wchar_t local_app_data[MAX_PATH];
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH) > 0) {
+            wchar_t bundle_dir[MAX_PATH];
+            swprintf(bundle_dir, MAX_PATH, L"%ls\\Programs\\SPECTRA\\build_%hs", local_app_data, SPECTRA_BUILD);
+
+            wchar_t bundled_script[MAX_PATH];
+            swprintf(bundled_script, MAX_PATH, L"%ls\\spectra_app.py", bundle_dir);
+            wchar_t bundled_python[MAX_PATH];
+            swprintf(bundled_python, MAX_PATH, L"%ls\\python.exe", bundle_dir);
+
+            if (!file_exists(bundled_script) || !file_exists(bundled_python)) {
+                if (extract_embedded_payload(bundle_dir)) {
+                    wcsncpy(app_dir, bundle_dir, MAX_PATH);
+                    wcsncpy(python_exe, bundled_python, MAX_PATH);
+                    found_local = TRUE;
+                }
+            } else {
+                wcsncpy(app_dir, bundle_dir, MAX_PATH);
+                wcsncpy(python_exe, bundled_python, MAX_PATH);
+                found_local = TRUE;
+            }
+        }
+    }
+
+    // 3. Locate Python runtime if not already bound
+    if (python_exe[0] == L'\0') {
+        if (!find_python(python_exe, MAX_PATH, app_dir)) {
+            print_banner();
+            wprintf(L"\n[!] ERROR: Python 3.10+ runtime was not found.\n");
+            wprintf(L"    SPECTRA requires Python 3.10+ and pyserial to communicate with\n");
+            wprintf(L"    FTDI optical transceivers and COM serial ports.\n\n");
+            wprintf(L"    Please install Python from: https://www.python.org/downloads/windows/\n");
+            wprintf(L"    (Ensure 'Add Python to PATH' is checked during installation)\n\n");
+
+            MessageBoxW(
+                NULL,
+                L"SPECTRA requires Python 3.10+ to interface with physical COM serial ports.\n\n"
+                L"Python was not detected in PATH or standard installation folders.\n\n"
+                L"Please install Python from python.org with 'Add Python to PATH' enabled.",
+                L"SPECTRA — Python Runtime Required",
+                MB_ICONWARNING | MB_OK
+            );
+            pause_exit(1);
+            return 1;
+        }
+    }
+
+    // 4. Resolve target script
+    wchar_t script_path[MAX_PATH];
+    swprintf(script_path, MAX_PATH, L"%ls\\spectra_app.py", app_dir);
+    if (!file_exists(script_path)) {
+        swprintf(script_path, MAX_PATH, L"%ls\\web_server.py", app_dir);
+    }
+
+    if (!file_exists(script_path)) {
+        print_banner();
+        wprintf(L"\n[!] ERROR: SPECTRA application files were not found in:\n");
+        wprintf(L"    %ls\n\n", app_dir);
+        MessageBoxW(
+            NULL,
+            L"Unable to find spectra_app.py or web_server.py.\n"
+            L"Please verify application files are intact.",
+            L"SPECTRA — Launch Error",
+            MB_ICONERROR | MB_OK
+        );
+        pause_exit(1);
         return 1;
     }
 
-    // Check target script
-    wchar_t script_path[MAX_PATH];
-    swprintf(script_path, MAX_PATH, L"%ls\\spectra_app.py", app_path);
-    if (!file_exists(script_path)) {
-        swprintf(script_path, MAX_PATH, L"%ls\\web_server.py", app_path);
-    }
-
-    // Construct command line
+    // 5. Construct command line
     wchar_t cmd_line[32768];
     int offset = swprintf(cmd_line, 32768, L"\"%ls\" \"%ls\"", python_exe, script_path);
 
@@ -157,7 +324,7 @@ int wmain(int argc, wchar_t *argv[]) {
         offset += swprintf(cmd_line + offset, 32768 - offset, L" \"%ls\"", argv[i]);
     }
 
-    // If double-clicked with no arguments, or explicit --web, ensure --open is passed
+    // Default: open browser dashboard if no arguments passed
     if (argc <= 1) {
         offset += swprintf(cmd_line + offset, 32768 - offset, L" --open");
     }
@@ -165,7 +332,7 @@ int wmain(int argc, wchar_t *argv[]) {
     // Print banner and launch status
     print_banner();
     wprintf(L"[*] Python Runtime : %ls\n", python_exe);
-    wprintf(L"[*] Working Dir    : %ls\n", app_path);
+    wprintf(L"[*] Working Dir    : %ls\n", app_dir);
     wprintf(L"[*] Starting SPECTRA Telemetry Engine...\n");
     wprintf(L"==============================================================================\n");
 
@@ -184,7 +351,7 @@ int wmain(int argc, wchar_t *argv[]) {
         TRUE,
         0,
         NULL,
-        app_path,
+        app_dir,
         &si,
         &pi
     );
@@ -192,16 +359,21 @@ int wmain(int argc, wchar_t *argv[]) {
     if (!success) {
         DWORD err = GetLastError();
         wprintf(L"[-] Failed to launch SPECTRA process. Error code: %lu\n", err);
+        pause_exit(err);
         return (int)err;
     }
 
-    // Wait for process to exit and return exit code
+    // Wait for process to exit
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD exit_code = 0;
     GetExitCodeProcess(pi.hProcess, &exit_code);
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+
+    if (exit_code != 0) {
+        pause_exit(exit_code);
+    }
 
     return (int)exit_code;
 }

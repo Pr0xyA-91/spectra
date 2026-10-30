@@ -30,18 +30,14 @@ if sys.platform.startswith("win"):
 def main():
     args = sys.argv[1:]
 
-    # Explicit web mode flag
-    if "--web" in args or "--gui" in args:
-        if "--web" in args:
+    # Web mode flags: explicit --web, --gui, launcher's --open, or launched with no args
+    if not args or "--web" in args or "--gui" in args or "--open" in args:
+        if "--web" in sys.argv:
             sys.argv.remove("--web")
-        if "--gui" in args:
+        if "--gui" in sys.argv:
             sys.argv.remove("--gui")
-        import web_server
-        web_server.main(auto_open=True)
-        return
-
-    # If launched with no arguments (typical double-click on Windows), open Web Dashboard
-    if not args:
+        if "--open" in sys.argv:
+            sys.argv.remove("--open")
         import web_server
         web_server.main(auto_open=True)
         return
