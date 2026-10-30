@@ -2,18 +2,28 @@
 # SPECTRA Next-Gen Telemetry & Logic Analyzer UI Testbed
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
+
+# Automatically adopt uucp group if member in /etc/group but current session has not reloaded
+if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER"; then
+    cmd="exec bash $(printf "%q" "$PROJECT_DIR/run_ui.sh")"
+    for arg in "$@"; do
+        cmd+=" $(printf "%q" "$arg")"
+    done
+    exec newgrp uucp -c "$cmd"
+fi
 
 # Start Python hardware API server on port 8080 in background if not already running
 if ! ss -tulpn | grep -q ":8080 "; then
     echo "[*] Starting SPECTRA Hardware REST API Server on http://127.0.0.1:8080 ..."
-    python3 "$SCRIPT_DIR/web_server.py" &
+    python3 "$PROJECT_DIR/web_server.py" &
     SERVER_PID=$!
     trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
     sleep 0.8
 fi
 
-cd "$SCRIPT_DIR/web"
+cd "$PROJECT_DIR/web"
 MODE="${1:---dev}"
 
 if [ "$MODE" = "--build" ] || [ ! -d "dist" ]; then

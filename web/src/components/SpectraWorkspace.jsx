@@ -185,9 +185,10 @@ export default function SpectraWorkspace() {
   const [availablePorts, setAvailablePorts] = useState([]);
   const [selectedPort, setSelectedPort] = useState('');
   const [isConnected, setIsConnected] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isPolling, setIsPolling] = useState(true);
   const [isInterrogating, setIsInterrogating] = useState(false);
-  const [connectionStatusText, setConnectionStatusText] = useState('Select a port to connect');
+  const [hardwareError, setHardwareError] = useState(null);
+  const [connectionStatusText, setConnectionStatusText] = useState('Detecting hardware serial ports...');
   const [lastTimestamp, setLastTimestamp] = useState('---');
 
   // Live Telemetry from Hardware API
@@ -238,60 +239,27 @@ export default function SpectraWorkspace() {
   const phaseRef = useRef(0);
 
   // --------------------------------------------------------------------------
-  // 1. Initial Load: Fetch Serial Ports & Calibration
+  // 1. Query Live Sensors (Hardware or Demo)
   // --------------------------------------------------------------------------
-  const fetchPorts = useCallback(async () => {
+  const querySensors = useCallback(async (isFast = true, portOverride = null) => {
+    const port = portOverride || selectedPort;
+    if (!port) return;
     try {
-      const res = await fetch('/api/ports');
-      if (!res.ok) return;
-      const ports = await res.json();
-      setAvailablePorts(ports);
-      if (ports.length > 0 && !selectedPort) {
-        // Prefer hardware ttyUSB / COM ports, or first available
-        const hwPort = ports.find((p) => p.includes('ttyUSB') || p.startsWith('COM') || p.includes('by-id'));
-        setSelectedPort(hwPort || ports[0]);
-      }
-    } catch (e) {
-      console.warn('API error fetching ports:', e);
-    }
-  }, [selectedPort]);
-
-  const fetchCalibration = useCallback(async () => {
-    try {
-      const res = await fetch('/api/calibration');
-      if (!res.ok) return;
-      const calib = await res.json();
-      if (calib.threshold) setBeanThreshold(calib.threshold);
-      if (calib.hysteresis) setBeanHysteresis(calib.hysteresis);
-    } catch (e) {
-      console.warn('API error fetching calibration:', e);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchPorts();
-    fetchCalibration();
-  }, [fetchPorts, fetchCalibration]);
-
-  // --------------------------------------------------------------------------
-  // 2. Query Live Sensors (Hardware or Demo)
-  // --------------------------------------------------------------------------
-  const querySensors = useCallback(async (isFast = true) => {
-    if (!selectedPort) return;
-    try {
-      const res = await fetch(`/api/sensors?port=${encodeURIComponent(selectedPort)}&fast=${isFast ? '1' : '0'}`);
+      const res = await fetch(`/api/sensors?port=${encodeURIComponent(port)}&fast=${isFast ? '1' : '0'}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
       if (data.error) {
         setConnectionStatusText(`Hardware Warning: ${data.error}`);
+        setHardwareError(data.error);
         return;
       }
 
+      setHardwareError(null);
       setLiveData(data);
       setIsConnected(true);
       setLastTimestamp(data.timestamp || new Date().toLocaleTimeString());
-      setConnectionStatusText(`Connected to ${selectedPort} [Nominal Telemetry]`);
+      setConnectionStatusText(`Connected to ${port} [Nominal Telemetry]`);
 
       // Add decoded UART packet to live packet stream
       const pktId = `PKT-${String(Math.floor(Date.now() / 100) % 10000).padStart(4, '0')}`;
@@ -324,19 +292,58 @@ export default function SpectraWorkspace() {
 
     } catch (err) {
       setConnectionStatusText(`Connection Error: ${err.message}`);
+      setHardwareError(err.message);
     }
   }, [selectedPort, selectedPacket]);
+
+  // --------------------------------------------------------------------------
+  // 2. Initial Load: Fetch Serial Ports & Calibration
+  // --------------------------------------------------------------------------
+  const fetchPorts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ports');
+      if (!res.ok) return;
+      const ports = await res.json();
+      setAvailablePorts(ports);
+      if (ports.length > 0) {
+        // Prefer hardware ttyUSB / COM ports, or first available
+        const hwPort = ports.find((p) => p.includes('ttyUSB') || p.startsWith('COM') || p.includes('by-id')) || ports[0];
+        setSelectedPort(hwPort);
+        setIsPolling(true);
+        querySensors(true, hwPort);
+      }
+    } catch (e) {
+      console.warn('API error fetching ports:', e);
+    }
+  }, [querySensors]);
+
+  const fetchCalibration = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calibration');
+      if (!res.ok) return;
+      const calib = await res.json();
+      if (calib.threshold) setBeanThreshold(calib.threshold);
+      if (calib.hysteresis) setBeanHysteresis(calib.hysteresis);
+    } catch (e) {
+      console.warn('API error fetching calibration:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPorts();
+    fetchCalibration();
+  }, [fetchPorts, fetchCalibration]);
 
   // --------------------------------------------------------------------------
   // 3. Auto-Polling Timer
   // --------------------------------------------------------------------------
   useEffect(() => {
-    if (!isPolling || !selectedPort) return;
+    if (!isPolling || !selectedPort || isInterrogating) return;
     const interval = setInterval(() => {
       querySensors(true);
     }, 1100);
     return () => clearInterval(interval);
-  }, [isPolling, selectedPort, querySensors]);
+  }, [isPolling, selectedPort, isInterrogating, querySensors]);
 
   // --------------------------------------------------------------------------
   // 4. Full Interrogation Routine
@@ -692,8 +699,10 @@ export default function SpectraWorkspace() {
             <select
               value={selectedPort}
               onChange={(e) => {
-                setSelectedPort(e.target.value);
-                setIsPolling(false);
+                const newPort = e.target.value;
+                setSelectedPort(newPort);
+                setHardwareError(null);
+                querySensors(true, newPort);
               }}
               className="bg-transparent text-gray-200 text-xs font-mono outline-none cursor-pointer max-w-[200px]"
             >
@@ -749,6 +758,27 @@ export default function SpectraWorkspace() {
           </div>
         </div>
       </header>
+
+      {/* Hardware Warning Alert Banner */}
+      {hardwareError && (
+        <div className="bg-rose-950/90 border-b border-rose-500/60 px-4 py-2 flex items-center justify-between text-xs text-rose-200 backdrop-blur">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+            <span>
+              <strong>Hardware Status:</strong> {hardwareError}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setHardwareError(null);
+              querySensors(true);
+            }}
+            className="px-2.5 py-0.5 bg-rose-800 hover:bg-rose-700 text-white font-bold rounded text-[11px] transition-colors"
+          >
+            RETRY
+          </button>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* ZONE 2: 9 REAL-TIME HARDWARE KPI TILES */}

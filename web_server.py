@@ -16,6 +16,27 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Any, Optional
 
+# Auto-adopt uucp / dialout group if member in /etc/group but current session lacks it
+if sys.platform.startswith("linux"):
+    import glob
+    serial_devs = glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
+    needs_group = any(not os.access(dev, os.R_OK | os.W_OK) for dev in serial_devs)
+    if needs_group:
+        try:
+            import grp
+            user = os.environ.get("USER", "")
+            for gname in ("uucp", "dialout"):
+                try:
+                    g_entry = grp.getgrnam(gname)
+                    if user and user in g_entry.gr_mem:
+                        args = " ".join([f'"{a}"' for a in sys.argv])
+                        cmd = f"exec python3 {args}"
+                        os.execlp("newgrp", "newgrp", gname, "-c", cmd)
+                except KeyError:
+                    pass
+        except Exception:
+            pass
+
 # Ensure local modules are importable
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_DIR not in sys.path:
@@ -102,9 +123,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         _active_session = sc.JuraStatsSession(port_name=port)
                         _current_port = port
 
+                    if _active_session.conn is None or not _active_session.conn.is_open:
+                        _active_session.conn = serial_io.JuraSerialConnection(port)
+
                     data = sc.query_live_sensors(
                         port_name=port,
-                        conn=_active_session.conn if (_active_session.conn and _active_session.conn.is_open) else None,
+                        conn=_active_session.conn,
                         profile=_active_session.profile,
                         is_legacy=_active_session.is_legacy_cleartext,
                         fast_poll=fast_poll,
@@ -149,7 +173,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     sess.run_interrogation()
                     data = sess.get_structured_summary()
                     _last_stats_cache = data
-                    sess.close()
+                    _active_session = sess
+                    _current_port = port
                 except Exception as e:
                     data = {"error": str(e)}
 
@@ -200,9 +225,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
             with _session_lock:
                 try:
-                    conn = serial_io.JuraSerialConnection(port)
-                    resp = conn.query_ascii(cmd, timeout=1.2)
-                    conn.close()
+                    if _active_session is not None and _current_port == port and _active_session.conn and _active_session.conn.is_open:
+                        resp = _active_session.conn.query_ascii(cmd, timeout=1.2)
+                    else:
+                        conn = serial_io.JuraSerialConnection(port)
+                        resp = conn.query_ascii(cmd, timeout=1.2)
+                        conn.close()
                     self._send_json({
                         "success": True,
                         "cmd": cmd,
