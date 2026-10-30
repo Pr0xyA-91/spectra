@@ -210,6 +210,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         _active_session = sc.JuraStatsSession(port_name=port)
                         _current_port = port
 
+                    if _active_session.conn is not None and not _active_session.conn.is_open:
+                        try:
+                            _active_session.conn.close()
+                        except Exception:
+                            pass
+                        _active_session.conn = None
+
                     if _active_session.conn is None or not _active_session.conn.is_open:
                         _active_session.conn = serial_io.JuraSerialConnection(port)
 
@@ -286,6 +293,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             summary = _last_stats_cache
             if summary is None or _current_port != port:
                 with _session_lock:
+                    if _active_session is not None:
+                        try:
+                            _active_session.close()
+                        except Exception:
+                            pass
+                        _active_session = None
                     sess = sc.JuraStatsSession(port_name=port)
                     sess.run_interrogation()
                     summary = sess.get_structured_summary()
@@ -319,6 +332,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
             with _session_lock:
                 if _active_session is None or _current_port != port:
+                    if _active_session is not None:
+                        try:
+                            _active_session.close()
+                        except Exception:
+                            pass
+                        _active_session = None
                     sess = sc.JuraStatsSession(port_name=port)
                     sess.run_interrogation()
                     _active_session = sess
