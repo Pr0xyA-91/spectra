@@ -583,6 +583,26 @@ conn.close()
 * **Validation**:
   - All 35 tests passing in `spectra`, 43 in `spectra-mm`, 43 in `spectra-win` (121/121 total, 100% pass rate).
 
+---
+
+### Phase 17: Optical Bean Calibration, Serial Concurrency Safety & Windows Standalone Packaging (2026-10-29)
+* **Problem Statements**:
+  1. Bean sensor in SPECTRA flipped to "Fill Beans" or failed to register beans on warm machine even when hopper was filled and appliance LCD read "Ready".
+  2. Physical machine experienced unexpected shutdowns/standby transitions during background diagnostic testing.
+  3. Running scripts on Windows encountered execution policy blocks and PATH hurdles.
+* **Root Cause Analyses**:
+  1. Continuous `AS:` logging during empirical cover/uncover tests revealed that optical delta $\Delta = (\text{ON} - \text{OFF})$ drifts with thermoblock temperature between $85$ and $105$ counts ($\approx 1.060$ fixed optical gain). Legacy threshold $99 \pm 2$ bisected the nominal heated drift band, causing false empty triggers.
+  2. Concurrent queries from background scripts while `gui.py` held `/dev/ttyUSB0` open interleaved ASCII characters on the wire, accidentally generating `AN:\r\n` (appliance power toggle command).
+  3. Windows security restricts execution of `.ps1` scripts by default, and batch files fail if Python is omitted from system PATH.
+* **Fix & Architecture**:
+  1. `stats_collector.py` & `gui.py`: Calibrated default optical threshold to $115 \pm 5$ counts ($\le 110$ is Charged, $\ge 120$ is Empty); added config migration for `~/.config/spectra/calibration.json`. Removed invalid CPU lockout based on `parts[0][3]` (grinder triac) and `parts[8]` (puck thickness).
+  2. `serial_io.py`: Implemented non-blocking POSIX exclusive file locking (`fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)`) to serialize port access and prevent wire byte collision.
+  3. `spectra-win`: Created PyInstaller standalone specification `spectra.spec`, entrypoint `spectra_app.py`, multi-resolution `icon.ico`, and one-click `build_windows_exe.bat`. Implemented `sys._MEIPASS` path resolution in `profiles_db.py` and `gui_web.py`.
+  4. Synchronized `GEMINI.md`, `COWORKER_CONTEXT.md`, and `SESSION_NOTES.md` across all three repository branches (`main`, `multi-manufacturer`, `windows`).
+* **Validation**:
+  - All 121 tests passing across `spectra` (35), `spectra-mm` (43), and `spectra-win` (43).
+
+
 
 
 
