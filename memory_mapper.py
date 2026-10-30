@@ -37,7 +37,7 @@ import datetime
 try:
     from version import __version__, __build__
 except ImportError:
-    __version__ = "0.5.1_win"
+    __version__ = "0.5.1"
     __build__ = "20261029.1130"
 import threading
 import argparse
@@ -390,8 +390,44 @@ class MemoryMapperEngine:
         self.classify_all()
         return dict(self.current_eeprom)
 
+    def sweep_block(self, b_idx: int) -> List[RegisterEntry]:
+        """Sweep a single 16-word block and return the updated RegisterEntry objects."""
+        total_blocks = max(1, self.max_words // 16)
+        if b_idx < 0 or b_idx >= total_blocks:
+            return []
+
+        blk = b_idx * 16
+        blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
+        cmd = f"RT:{blk_str}"
+        ans = self.query_safe(cmd, timeout=1.5)
+
+        block_success = False
+        if ans and ans.lower().startswith("rt:"):
+            raw_hex = ans[3:].strip()
+            if len(raw_hex) >= 64:
+                for i in range(16):
+                    w_hex = raw_hex[i * 4: i * 4 + 4]
+                    try:
+                        self.current_eeprom[blk + i] = int(w_hex, 16)
+                    except ValueError:
+                        self.current_eeprom[blk + i] = 0x0000
+                block_success = True
+
+        if not block_success:
+            for i in range(16):
+                addr = blk + i
+                addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
+                w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                if w_ans and w_ans.lower().startswith("re:"):
+                    try:
+                        self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
+                    except ValueError:
+                        self.current_eeprom[addr] = 0x0000
+                else:
+                    self.current_eeprom[addr] = 0x0000
+
         self.classify_all()
-        return dict(self.current_eeprom)
+        return [r for r in self.classified_registers if blk <= r.addr < blk + 16]
 
     def capture_baseline(self) -> MemorySnapshot:
         """Capture current EEPROM and volatile telemetry as baseline reference."""

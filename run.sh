@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics - Launcher Script
-# Universal Appliance Telemetry Engine (Jura, Nivona, Lamanti-KL, Lamanti-JN)
+# Appliance Diagnostics Engine (Jura Diagnostics Module)
+# Supports modern Jura coffee machines (Generation 7+ & Smart Connect protocol)
 # ==============================================================================
 
 set -e
@@ -15,11 +16,6 @@ if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER
         cmd+=" $(printf "%q" "$arg")"
     done
     exec newgrp uucp -c "$cmd"
-fi
-
-# Check if user requested Web Dashboard
-if [[ "$*" == *"--web"* ]]; then
-    exec python3 "$PROJECT_DIR/gui_web.py" "$@"
 fi
 
 # Check if user requested CLI mode or help

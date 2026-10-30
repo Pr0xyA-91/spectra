@@ -2,10 +2,10 @@
 Version=1.0
 Type=Application
 Name=SPECTRA
-Comment=Universal Hardware Telemetry & Logic Board Diagnostics (Jura, Nivona, Lamanti)
+Comment=Universal Hardware Telemetry & Logic Board Diagnostics (Jura Module)
 Exec=bash -c '"$(dirname "%k")"/run.sh'
 Icon=utilities-system-monitor
 Terminal=false
 Categories=Utility;HardwareSettings;
-Keywords=SPECTRA;Jura;Nivona;Lamanti;Kalerm;Jetinno;Diagnostics;Telemetry;Statistics;EEPROM;
+Keywords=SPECTRA;Jura;Coffee;Diagnostics;Telemetry;Statistics;EEPROM;
 StartupNotify=true

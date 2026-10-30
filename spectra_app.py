@@ -36,14 +36,14 @@ def main():
             sys.argv.remove("--web")
         if "--gui" in args:
             sys.argv.remove("--gui")
-        import gui_web
-        gui_web.main()
+        import web_server
+        web_server.main(auto_open=True)
         return
 
     # If launched with no arguments (typical double-click on Windows), open Web Dashboard
     if not args:
-        import gui_web
-        gui_web.main()
+        import web_server
+        web_server.main(auto_open=True)
         return
 
     # Otherwise, pass through to CLI engine

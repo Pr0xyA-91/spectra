@@ -23,7 +23,7 @@ from gi.repository import Gtk, Gdk, GLib, Pango
 try:
     from version import __version__, __build__
 except ImportError:
-    __version__ = "0.5.1_win"
+    __version__ = "0.5.1"
     __build__ = "20261029.1130"
 
 

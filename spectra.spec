@@ -14,6 +14,7 @@ added_files = [
     ('profiles_data.json', '.'),
     ('spectra_logo.svg', '.'),
     ('icon.ico', '.'),
+    ('web/dist', 'web/dist'),
 ]
 
 a = Analysis(
@@ -28,6 +29,7 @@ a = Analysis(
         'serial.tools.list_ports_windows',
         'http.server',
         'webbrowser',
+        'web_server',
         'json',
         'socket',
         'threading',

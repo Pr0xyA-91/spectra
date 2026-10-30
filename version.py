@@ -2,8 +2,8 @@
 """
 SPECTRA Diagnostics Suite — Centralized Version and Build Metadata (Windows Edition)
 Provides:
-- __version__: Base semantic version (e.g. "0.5.1_win")
-- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261029.1130")
+- __version__: Base semantic version (e.g. "0.6.0-alpha")
+- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261030.1515")
 - __edition__: Branch / target platform designation
 - Helper formatters and CLI bump utility
 """
@@ -13,20 +13,20 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "0.5.1_win"
-__build__ = "20261029.1659"
+__version__ = "0.6.0-alpha"
+__build__ = "20261030.1515"
 __edition__ = "Windows Edition"
 
 
 def get_version_string(with_build: bool = True) -> str:
-    """Return formatted version string: 'v0.5.1_win' or 'v0.5.1_win (build 20261029.1130)'."""
+    """Return formatted version string: 'v0.6.0-alpha' or 'v0.6.0-alpha (build 20261030.1515)'."""
     if with_build and __build__:
         return f"v{__version__} (build {__build__})"
     return f"v{__version__}"
 
 
 def get_full_title(app_name: str = "SPECTRA") -> str:
-    """Return full window/report title string with version and build."""
+    """Return full application title including edition and build number."""
     return f"{app_name} — {get_version_string(with_build=True)}"
 
 
@@ -40,7 +40,7 @@ def update_build(new_build: str = None) -> str:
 
     updated = re.sub(
         r'__build__\s*=\s*"[^"]*"',
-        f'__build__ = "20261029.1659"',
+        f'__build__ = "{new_build}"',
         content
     )
     file_path.write_text(updated, encoding="utf-8")
