@@ -824,19 +824,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
             summary = _last_stats_cache
             if summary is None or _current_port != port:
-                with _session_lock:
-                    if _active_session is not None:
-                        try:
-                            _active_session.close()
-                        except Exception:
-                            pass
-                        _active_session = None
-                    sess = sc.JuraStatsSession(port_name=port)
-                    sess.run_interrogation()
-                    summary = sess.get_structured_summary()
-                    _last_stats_cache = summary
-                    _active_session = sess
-                    _current_port = port
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b"<html><body style='background:#121218;color:#eee;font-family:monospace;padding:40px;'><h2>Data Not Read Yet</h2><p>Please interrogate the machine first before generating a service certificate.</p></body></html>")
+                return
 
             score, _ = compute_advisor_health(summary, {})
             checklist = [
@@ -863,18 +856,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 return
 
             with _session_lock:
-                if _active_session is None or _current_port != port:
-                    if _active_session is not None:
-                        try:
-                            _active_session.close()
-                        except Exception:
-                            pass
-                        _active_session = None
-                    sess = sc.JuraStatsSession(port_name=port)
-                    sess.run_interrogation()
-                    _active_session = sess
-                    _current_port = port
-                    _last_stats_cache = sess.get_structured_summary()
+                if _active_session is None or _current_port != port or _last_stats_cache is None:
+                    self._send_json({
+                        "error": "Machine data has not been read yet. Please interrogate machine first before exporting.",
+                        "success": False
+                    })
+                    return
 
                 safe_model = re.sub(r'[^\w\-_]', '_', str(_active_session.model_family or "appliance"))
                 timestamp = time.strftime("%Y%m%d_%H%M%S")

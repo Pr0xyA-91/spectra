@@ -28,23 +28,24 @@ export default function DigitalTwinSchematic({
   const [selectedNodeId, setSelectedNodeId] = useState('tb1'); // Default select coffee heater
 
   const telem = liveData?.telemetry || {};
+  const hasTelem = Boolean(telem && Object.keys(telem).length > 0);
   const switches = liveData?.switches || [];
 
-  const tankSw = switches.find((s) => s.id === 'water_tank');
-  const traySw = switches.find((s) => s.id === 'drip_tray');
-  const filterSw = switches.find((s) => s.id === 'claris_filter');
+  const tankSw = hasTelem ? switches.find((s) => s.id === 'water_tank') : null;
+  const traySw = hasTelem ? switches.find((s) => s.id === 'drip_tray') : null;
+  const filterSw = hasTelem ? switches.find((s) => s.id === 'claris_filter') : null;
 
-  const tb1Temp = telem.heater_coffee_c ?? 97.0;
-  const tb2Temp = telem.heater_steam_c;
+  const tb1Temp = hasTelem && telem.heater_coffee_c != null ? telem.heater_coffee_c : null;
+  const tb2Temp = hasTelem && telem.heater_steam_c != null ? telem.heater_steam_c : null;
   const isDualHeater = telem.is_dual_heater ?? false;
-  const buPos = telem.bu_encoder_pos ?? 229;
-  const buUpper = telem.bu_encoder_upper ?? 649;
-  const buZone = telem.bu_position_state || 'Home / Mill Position';
-  const flowRate = telem.flow_rate_ml_s ?? 0.0;
-  const flowVolume = telem.flow_volume_ml ?? 0.0;
-  const flowPulses = telem.flow_pulses ?? 120;
-  const beansOk = telem.beans_ok ?? true;
-  const opticalDelta = telem.optical_delta ?? 90;
+  const buPos = hasTelem && telem.bu_encoder_pos != null ? telem.bu_encoder_pos : null;
+  const buUpper = hasTelem && telem.bu_encoder_upper != null ? telem.bu_encoder_upper : null;
+  const buZone = hasTelem && telem.bu_position_state ? telem.bu_position_state : 'Standby / Unread';
+  const flowRate = hasTelem && telem.flow_rate_ml_s != null ? telem.flow_rate_ml_s : null;
+  const flowVolume = hasTelem && telem.flow_volume_ml != null ? telem.flow_volume_ml : null;
+  const flowPulses = hasTelem && telem.flow_pulses != null ? telem.flow_pulses : null;
+  const beansOk = hasTelem && telem.beans_ok != null ? telem.beans_ok : null;
+  const opticalDelta = hasTelem && telem.optical_delta != null ? telem.optical_delta : null;
 
   // Node specifications and dynamic state
   const NODES = {
@@ -52,12 +53,12 @@ export default function DigitalTwinSchematic({
       id: 'tank',
       label: 'WATER TANK',
       icon: '💧',
-      status: tankSw?.ok ? 'NOMINAL' : 'EMPTY / TANK',
-      primary: tankSw?.ok ? 'Water Level OK' : 'Refill Required',
+      status: tankSw ? (tankSw.ok ? 'NOMINAL' : 'EMPTY / TANK') : 'STANDBY',
+      primary: tankSw ? (tankSw.ok ? 'Water Level OK' : 'Refill Required') : '---',
       details: 'Chassis reed sensor actuated by magnetic float in water tank reservoir.',
       hardware: 'Reed switch contact: NO (Normally Open) | Safety Lockout: Level 1 (Hard Block)',
-      badge: tankSw?.ok ? 'NORMAL' : 'EMPTY',
-      ok: tankSw?.ok !== false,
+      badge: tankSw ? (tankSw.ok ? 'NORMAL' : 'EMPTY') : 'STANDBY',
+      ok: tankSw ? tankSw.ok !== false : true,
       x: 60,
       y: 70,
     },
@@ -65,11 +66,11 @@ export default function DigitalTwinSchematic({
       id: 'flowmeter',
       label: 'FLOWMETER',
       icon: '🌊',
-      status: flowRate > 0 ? 'PUMPING' : 'IDLE',
-      primary: `${flowRate.toFixed(1)} ml/s (${flowPulses} pulses)`,
-      details: `Turbine impulse rate: ${flowRate.toFixed(2)} ml/s | Cycle volume: ${flowVolume.toFixed(1)} ml.`,
+      status: flowRate != null ? (flowRate > 0 ? 'PUMPING' : 'IDLE') : 'STANDBY',
+      primary: flowRate != null ? `${flowRate.toFixed(1)} ml/s (${flowPulses ?? 0} pulses)` : '--- ml/s',
+      details: flowRate != null ? `Turbine impulse rate: ${flowRate.toFixed(2)} ml/s | Cycle volume: ${(flowVolume ?? 0).toFixed(1)} ml.` : 'Digmesa impulse flowmeter standby.',
       hardware: 'Digmesa Nano 1.2mm nozzle | Hall effect impulse sensor: ~2.37 ml / 100 pulses',
-      badge: flowRate > 0 ? 'ACTIVE' : 'IDLE',
+      badge: flowRate != null ? (flowRate > 0 ? 'ACTIVE' : 'IDLE') : 'STANDBY',
       ok: true,
       x: 180,
       y: 70,
@@ -78,11 +79,11 @@ export default function DigitalTwinSchematic({
       id: 'pump',
       label: 'VIBRATION PUMP',
       icon: '⚡',
-      status: flowRate > 0 ? 'ENERGIZED' : 'STANDBY',
-      primary: flowRate > 0 ? '15 BAR ACTIVE' : '0.0 BAR (STANDBY)',
+      status: flowRate != null ? (flowRate > 0 ? 'ENERGIZED' : 'STANDBY') : 'STANDBY',
+      primary: flowRate != null ? (flowRate > 0 ? '15 BAR ACTIVE' : '0.0 BAR (STANDBY)') : '--- BAR',
       details: 'Triac-controlled vibration pump delivering 15 bar peak extraction pressure.',
       hardware: 'Ulka EP5 230V / 50Hz, 48W | Half-wave diode & Triac phase angle switching',
-      badge: flowRate > 0 ? 'PUMPING' : 'READY',
+      badge: flowRate != null ? (flowRate > 0 ? 'PUMPING' : 'READY') : 'STANDBY',
       ok: true,
       x: 300,
       y: 70,
@@ -91,11 +92,11 @@ export default function DigitalTwinSchematic({
       id: 'tb1',
       label: 'COFFEE THERMOBLOCK',
       icon: '☕',
-      status: tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING',
-      primary: `${tb1Temp.toFixed(1)} °C`,
-      details: `Primary coffee thermoblock PID controlled temperature. Target brew zone: 90°C–95°C.`,
+      status: tb1Temp != null ? (tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING') : 'STANDBY',
+      primary: tb1Temp != null ? `${tb1Temp.toFixed(1)} °C` : '--- °C',
+      details: tb1Temp != null ? `Primary coffee thermoblock PID controlled temperature. Target brew zone: 90°C–95°C.` : 'Thermoblock temperature awaiting sensor read.',
       hardware: 'Aluminum cast heater 1400W @ 230V | NTC Resistance: ~10kΩ @ 25°C (NTC raw: 970)',
-      badge: tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING',
+      badge: tb1Temp != null ? (tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING') : 'STANDBY',
       ok: true,
       x: 430,
       y: 70,
@@ -117,11 +118,11 @@ export default function DigitalTwinSchematic({
       id: 'bu',
       label: 'BREW UNIT & ENCODER',
       icon: '⚙️',
-      status: buPos === 0 ? 'INITIALIZING' : 'SYNCHRONIZED',
-      primary: `${buPos} / ${buUpper} ticks`,
+      status: buPos != null ? (buPos === 0 ? 'INITIALIZING' : 'SYNCHRONIZED') : 'STANDBY',
+      primary: buPos != null ? `${buPos} / ${buUpper ?? '---'} ticks` : '--- / --- ticks',
       details: `Mechanical stroke: ${buZone} (${telem.bu_stroke_pct ?? 0}% travel).`,
       hardware: 'Buhler 12V DC motor | Quadrature optical encoder disk with slotted optocoupler',
-      badge: `${buPos} tk`,
+      badge: buPos != null ? `${buPos} tk` : '--- tk',
       ok: telem.bu_init_ok !== false,
       x: 430,
       y: 190,
@@ -130,12 +131,12 @@ export default function DigitalTwinSchematic({
       id: 'beans',
       label: 'BEAN HOPPER SENSOR',
       icon: '🫘',
-      status: beansOk ? 'BEANS OK' : 'EMPTY',
-      primary: `Delta: ${opticalDelta} counts`,
+      status: beansOk != null ? (beansOk ? 'BEANS OK' : 'EMPTY') : 'STANDBY',
+      primary: opticalDelta != null ? `Delta: ${opticalDelta} counts` : '--- counts',
       details: `Optical IR reflection sensor. Ambient ADC: ${telem.bean_adcs?.[0] ?? '--'}, Reflected: ${telem.bean_adcs?.[1] ?? '--'}.`,
       hardware: 'IR LED emitter & phototransistor receiver pair | Threshold: 115 ± 5 counts',
-      badge: beansOk ? 'CHARGED' : 'EMPTY',
-      ok: beansOk,
+      badge: beansOk != null ? (beansOk ? 'CHARGED' : 'EMPTY') : 'STANDBY',
+      ok: beansOk !== false,
       x: 300,
       y: 190,
     },
@@ -143,12 +144,12 @@ export default function DigitalTwinSchematic({
       id: 'tray',
       label: 'DRIP TRAY & DRAWER',
       icon: '📥',
-      status: traySw?.ok ? 'INSERTED' : 'MISSING',
-      primary: traySw?.ok ? 'Tray Present' : 'Tray Removed',
+      status: traySw ? (traySw.ok ? 'INSERTED' : 'MISSING') : 'STANDBY',
+      primary: traySw ? (traySw.ok ? 'Tray Present' : 'Tray Removed') : '---',
       details: 'Dual contact leaf springs on rear chassis detecting drawer insertion.',
       hardware: 'Mechanical leaf microswitch contacts | Safety Interlock: Immediate motor shutdown',
-      badge: traySw?.ok ? 'INSERTED' : 'MISSING',
-      ok: traySw?.ok !== false,
+      badge: traySw ? (traySw.ok ? 'INSERTED' : 'MISSING') : 'STANDBY',
+      ok: traySw ? traySw.ok !== false : true,
       x: 560,
       y: 190,
     },

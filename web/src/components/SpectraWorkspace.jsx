@@ -46,13 +46,13 @@ import DiagnosticAdvisorTab from './DiagnosticAdvisorTab';
 import MemMapperTab from './MemMapperTab';
 
 // ============================================================================
-// 1. THEME DEFINITION (STRICT NETRUNNER PARADIGM ONLY)
+// 1. THEME DEFINITION
 // ============================================================================
 export const THEMES = {
   cyberpunk: {
     id: 'cyberpunk',
-    name: '01 // NETRUNNER',
-    subtitle: '神経接続・バス解析システム v9.4',
+    name: 'SPECTRA',
+    subtitle: 'Hardware Telemetry & Logic Board Diagnostics',
     bg: 'bg-[#070709]',
     panelBg: 'bg-[#0E0E12]/95',
     headerBg: 'bg-[#121218]',
@@ -115,6 +115,10 @@ export default function SpectraWorkspace() {
 
   // Full Stats from Interrogation API
   const [statsData, setStatsData] = useState(null);
+
+  // Machine Data Read Progress Bar State
+  const [interrogationProgress, setInterrogationProgress] = useState(0);
+  const [interrogationStage, setInterrogationStage] = useState('');
 
   // Optical Bean Calibration State
   const [beanThreshold, setBeanThreshold] = useState(115);
@@ -221,12 +225,35 @@ export default function SpectraWorkspace() {
   }, [isPolling, selectedPort, isInterrogating, querySensors]);
 
   // --------------------------------------------------------------------------
-  // 4. Full Interrogation Routine (Read Statistics)
+  // 4. Full Interrogation Routine (Read Statistics & EEPROM with Progress)
   // --------------------------------------------------------------------------
   const runFullInterrogation = async () => {
     if (!selectedPort) return;
     setIsInterrogating(true);
+    setInterrogationProgress(8);
+    setInterrogationStage('Probing appliance hardware identity (TY:)...');
     setConnectionStatusText(`Reading complete EEPROM & statistics from ${selectedPort}...`);
+
+    const t1 = setTimeout(() => {
+      setInterrogationProgress(28);
+      setInterrogationStage('Reading identification gateways & firmware version (TL:, TY$, CS$)...');
+    }, 600);
+
+    const t2 = setTimeout(() => {
+      setInterrogationProgress(55);
+      setInterrogationStage('Sweeping beverage preparation registers (RE:0001..0020)...');
+    }, 1400);
+
+    const t3 = setTimeout(() => {
+      setInterrogationProgress(78);
+      setInterrogationStage('Interrogating maintenance cycles & descaling wear bars...');
+    }, 2400);
+
+    const t4 = setTimeout(() => {
+      setInterrogationProgress(92);
+      setInterrogationStage('Evaluating AI health scorecard & DIN-ISO tolerance checks...');
+    }, 3400);
+
     try {
       const res = await fetch(`/api/stats?port=${encodeURIComponent(selectedPort)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -234,15 +261,27 @@ export default function SpectraWorkspace() {
       if (data.error) {
         setConnectionStatusText(`Interrogation Failed: ${data.error}`);
         setHardwareError(data.error);
+        setInterrogationStage(`Error: ${data.error}`);
       } else {
+        setInterrogationProgress(100);
+        setInterrogationStage('Machine read complete!');
         setStatsData(data);
         setConnectionStatusText(`Interrogation Complete: ${data.machine_model || 'Appliance'} (${data.total_preparations || 0} preparations)`);
       }
     } catch (err) {
       setConnectionStatusText(`Interrogation Error: ${err.message}`);
       setHardwareError(err.message);
+      setInterrogationStage(`Error: ${err.message}`);
     } finally {
-      setIsInterrogating(false);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      setTimeout(() => {
+        setIsInterrogating(false);
+        setInterrogationProgress(0);
+        setInterrogationStage('');
+      }, 900);
     }
   };
 
@@ -334,38 +373,29 @@ export default function SpectraWorkspace() {
     setShowExportModal(false);
   };
 
-  // Derived Telemetry Values
+  // Derived Telemetry Values (EMPTY until machine is read)
   const telem = liveData.telemetry || {};
-  const coffeeTemp = telem.heater_coffee_c ?? 97.0;
-  const buPos = telem.bu_encoder_pos ?? 229;
-  const buUpper = telem.bu_encoder_upper ?? 649;
-  const beansOk = telem.beans_ok ?? true;
-  const opticalDelta = telem.optical_delta ?? 90;
+  const hasTelem = isConnected && telem && Object.keys(telem).length > 0;
+  const coffeeTemp = hasTelem && telem.heater_coffee_c != null ? telem.heater_coffee_c : null;
+  const buPos = hasTelem && telem.bu_encoder_pos != null ? telem.bu_encoder_pos : null;
+  const buUpper = hasTelem && telem.bu_encoder_upper != null ? telem.bu_encoder_upper : null;
+  const flowRate = hasTelem && telem.flow_rate_ml_s != null ? telem.flow_rate_ml_s : null;
+  const beansOk = hasTelem && telem.beans_ok != null ? telem.beans_ok : null;
+  const opticalDelta = hasTelem && telem.optical_delta != null ? telem.optical_delta : null;
 
-  // Find switch statuses
-  const tankSw = liveData.switches.find((s) => s.id === 'water_tank');
-  const traySw = liveData.switches.find((s) => s.id === 'drip_tray');
-  const filterSw = liveData.switches.find((s) => s.id === 'claris_filter');
+  // Find switch statuses (only when read)
+  const tankSw = hasTelem ? liveData.switches.find((s) => s.id === 'water_tank') : null;
+  const traySw = hasTelem ? liveData.switches.find((s) => s.id === 'drip_tray') : null;
+  const filterSw = hasTelem ? liveData.switches.find((s) => s.id === 'claris_filter') : null;
 
-  // Interrogation Metrics
-  const totalPreps = statsData?.total_preparations ?? (telem.total_preps || 28755);
-  const totalCups = statsData?.total_cups ?? (telem.total_cups || 31420);
-  const cleanCount = statsData?.maintenance?.find((m) => m.label?.includes('Cleaning'))?.count ?? 48;
-  const decalcCount = statsData?.maintenance?.find((m) => m.label?.includes('Decalc'))?.count ?? 12;
+  // Interrogation Metrics (EMPTY until machine is read)
+  const totalPreps = statsData?.total_preparations ?? null;
+  const totalCups = statsData?.total_cups ?? null;
+  const cleanCount = statsData?.maintenance?.find((m) => (m.label || m.name || '')?.toLowerCase().includes('clean'))?.count ?? null;
+  const decalcCount = statsData?.maintenance?.find((m) => (m.label || m.name || '')?.toLowerCase().includes('descal') || (m.label || m.name || '')?.toLowerCase().includes('decalc'))?.count ?? null;
 
-  // Filtered Beverages
-  const beverages = statsData?.beverages || [
-    { code: 1, name: 'Ristretto', count: 182, share: '6.7%', type: 'Single' },
-    { code: 2, name: 'Espresso', count: 1140, share: '41.9%', type: 'Single' },
-    { code: 3, name: 'Coffee', count: 890, share: '32.7%', type: 'Single' },
-    { code: 4, name: 'Cappuccino', count: 320, share: '11.8%', type: 'Milk' },
-    { code: 5, name: 'Milk Coffee', count: 96, share: '3.5%', type: 'Milk' },
-    { code: 6, name: 'Espresso Macchiato', count: 48, share: '1.8%', type: 'Milk' },
-    { code: 7, name: 'Latte Macchiato', count: 114, share: '4.2%', type: 'Milk' },
-    { code: 13, name: 'Hot Water', count: 90, share: '3.3%', type: 'Water' },
-    { code: 18, name: '2 Espressi', count: 210, share: '7.7%', type: 'Double' },
-    { code: 19, name: '2 Coffees', count: 180, share: '6.6%', type: 'Double' },
-  ];
+  // Filtered Beverages (EMPTY until machine is read)
+  const beverages = statsData?.beverages || [];
 
   const filteredBeverages = beverages.filter(
     (b) =>
@@ -378,22 +408,22 @@ export default function SpectraWorkspace() {
   return (
     <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-colors duration-200 select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
       {/* ==================================================================== */}
-      {/* ZONE 1: TOP BRANDING & HARDWARE CONNECTION BAR (NETRUNNER PARADIGM) */}
+      {/* ZONE 1: TOP BRANDING & HARDWARE CONNECTION BAR */}
       {/* ==================================================================== */}
       <header className={`sticky top-0 z-50 px-4 py-2 flex flex-wrap items-center justify-between border-b ${theme.border} ${theme.headerBg} backdrop-blur-md gap-3`}>
-        {/* Left: NETRUNNER Paradigm Branding */}
+        {/* Left: Professional Brand Header */}
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-2">
             <Zap className="w-5 h-5 text-[#FCEE09] animate-pulse" />
             <span className="text-sm font-black tracking-widest text-[#FCEE09] font-mono uppercase">
-              SPECTRA // NETRUNNER
+              SPECTRA
             </span>
           </div>
-          <span className="text-[10px] px-2 py-0.5 bg-black/60 text-[#00F0FF] border border-[#00F0FF]/40 font-mono font-bold tracking-wider rounded">
-            神経接続・バス解析システム v9.4
+          <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
+            v0.5.1
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
-            HARDWARE TELEMETRY &amp; MEMORY REVERSE-ENGINEERING
+            UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS
           </span>
         </div>
 
@@ -444,34 +474,55 @@ export default function SpectraWorkspace() {
             <span>{isPolling ? 'POLLING' : 'START POLL'}</span>
           </button>
 
+          {/* Interrogate Button with Integrated Progress Fill */}
           <button
             onClick={runFullInterrogation}
-            disabled={isInterrogating}
-            className={`flex items-center space-x-1 px-3 py-1 font-bold rounded transition-all ${
+            disabled={isInterrogating || !selectedPort}
+            className={`relative overflow-hidden flex items-center space-x-1.5 px-3 py-1 font-bold rounded transition-all font-mono ${
               isInterrogating
-                ? 'bg-purple-900/40 text-purple-300 border border-purple-500 animate-pulse'
+                ? 'bg-purple-950/80 text-purple-200 border border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.4)]'
                 : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/60'
-            }`}
+            } disabled:opacity-50`}
+            title="Read complete EEPROM, beverage history, and maintenance stats"
           >
-            <Database className="w-3.5 h-3.5" />
-            <span>{isInterrogating ? 'READING...' : '⚡ READ ALL STATS'}</span>
+            {isInterrogating && (
+              <div
+                className="absolute inset-0 bg-purple-600/50 transition-all duration-300 ease-out"
+                style={{ width: `${interrogationProgress}%` }}
+              />
+            )}
+            <Sparkles className="w-3.5 h-3.5 text-purple-400 z-10" />
+            <span className="z-10">{isInterrogating ? `READING (${interrogationProgress}%)` : '⚡ INTERROGATE'}</span>
           </button>
 
-          {/* Service Report Trigger Button */}
+          {/* Service Report Trigger Button (Enabled ONLY when read) */}
           <button
             onClick={handleOpenServiceReport}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 font-bold rounded"
-            title="Generate Branded Service Inspection Certificate"
+            disabled={!statsData || isInterrogating}
+            className={`flex items-center space-x-1 px-2.5 py-1 font-bold rounded transition-all ${
+              statsData
+                ? 'bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 cursor-pointer'
+                : 'bg-zinc-900/40 border border-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
+            }`}
+            title={statsData ? 'Generate Branded Service Inspection Certificate' : 'Interrogate machine first before generating certificate'}
           >
             <FileText className="w-3.5 h-3.5" />
             <span>REPORT</span>
           </button>
 
-          {/* Export Trigger Button */}
+          {/* Export Trigger Button (Enabled ONLY when read) */}
           <button
-            onClick={() => setShowExportModal(true)}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300 font-bold rounded"
-            title="Export Diagnostic Data (JSON, CSV, Text)"
+            onClick={() => {
+              if (!statsData) return;
+              setShowExportModal(true);
+            }}
+            disabled={!statsData || isInterrogating}
+            className={`flex items-center space-x-1 px-2.5 py-1 font-bold rounded transition-all ${
+              statsData
+                ? 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300 cursor-pointer'
+                : 'bg-zinc-900/40 border border-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
+            }`}
+            title={statsData ? 'Export Diagnostic Data (JSON, CSV, Text)' : 'Interrogate machine first before exporting data'}
           >
             <Download className="w-3.5 h-3.5" />
             <span>EXPORT</span>
@@ -484,6 +535,28 @@ export default function SpectraWorkspace() {
           </div>
         </div>
       </header>
+
+      {/* ==================================================================== */}
+      {/* HIGH-VISIBILITY PROGRESS BAR FIELD DURING MACHINE DATA PULL */}
+      {/* ==================================================================== */}
+      {isInterrogating && (
+        <div className="bg-[#121218] border-b border-[#FCEE09]/50 px-4 py-2.5 text-xs font-mono shadow-lg animate-pulse">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center space-x-2 text-[#FCEE09]">
+              <Zap className="w-4 h-4 text-[#FCEE09]" />
+              <span className="font-extrabold uppercase tracking-wider">READING MACHINE DATA:</span>
+              <span className="text-zinc-300 font-bold">{interrogationStage}</span>
+            </div>
+            <span className="font-extrabold text-[#FCEE09] text-sm">{interrogationProgress}%</span>
+          </div>
+          <div className="w-full h-2.5 bg-black/70 rounded-full overflow-hidden border border-zinc-800 shadow-inner">
+            <div
+              className="h-full bg-gradient-to-r from-[#FCEE09] via-yellow-400 to-[#00F0FF] transition-all duration-300 ease-out shadow-[0_0_10px_rgba(252,238,9,0.5)]"
+              style={{ width: `${interrogationProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Hardware Warning Alert Banner */}
       {hardwareError && (
@@ -507,7 +580,7 @@ export default function SpectraWorkspace() {
       )}
 
       {/* ==================================================================== */}
-      {/* ZONE 2: 9 REAL-TIME UNIFIED HARDWARE & STATS KPI TILES */}
+      {/* ZONE 2: 9 REAL-TIME UNIFIED HARDWARE & STATS KPI TILES (EMPTY UNTIL READ) */}
       {/* ==================================================================== */}
       <section className={`px-4 py-2.5 border-b ${theme.border} ${theme.panelBg}`}>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
@@ -517,9 +590,11 @@ export default function SpectraWorkspace() {
               ☕ TOTAL PREPS
             </div>
             <div className="text-xs font-bold font-mono my-1 text-white">
-              {totalPreps}
+              {totalPreps != null ? totalPreps : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{totalCups} Total Cups</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {totalCups != null ? `${totalCups} Total Cups` : 'Awaiting Read'}
+            </div>
           </div>
 
           {/* 2. Thermoblock TB1 */}
@@ -528,9 +603,11 @@ export default function SpectraWorkspace() {
               🔥 TB1 HEATER
             </div>
             <div className={`text-xs font-bold font-mono my-1 ${theme.textPrimary}`}>
-              {coffeeTemp.toFixed(1)} °C
+              {coffeeTemp != null ? `${coffeeTemp.toFixed(1)} °C` : '--- °C'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{telem.heater_coffee_status || 'Ready to Brew'}</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {hasTelem ? (telem.heater_coffee_status || 'Ready to Brew') : 'Standby'}
+            </div>
           </div>
 
           {/* 3. Brew Unit Encoder */}
@@ -539,9 +616,11 @@ export default function SpectraWorkspace() {
               ⚙️ BU ENCODER
             </div>
             <div className="text-xs font-bold font-mono my-1 text-purple-400">
-              {buPos} / {buUpper}
+              {buPos != null ? `${buPos} / ${buUpper ?? '---'}` : '--- / ---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{telem.bu_position_state || 'Home / Mill'}</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {hasTelem ? (telem.bu_position_state || 'Optical Quadrature') : 'Standby'}
+            </div>
           </div>
 
           {/* 4. Water Flow */}
@@ -550,9 +629,11 @@ export default function SpectraWorkspace() {
               🌊 WATER FLOW
             </div>
             <div className="text-xs font-bold font-mono my-1 text-cyan-400">
-              {(telem.flow_rate_ml_s ?? 0).toFixed(1)} ml/s
+              {flowRate != null ? `${flowRate.toFixed(1)} ml/s` : '--- ml/s'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{(telem.flow_volume_ml ?? 0).toFixed(1)} ml vol</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {hasTelem ? `${(telem.flow_volume_ml ?? 0).toFixed(1)} ml vol` : 'Standby'}
+            </div>
           </div>
 
           {/* 5. Water Tank */}
@@ -560,10 +641,10 @@ export default function SpectraWorkspace() {
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
               💧 WATER TANK
             </div>
-            <div className={`text-xs font-bold font-mono my-1 ${tankSw?.ok !== false ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {tankSw?.status ? (tankSw.ok ? 'WATER OK' : 'EMPTY / TANK') : 'READY'}
+            <div className={`text-xs font-bold font-mono my-1 ${tankSw ? (tankSw.ok ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+              {tankSw ? (tankSw.ok ? 'WATER OK' : 'EMPTY / TANK') : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">Reed Switch</div>
+            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? 'Float Switch' : 'Standby'}</div>
           </div>
 
           {/* 6. Drip Tray */}
@@ -571,10 +652,10 @@ export default function SpectraWorkspace() {
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
               📥 DRIP TRAY
             </div>
-            <div className={`text-xs font-bold font-mono my-1 ${traySw?.ok !== false ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {traySw?.status ? (traySw.ok ? 'INSERTED' : 'MISSING') : 'INSERTED'}
+            <div className={`text-xs font-bold font-mono my-1 ${traySw ? (traySw.ok ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+              {traySw ? (traySw.ok ? 'INSERTED' : 'MISSING') : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">Contact Switch</div>
+            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? 'Contact Switch' : 'Standby'}</div>
           </div>
 
           {/* 7. Bean Hopper */}
@@ -582,10 +663,12 @@ export default function SpectraWorkspace() {
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
               🫘 BEAN HOPPER
             </div>
-            <div className={`text-xs font-bold font-mono my-1 ${beansOk ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {beansOk ? 'BEANS OK' : 'FILL BEANS'}
+            <div className={`text-xs font-bold font-mono my-1 ${beansOk != null ? (beansOk ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+              {beansOk != null ? (beansOk ? 'BEANS OK' : 'FILL BEANS') : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">Delta: {opticalDelta} cnt</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {opticalDelta != null ? `Delta: ${opticalDelta} cnt` : 'Standby'}
+            </div>
           </div>
 
           {/* 8. Cleanings */}
@@ -594,9 +677,11 @@ export default function SpectraWorkspace() {
               🧼 CLEANINGS
             </div>
             <div className="text-xs font-bold font-mono my-1 text-sky-400">
-              {cleanCount} cycles
+              {cleanCount != null ? `${cleanCount} cycles` : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">Maintenance</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {statsData ? 'Maintenance Record' : 'Awaiting Read'}
+            </div>
           </div>
 
           {/* 9. Descalings */}
@@ -605,9 +690,11 @@ export default function SpectraWorkspace() {
               🧪 DECALCS
             </div>
             <div className="text-xs font-bold font-mono my-1 text-amber-400">
-              {decalcCount} cycles
+              {decalcCount != null ? `${decalcCount} cycles` : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">Maintenance</div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {statsData ? 'Maintenance Record' : 'Awaiting Read'}
+            </div>
           </div>
         </div>
       </section>
@@ -653,6 +740,8 @@ export default function SpectraWorkspace() {
             selectedPort={selectedPort}
             onOpenServiceReport={handleOpenServiceReport}
             onOpenExport={() => setShowExportModal(true)}
+            onInterrogate={runFullInterrogation}
+            isInterrogating={isInterrogating}
           />
         )}
 
@@ -827,51 +916,83 @@ export default function SpectraWorkspace() {
                     value={bevSearch}
                     onChange={(e) => setBevSearch(e.target.value)}
                     placeholder="Search specialty..."
-                    className="pl-8 pr-3 py-1 bg-black/40 border border-gray-800 rounded text-xs text-white placeholder-gray-500 outline-none w-48 font-mono"
+                    disabled={!statsData}
+                    className="pl-8 pr-3 py-1 bg-black/40 border border-gray-800 rounded text-xs text-white placeholder-gray-500 outline-none w-48 font-mono disabled:opacity-40"
                   />
                 </div>
                 <span className="text-xs font-mono text-gray-400">
-                  {filteredBeverages.length} SPECIALTIES
+                  {statsData ? `${filteredBeverages.length} SPECIALTIES` : 'AWAITING READ'}
                 </span>
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-gray-800 text-gray-500 text-[10px] uppercase">
-                    <th className="py-2 px-3">Code</th>
-                    <th className="py-2 px-3">Beverage Specialty</th>
-                    <th className="py-2 px-3">Quantity Prepared</th>
-                    <th className="py-2 px-3">Share of Total</th>
-                    <th className="py-2 px-3">Category / Serving</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/60">
-                  {filteredBeverages.map((bev) => (
-                    <tr key={bev.code} className="hover:bg-white/5 transition-colors">
-                      <td className="py-2 px-3 text-gray-500">0x{bev.code.toString(16).padStart(2, '0').toUpperCase()}</td>
-                      <td className="py-2 px-3 font-bold text-white">{bev.name}</td>
-                      <td className="py-2 px-3 text-amber-400 font-bold">{bev.count}</td>
-                      <td className="py-2 px-3 text-gray-300">{bev.share}</td>
-                      <td className="py-2 px-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          bev.type === 'Milk'
-                            ? 'bg-purple-950 text-purple-300 border border-purple-800'
-                            : bev.type === 'Water'
-                            ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
-                            : bev.type === 'Double'
-                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                            : 'bg-gray-800 text-gray-300'
-                        }`}>
-                          {bev.type}
-                        </span>
-                      </td>
+            {!statsData ? (
+              <div className="p-8 text-center space-y-4 font-mono">
+                <div className="w-14 h-14 rounded-full bg-black/40 border border-[#FCEE09]/30 flex items-center justify-center mx-auto text-[#FCEE09]">
+                  <Coffee className="w-7 h-7 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    BEVERAGE DATA NOT YET READ
+                  </h3>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    Beverage preparation counters and recipes require querying the appliance EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                  </p>
+                </div>
+                <div className="pt-1">
+                  <button
+                    onClick={runFullInterrogation}
+                    disabled={isInterrogating || !selectedPort}
+                    className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
+                  >
+                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                  </button>
+                </div>
+              </div>
+            ) : filteredBeverages.length === 0 ? (
+              <div className="p-8 text-center text-xs text-zinc-500 font-mono">
+                No beverage preparation records found.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-500 text-[10px] uppercase">
+                      <th className="py-2 px-3">Code</th>
+                      <th className="py-2 px-3">Beverage Specialty</th>
+                      <th className="py-2 px-3">Quantity Prepared</th>
+                      <th className="py-2 px-3">Share of Total</th>
+                      <th className="py-2 px-3">Category / Serving</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/60">
+                    {filteredBeverages.map((bev) => (
+                      <tr key={bev.code} className="hover:bg-white/5 transition-colors">
+                        <td className="py-2 px-3 text-gray-500">0x{bev.code.toString(16).padStart(2, '0').toUpperCase()}</td>
+                        <td className="py-2 px-3 font-bold text-white">{bev.name}</td>
+                        <td className="py-2 px-3 text-amber-400 font-bold">{bev.count.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-gray-300">
+                          {bev.share || (totalPreps > 0 ? `${((bev.count / totalPreps) * 100).toFixed(1)}%` : '0.0%')}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            bev.type === 'Milk'
+                              ? 'bg-purple-950 text-purple-300 border border-purple-800'
+                              : bev.type === 'Water'
+                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                              : bev.is_double || bev.type === 'Double'
+                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                              : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
+                          }`}>
+                            {bev.type || (bev.is_double ? 'Double' : 'Single')}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -883,76 +1004,103 @@ export default function SpectraWorkspace() {
               <span>MAINTENANCE CYCLES &amp; WEAR PERCENTAGES</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Wear Percentages */}
-              <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-3">
-                <div className="text-xs font-bold text-gray-400 uppercase font-mono">
-                  CYCLE LIFE PROGRESS (WEAR BARS)
+            {!statsData ? (
+              <div className="p-8 text-center space-y-4 font-mono">
+                <div className="w-14 h-14 rounded-full bg-black/40 border border-[#FCEE09]/30 flex items-center justify-center mx-auto text-[#FCEE09]">
+                  <Wrench className="w-7 h-7 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    MAINTENANCE DATA NOT YET READ
+                  </h3>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    Cleaning cycles, descaling counters, filter wear, and rinse logs require interrogating the appliance EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                  </p>
+                </div>
+                <div className="pt-1">
+                  <button
+                    onClick={runFullInterrogation}
+                    disabled={isInterrogating || !selectedPort}
+                    className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
+                  >
+                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Wear Percentages */}
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-3">
+                  <div className="text-xs font-bold text-gray-400 uppercase font-mono">
+                    CYCLE LIFE PROGRESS (WEAR BARS)
+                  </div>
+
+                  {/* Cleaning */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-gray-300">Coffee Cleaning Cycle</span>
+                      <span className="text-emerald-400 font-bold">
+                        {cleanCount != null ? `${cleanCount} Total Cycles` : 'Nominal'}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500"
+                        style={{ width: `${Math.min(100, Math.max(15, (totalPreps ? (totalPreps % 180) / 1.8 : 25)))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Descaling */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-gray-300">Thermoblock Descaling</span>
+                      <span className="text-amber-400 font-bold">
+                        {decalcCount != null ? `${decalcCount} Total Cycles` : 'Nominal'}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-amber-500"
+                        style={{ width: `${Math.min(100, Math.max(20, (totalPreps ? (totalPreps % 350) / 3.5 : 40)))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Filter */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-gray-300">CLARIS Filter Cartridge</span>
+                      <span className="text-sky-400 font-bold">
+                        {filterSw?.ok ? 'Active (Inserted)' : 'Bypass / Inactive'}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-sky-500" style={{ width: filterSw?.ok ? '60%' : '0%' }} />
+                    </div>
+                  </div>
                 </div>
 
-                {/* Cleaning */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-mono">
-                    <span className="text-gray-300">Cleaning Tablet Cycle</span>
-                    <span className="text-emerald-400 font-bold">25% (Nominal)</span>
+                {/* Maintenance Counters */}
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
+                  <div className="text-xs font-bold text-gray-400 uppercase font-mono mb-2">
+                    EXECUTION COUNTER AUDIT
                   </div>
-                  <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500" style={{ width: '25%' }} />
-                  </div>
-                </div>
-
-                {/* Filter */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-mono">
-                    <span className="text-gray-300">CLARIS Filter Cartridge</span>
-                    <span className="text-sky-400 font-bold">BYPASS (Inactive)</span>
-                  </div>
-                  <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-sky-500" style={{ width: '0%' }} />
-                  </div>
-                </div>
-
-                {/* Descaling */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-mono">
-                    <span className="text-gray-300">Thermoblock Descaling</span>
-                    <span className="text-amber-400 font-bold">65% (Due at 100%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-amber-500" style={{ width: '65%' }} />
+                  <div className="space-y-1.5 font-mono text-xs">
+                    {statsData.maintenance && statsData.maintenance.length > 0 ? (
+                      statsData.maintenance.map((m, idx) => (
+                        <div key={idx} className="flex justify-between py-1 border-b border-gray-800/60 last:border-0">
+                          <span className="text-gray-400">{m.label || m.name}:</span>
+                          <strong className="text-white">{m.count?.toLocaleString() ?? 0} cycles</strong>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-zinc-500 text-xs py-2">No maintenance records found.</div>
+                    )}
                   </div>
                 </div>
               </div>
-
-              {/* Maintenance Counters */}
-              <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
-                <div className="text-xs font-bold text-gray-400 uppercase font-mono mb-2">
-                  EXECUTION COUNTER AUDIT
-                </div>
-                <div className="space-y-1.5 font-mono text-xs">
-                  <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Coffee Cleanings:</span>
-                    <strong className="text-white">{cleanCount} cycles</strong>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Decalcifications:</span>
-                    <strong className="text-white">{decalcCount} cycles</strong>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Filter Replacements:</span>
-                    <strong className="text-white">0 cycles</strong>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Cappuccino Rinses:</span>
-                    <strong className="text-white">142 cycles</strong>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-gray-400">Coffee Rinses:</span>
-                    <strong className="text-white">1,820 cycles</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -964,24 +1112,63 @@ export default function SpectraWorkspace() {
               <span>ACTIVE APPLIANCE SYSTEM NOTIFICATIONS &amp; LOCKOUT FLAGS</span>
             </div>
 
-            <div className="space-y-2 text-xs font-mono">
-              <div className="flex items-center justify-between p-3 bg-black/40 border border-emerald-900/60 rounded">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span className="font-bold text-emerald-300">Coffee Ready / Nominal Operation</span>
+            {!statsData ? (
+              <div className="p-8 text-center space-y-4 font-mono">
+                <div className="w-14 h-14 rounded-full bg-black/40 border border-[#FCEE09]/30 flex items-center justify-center mx-auto text-[#FCEE09]">
+                  <AlertTriangle className="w-7 h-7 animate-pulse" />
                 </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-700">
-                  READY
-                </span>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    ALERTS &amp; LOCKOUT FLAGS NOT YET READ
+                  </h3>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    Appliance alarm status, lockout registers, and fault codes require interrogating the appliance. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                  </p>
+                </div>
+                <div className="pt-1">
+                  <button
+                    onClick={runFullInterrogation}
+                    disabled={isInterrogating || !selectedPort}
+                    className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
+                  >
+                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                  </button>
+                </div>
               </div>
+            ) : (
+              <div className="space-y-2 text-xs font-mono">
+                {statsData.alerts && statsData.alerts.length > 0 ? (
+                  statsData.alerts.map((al, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-black/40 border border-rose-900/60 rounded">
+                      <div className="flex items-center space-x-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400" />
+                        <span className="font-bold text-rose-300">{al.message || al.title || String(al)}</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-700">
+                        {al.severity || 'ALARM'}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex items-center justify-between p-3 bg-black/40 border border-emerald-900/60 rounded">
+                    <div className="flex items-center space-x-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span className="font-bold text-emerald-300">Coffee Ready / Nominal Operation</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-700">
+                      READY
+                    </span>
+                  </div>
+                )}
 
-              <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-1">
-                <div className="text-gray-400 font-bold">Historical Register Interrogation:</div>
-                <div className="text-gray-500 text-[11px]">
-                  RE:0028 and RE:01B4 hardware fault registers: 0x0000 (Nominal). No unhandled thermal cutoffs or motor drive faults currently latching appliance lockout.
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-1">
+                  <div className="text-gray-400 font-bold">Historical Register Interrogation:</div>
+                  <div className="text-gray-500 text-[11px]">
+                    Hardware fault registers nominal on {statsData.machine_model || 'Appliance'}. No unhandled thermal cutoffs or motor drive faults currently latching appliance lockout.
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -993,47 +1180,72 @@ export default function SpectraWorkspace() {
               <span>APPLIANCE IDENTITY &amp; HARDWARE ARCHITECTURE</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
-              <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
-                <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRONIC IDENTITY</div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">Machine Model:</span>
-                  <strong className="text-white">{statsData?.machine_model || 'IMPRESSA XJ5 Professional GII'}</strong>
+            {!statsData ? (
+              <div className="p-8 text-center space-y-4 font-mono">
+                <div className="w-14 h-14 rounded-full bg-black/40 border border-[#FCEE09]/30 flex items-center justify-center mx-auto text-[#FCEE09]">
+                  <Info className="w-7 h-7 animate-pulse" />
                 </div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">Firmware String (TY):</span>
-                  <strong className="text-sky-400">{statsData?.firmware_string || 'ty:EF518M V02.20'}</strong>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    IDENTITY DATA NOT YET READ
+                  </h3>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    Appliance model, firmware string (TY), EF code, and serial specifications require interrogating the machine. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                  </p>
                 </div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">EF Code:</span>
-                  <strong className="text-amber-400">{statsData?.ef_code || 'EF518M'}</strong>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span className="text-gray-400">Protocol Mode:</span>
-                  <strong className="text-emerald-400">{statsData?.protocol_mode || 'Plain ASCII (Optical/Serial)'}</strong>
+                <div className="pt-1">
+                  <button
+                    onClick={runFullInterrogation}
+                    disabled={isInterrogating || !selectedPort}
+                    className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
+                  >
+                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                  </button>
                 </div>
               </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
+                  <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRONIC IDENTITY</div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">Machine Model:</span>
+                    <strong className="text-white">{statsData?.machine_model || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">Firmware String (TY):</span>
+                    <strong className="text-sky-400">{statsData?.firmware_string || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">EF Code:</span>
+                    <strong className="text-amber-400">{statsData?.ef_code || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-400">Protocol Mode:</span>
+                    <strong className="text-emerald-400">{statsData?.protocol_mode || '---'}</strong>
+                  </div>
+                </div>
 
-              <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
-                <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRICAL &amp; ARTICLE SPECIFICATIONS</div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">Power Rating:</span>
-                  <strong className="text-white">{statsData?.power_spec || '230V / 50Hz (1450W)'}</strong>
-                </div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">Serial / EAN:</span>
-                  <strong className="text-white">{statsData?.serial_number || '7610917136367'}</strong>
-                </div>
-                <div className="flex justify-between py-1 border-b border-gray-800/60">
-                  <span className="text-gray-400">Raw HZ Telemetry:</span>
-                  <strong className="text-gray-400 truncate max-w-[200px]">{liveData?.raw_status || 'hz:010001100000...'}</strong>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span className="text-gray-400">Active Port:</span>
-                  <strong className="text-white">{selectedPort}</strong>
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
+                  <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRICAL &amp; ARTICLE SPECIFICATIONS</div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">Power Rating:</span>
+                    <strong className="text-white">{statsData?.power_spec || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">Serial / EAN:</span>
+                    <strong className="text-white">{statsData?.serial_number || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-gray-800/60">
+                    <span className="text-gray-400">Raw HZ Telemetry:</span>
+                    <strong className="text-gray-400 truncate max-w-[200px]">{liveData?.raw_status || '---'}</strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-400">Active Port:</span>
+                    <strong className="text-white">{selectedPort}</strong>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

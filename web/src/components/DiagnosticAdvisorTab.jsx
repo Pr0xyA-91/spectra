@@ -29,6 +29,8 @@ export default function DiagnosticAdvisorTab({
   selectedPort,
   onOpenServiceReport,
   onOpenExport,
+  onInterrogate,
+  isInterrogating,
 }) {
   const [checklist, setChecklist] = useState({
     chk1: true, // Visual inspection of silicone pressure lines & brass fittings
@@ -37,44 +39,40 @@ export default function DiagnosticAdvisorTab({
     chk4: true, // Clean microswitch contact leaves on rear chassis
   });
 
-  // Calculate health score & cards if not already provided by statsData
-  const healthScore = statsData?.health_score ?? (statsData ? 95 : 100);
-  const advisorCards = statsData?.advisor_cards || [
-    {
-      icon: '✓',
-      title: 'Thermoblock Heating Curve Nominal',
-      desc: 'PID heatup ramp is within 1.2°C of reference calibration curve.',
-      action: 'Status: Thermoblock heating efficiency optimal.',
-      severity: 'ok',
-    },
-    {
-      icon: '✓',
-      title: 'Brew Unit Mechanics in Optimal Tolerance',
-      desc: 'Zero encoder jitter recorded. Motor drive torque is within factory specification.',
-      action: 'Status: Standard maintenance interval active.',
-      severity: 'ok',
-    },
-    {
-      icon: 'ℹ️',
-      title: 'Hydraulic System & Flowmeter Nominal',
-      desc: 'Hall sensor turbine frequency matches pump duty cycle.',
-      action: 'Status: Descaling not required at this time.',
-      severity: 'info',
-    },
-  ];
+  // Empty State: Machine has not been read yet
+  if (!statsData) {
+    return (
+      <div className={`p-8 border rounded ${theme.surfaceClass} text-center space-y-4 font-mono shadow-lg`}>
+        <div className="w-16 h-16 rounded-full bg-black/40 border border-[#FCEE09]/40 flex items-center justify-center mx-auto text-[#FCEE09]">
+          <ShieldCheck className="w-8 h-8 animate-pulse" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-black text-white uppercase tracking-wider">
+            MACHINE DATA NOT YET READ
+          </h3>
+          <p className="text-xs text-zinc-400 max-w-lg mx-auto">
+            Diagnostic counters, maintenance cycles, and the automated AI health scorecard require interrogating the machine's EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and click below to read all parameters.
+          </p>
+        </div>
+        <div className="pt-2">
+          <button
+            onClick={onInterrogate}
+            disabled={isInterrogating || !selectedPort}
+            className="px-4 py-2 bg-[#FCEE09] hover:bg-yellow-400 text-black font-extrabold text-xs rounded tracking-wider shadow-[0_0_12px_rgba(252,238,9,0.4)] transition-all font-mono disabled:opacity-50"
+          >
+            {isInterrogating ? 'READING MACHINE DATA...' : '⚡ INTERROGATE MACHINE & READ DATA'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-  // Beverage statistics
-  const beverages = statsData?.beverages || [
-    { code: 1, name: 'Ristretto', count: 182, share: '6.7%', type: 'Single' },
-    { code: 2, name: 'Espresso', count: 1140, share: '41.9%', type: 'Single' },
-    { code: 3, name: 'Coffee', count: 890, share: '32.7%', type: 'Single' },
-    { code: 4, name: 'Cappuccino', count: 320, share: '11.8%', type: 'Milk' },
-    { code: 5, name: 'Milk Coffee', count: 96, share: '3.5%', type: 'Milk' },
-    { code: 13, name: 'Hot Water', count: 90, share: '3.3%', type: 'Water' },
-  ];
-
-  const totalPreps = statsData?.total_preparations || beverages.reduce((sum, b) => sum + (b.count || 0), 0);
-  const totalCups = statsData?.total_cups || totalPreps;
+  // Calculate health score & cards from real interrogated statsData
+  const healthScore = statsData.health_score ?? 95;
+  const advisorCards = statsData.advisor_cards || [];
+  const beverages = statsData.beverages || [];
+  const totalPreps = statsData.total_preparations || 0;
+  const totalCups = statsData.total_cups || totalPreps;
 
   // Health Score Color
   const getScoreColor = (sc) => {
