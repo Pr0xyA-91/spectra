@@ -40,7 +40,7 @@ import {
   Copy,
 } from 'lucide-react';
 
-import TelemetryStripChart from './TelemetryStripChart';
+import OscilloscopeStripChart from './OscilloscopeStripChart';
 import DigitalTwinSchematic from './DigitalTwinSchematic';
 import DiagnosticAdvisorTab from './DiagnosticAdvisorTab';
 
@@ -171,24 +171,23 @@ export const THEMES = {
 };
 
 // ============================================================================
-// WORKSPACE NAVIGATION TABS
+// WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS)
 // ============================================================================
 const WORKSPACE_TABS = [
   { id: 'overview', label: '01 // OVERVIEW', desc: 'Health Scorecard & AI Advisor' },
-  { id: 'stripchart', label: '02 // STRIP RECORDER', desc: 'Real-Time Temp & Flow Telemetry' },
-  { id: 'sensors', label: '03 // DIGITAL TWIN', desc: 'Hydraulic Schematic & Microswitches' },
-  { id: 'beverages', label: '04 // BEVERAGES', desc: 'Preparation Counters & Share %' },
-  { id: 'maintenance', label: '05 // MAINTENANCE', desc: 'Cycles, Intervals & Overdue' },
-  { id: 'alerts', label: '06 // ALERTS', desc: 'Active Lockouts & System Flags' },
-  { id: 'system', label: '07 // IDENTITY', desc: 'EEPROM String, Power & Barcode' },
-  { id: 'bus_log', label: '08 // BUS LOG', desc: 'Event Stream & Command Injector' },
+  { id: 'sensors', label: '02 // SENSORS & OSCILLOSCOPE', desc: 'Digital Twin, Temp-over-Time & Event Stream' },
+  { id: 'beverages', label: '03 // BEVERAGES', desc: 'Preparation Counters & Share %' },
+  { id: 'maintenance', label: '04 // MAINTENANCE', desc: 'Cycles, Intervals & Overdue' },
+  { id: 'alerts', label: '05 // ALERTS', desc: 'Active Lockouts & System Flags' },
+  { id: 'system', label: '06 // IDENTITY', desc: 'EEPROM String, Power & Barcode' },
+  { id: 'bus_log', label: '07 // COMMAND INJECTOR', desc: 'Safe UART Wire Injection' },
 ];
 
 export default function SpectraWorkspace() {
   const [activeThemeId, setActiveThemeId] = useState('cyberpunk');
   const theme = THEMES[activeThemeId] || THEMES.cyberpunk;
 
-  // Active Workspace Tab
+  // Active Workspace Tab (Default: overview)
   const [activeTab, setActiveTab] = useState('overview');
 
   // Hardware Connection & Port State
@@ -217,10 +216,9 @@ export default function SpectraWorkspace() {
   const [beanHysteresis, setBeanHysteresis] = useState(5);
   const [isSavingCalib, setIsSavingCalib] = useState(false);
 
-  // Real-Time Bus Event Stream & Safety Log
+  // Real-Time Bus Event Stream & Safety Log (Matching GTK TextView)
   const [busEvents, setBusEvents] = useState([]);
   const [isStreamPaused, setIsStreamPaused] = useState(false);
-  const [streamFilter, setStreamFilter] = useState('');
 
   // UART Command Injector
   const [txCommand, setTxCommand] = useState('HZ:');
@@ -279,7 +277,6 @@ export default function SpectraWorkspace() {
       const ports = await res.json();
       setAvailablePorts(ports);
       if (ports.length > 0) {
-        // Prefer hardware ttyUSB / COM ports, or first available
         const hwPort = ports.find((p) => p.includes('ttyUSB') || p.startsWith('COM') || p.includes('by-id')) || ports[0];
         setSelectedPort(hwPort);
         setIsPolling(true);
@@ -410,7 +407,6 @@ export default function SpectraWorkspace() {
       };
       setTxResponseHistory((prev) => [entry, ...prev.slice(0, 19)]);
 
-      // If query was HZ or AS, refresh sensors immediately
       if (cmdToSend.includes('HZ') || cmdToSend.includes('AS')) {
         querySensors(true);
       }
@@ -433,14 +429,13 @@ export default function SpectraWorkspace() {
     setShowExportModal(false);
   };
 
-  // Derived Telemetry Values for Quick Access
+  // Derived Telemetry Values
   const telem = liveData.telemetry || {};
   const coffeeTemp = telem.heater_coffee_c ?? 97.0;
   const buPos = telem.bu_encoder_pos ?? 229;
   const buUpper = telem.bu_encoder_upper ?? 649;
   const beansOk = telem.beans_ok ?? true;
   const opticalDelta = telem.optical_delta ?? 90;
-  const machineState = telem.machine_state_status || 'Ready to Brew';
 
   // Find switch statuses
   const tankSw = liveData.switches.find((s) => s.id === 'water_tank');
@@ -448,8 +443,8 @@ export default function SpectraWorkspace() {
   const filterSw = liveData.switches.find((s) => s.id === 'claris_filter');
 
   // Interrogation Metrics
-  const totalPreps = statsData?.total_preparations ?? (telem.total_preps || 2718);
-  const totalCups = statsData?.total_cups ?? (telem.total_cups || 3142);
+  const totalPreps = statsData?.total_preparations ?? (telem.total_preps || 28755);
+  const totalCups = statsData?.total_cups ?? (telem.total_cups || 31420);
   const cleanCount = statsData?.maintenance?.find((m) => m.label?.includes('Cleaning'))?.count ?? 48;
   const decalcCount = statsData?.maintenance?.find((m) => m.label?.includes('Decalc'))?.count ?? 12;
 
@@ -763,33 +758,120 @@ export default function SpectraWorkspace() {
           />
         )}
 
-        {/* TAB 2: FUNCTIONAL REAL-TIME STRIP CHART RECORDER (NO GIMMICKS) */}
-        {activeTab === 'stripchart' && (
-          <TelemetryStripChart
-            theme={theme}
-            liveData={liveData}
-            selectedPort={selectedPort}
-          />
-        )}
-
-        {/* TAB 3: HYDRAULIC DIGITAL TWIN & SENSORS */}
+        {/* TAB 2: SENSORS & OSCILLOSCOPE STRIP CHART (MATCHING GTK _create_sensors_tab) */}
         {activeTab === 'sensors' && (
           <div className="space-y-4">
-            <DigitalTwinSchematic
-              theme={theme}
-              liveData={liveData}
-              statsData={statsData}
-            />
+            {/* Top Paned Layout: Left Digital Twin / Right Oscilloscope & Event Stream */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* LEFT COLUMN: Interactive Digital Twin & Component Inspector */}
+              <div className="lg:col-span-6 space-y-3">
+                <DigitalTwinSchematic
+                  theme={theme}
+                  liveData={liveData}
+                  statsData={statsData}
+                />
 
-            {/* 7 Microswitches Table & 15 Hardware Safety Registers */}
+                {/* Developer Optical Bean Calibration Card */}
+                <div className={`p-3.5 border rounded ${theme.surfaceClass}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 mb-2">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>DEVELOPER OPTICAL BEAN SENSOR THRESHOLD</span>
+                    </span>
+                    <span className="text-[11px] font-mono text-gray-400">
+                      DELTA: <strong className="text-amber-400">{opticalDelta} counts</strong>
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between font-mono text-[11px]">
+                      <span className="text-gray-400">Threshold: <strong>{beanThreshold} counts</strong> (±{beanHysteresis})</span>
+                      <span className="text-amber-400">Bounds: ≤{beanThreshold - beanHysteresis} / ≥{beanThreshold + beanHysteresis}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="50"
+                      max="250"
+                      value={beanThreshold}
+                      onChange={(e) => handleSaveThreshold(Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={handleResetThreshold}
+                        disabled={isSavingCalib}
+                        className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 font-bold rounded text-[11px] font-mono"
+                      >
+                        RESET TO FACTORY (115)
+                      </button>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${beansOk ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
+                        {beansOk ? 'BEANS OK' : 'FILL BEANS'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT COLUMN: Oscilloscope Strip Chart (Temp over Time) & Event Stream Log */}
+              <div className="lg:col-span-6 space-y-3">
+                {/* 1. Real-Time Oscilloscope Strip Chart (Exact parity with old UI OscilloscopeWidget) */}
+                <OscilloscopeStripChart
+                  theme={theme}
+                  liveData={liveData}
+                  maxSamples={60}
+                />
+
+                {/* 2. Real-Time Bus Event Stream & Safety Log */}
+                <div className={`p-3 border rounded ${theme.surfaceClass} space-y-2`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 text-xs">
+                    <span className="font-bold text-gray-200 uppercase tracking-wider flex items-center space-x-1.5">
+                      <Terminal className="w-4 h-4 text-emerald-400" />
+                      <span>REAL-TIME BUS EVENT STREAM &amp; SAFETY LOG</span>
+                    </span>
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        onClick={() => setIsStreamPaused(!isStreamPaused)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono flex items-center space-x-1 ${
+                          isStreamPaused ? 'bg-amber-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                        }`}
+                      >
+                        {isStreamPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                        <span>{isStreamPaused ? 'RESUME' : 'PAUSE'}</span>
+                      </button>
+                      <button
+                        onClick={() => setBusEvents([])}
+                        className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center space-x-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>CLEAR</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrolling Log Box */}
+                  <div className="h-44 bg-black/60 border border-gray-800 rounded p-2 overflow-y-auto font-mono text-[11px] space-y-1 text-gray-300 select-text">
+                    {busEvents.length === 0 ? (
+                      <div className="text-gray-600 italic">Awaiting hardware bus telemetry events...</div>
+                    ) : (
+                      busEvents.map((evt, idx) => (
+                        <div key={idx} className="hover:bg-white/5 py-0.5 px-1 rounded truncate">
+                          {evt}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Row: 7 Physical Microswitches & 15 Hardware Safety Registers */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Microswitches */}
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
-                <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center justify-between border-b border-gray-800 pb-2">
+                <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
                   <span>LIVE PHYSICAL MICROSWITCHES &amp; INTERLOCKS</span>
                   <span className="text-[10px] font-mono text-emerald-400">7 SENSORS</span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {liveData.switches.map((sw) => (
                     <div key={sw.id} className="flex items-center justify-between p-2 bg-black/40 border border-gray-800/80 rounded text-xs font-mono">
                       <div className="flex items-center space-x-2">
@@ -809,11 +891,11 @@ export default function SpectraWorkspace() {
 
               {/* Component Fault & Safety Diagnostic Registers */}
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
-                <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center justify-between border-b border-gray-800 pb-2">
+                <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
                   <span>COMPONENT FAULT &amp; SAFETY TEST REGISTERS</span>
                   <span className="text-[10px] font-mono text-sky-400">15 TESTS NOMINAL</span>
                 </div>
-                <div className="max-h-[340px] overflow-y-auto space-y-1.5 pr-1">
+                <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-1">
                   {liveData.sensors.map((s) => (
                     <div key={s.id} className="flex items-center justify-between p-1.5 bg-black/40 border border-gray-800/60 rounded text-xs font-mono">
                       <span className="text-gray-300">{s.name}</span>
@@ -828,51 +910,10 @@ export default function SpectraWorkspace() {
                 </div>
               </div>
             </div>
-
-            {/* Developer Optical Bean Calibration Card */}
-            <div className={`p-4 border rounded ${theme.surfaceClass}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2 mb-3">
-                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
-                  <SlidersHorizontal className="w-4 h-4" />
-                  <span>DEVELOPER OPTICAL BEAN SENSOR THRESHOLD CALIBRATION</span>
-                </span>
-                <span className="text-xs font-mono text-gray-400">
-                  REFLECTED: <strong className="text-white">{telem.bean_adcs?.[1] ?? '--'}</strong> | AMBIENT: <strong className="text-white">{telem.bean_adcs?.[0] ?? '--'}</strong> | DELTA: <strong className="text-amber-400">{opticalDelta} counts</strong>
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center text-xs">
-                <div className="sm:col-span-8 space-y-1">
-                  <div className="flex justify-between font-mono">
-                    <span className="text-gray-400">Detection Threshold: <strong>{beanThreshold} counts</strong> (Hysteresis: ±{beanHysteresis})</span>
-                    <span className="text-amber-400">Bounds: ≤{beanThreshold - beanHysteresis} / ≥{beanThreshold + beanHysteresis}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="50"
-                    max="250"
-                    value={beanThreshold}
-                    onChange={(e) => handleSaveThreshold(Number(e.target.value))}
-                    className="w-full accent-amber-500 cursor-pointer"
-                  />
-                </div>
-                <div className="sm:col-span-4 flex items-center space-x-2 justify-end">
-                  <button
-                    onClick={handleResetThreshold}
-                    disabled={isSavingCalib}
-                    className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 font-bold rounded font-mono"
-                  >
-                    RESET TO FACTORY (115)
-                  </button>
-                  <span className={`text-[11px] font-bold px-2 py-1 rounded ${beansOk ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
-                    {beansOk ? 'STATUS: OK' : 'STATUS: EMPTY'}
-                  </span>
-                </div>
-              </div>
-            </div>
           </div>
         )}
 
-        {/* TAB 4: BEVERAGE REGISTRY TABLE */}
+        {/* TAB 3: BEVERAGE REGISTRY TABLE */}
         {activeTab === 'beverages' && (
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2">
@@ -936,7 +977,7 @@ export default function SpectraWorkspace() {
           </div>
         )}
 
-        {/* TAB 5: MAINTENANCE CYCLES & PERCENTAGES */}
+        {/* TAB 4: MAINTENANCE CYCLES & PERCENTAGES */}
         {activeTab === 'maintenance' && (
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-4`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
@@ -1017,7 +1058,7 @@ export default function SpectraWorkspace() {
           </div>
         )}
 
-        {/* TAB 6: ALERTS & SYSTEM NOTIFICATIONS */}
+        {/* TAB 5: ALERTS & SYSTEM NOTIFICATIONS */}
         {activeTab === 'alerts' && (
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
@@ -1046,7 +1087,7 @@ export default function SpectraWorkspace() {
           </div>
         )}
 
-        {/* TAB 7: APPLIANCE IDENTITY & SYSTEM INFO */}
+        {/* TAB 6: APPLIANCE IDENTITY & SYSTEM INFO */}
         {activeTab === 'system' && (
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-4`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
@@ -1059,7 +1100,7 @@ export default function SpectraWorkspace() {
                 <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRONIC IDENTITY</div>
                 <div className="flex justify-between py-1 border-b border-gray-800/60">
                   <span className="text-gray-400">Machine Model:</span>
-                  <strong className="text-white">{statsData?.machine_model || 'Jura IMPRESSA XJ5 Pro'}</strong>
+                  <strong className="text-white">{statsData?.machine_model || 'IMPRESSA XJ5 Professional GII'}</strong>
                 </div>
                 <div className="flex justify-between py-1 border-b border-gray-800/60">
                   <span className="text-gray-400">Firmware String (TY):</span>
@@ -1098,51 +1139,9 @@ export default function SpectraWorkspace() {
           </div>
         )}
 
-        {/* TAB 8: REAL-TIME BUS EVENT STREAM & COMMAND INJECTOR */}
+        {/* TAB 7: COMMAND INJECTOR (SAFE UART WIRE INJECTION) */}
         {activeTab === 'bus_log' && (
           <div className="space-y-3">
-            {/* Real-Time Bus Event Stream */}
-            <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2">
-                <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
-                  <Terminal className="w-4 h-4 text-emerald-400" />
-                  <span>REAL-TIME BUS EVENT STREAM &amp; SAFETY LOG</span>
-                </span>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setIsStreamPaused(!isStreamPaused)}
-                    className={`px-2.5 py-1 text-xs font-bold rounded flex items-center space-x-1 ${
-                      isStreamPaused ? 'bg-amber-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
-                    }`}
-                  >
-                    {isStreamPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                    <span>{isStreamPaused ? 'RESUME STREAM' : 'PAUSE STREAM'}</span>
-                  </button>
-                  <button
-                    onClick={() => setBusEvents([])}
-                    className="px-2.5 py-1 text-xs font-bold rounded bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center space-x-1"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>CLEAR</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Scrolling Log Box */}
-              <div className="h-64 bg-black/60 border border-gray-800 rounded p-2.5 overflow-y-auto font-mono text-xs space-y-1 text-gray-300 select-text">
-                {busEvents.length === 0 ? (
-                  <div className="text-gray-600 italic">Awaiting hardware bus events...</div>
-                ) : (
-                  busEvents.map((evt, idx) => (
-                    <div key={idx} className="hover:bg-white/5 py-0.5 px-1 rounded">
-                      {evt}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Safe Command Injector */}
             <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
               <div className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
                 <Send className="w-4 h-4 text-sky-400" />
