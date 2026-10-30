@@ -400,9 +400,9 @@ export default function SpectraWorkspace() {
   const filteredBeverages = beverages.filter(
     (b) =>
       bevSearch === '' ||
-      b.name.toLowerCase().includes(bevSearch.toLowerCase()) ||
-      b.type.toLowerCase().includes(bevSearch.toLowerCase()) ||
-      String(b.code).includes(bevSearch)
+      (b.name || '').toLowerCase().includes(bevSearch.toLowerCase()) ||
+      (b.type || '').toLowerCase().includes(bevSearch.toLowerCase()) ||
+      String(b.code || '').includes(bevSearch)
   );
 
   return (
@@ -1382,11 +1382,11 @@ export default function SpectraWorkspace() {
           <span className="font-mono text-gray-300">{connectionStatusText}</span>
         </div>
         <div className="flex items-center space-x-4 font-mono text-[10px] text-gray-500">
-          <span>TB1: {coffeeTemp.toFixed(1)}°C</span>
-          <span>FLOW: {(telem.flow_rate_ml_s ?? 0).toFixed(1)} ml/s</span>
-          <span>BU: {buPos} tk</span>
+          <span>TB1: {coffeeTemp != null ? `${coffeeTemp.toFixed(1)}°C` : '---'}</span>
+          <span>FLOW: {flowRate != null ? `${flowRate.toFixed(1)} ml/s` : '---'}</span>
+          <span>BU: {buPos != null ? `${buPos} tk` : '---'}</span>
           <span>POLL: {isPolling ? '1.1s' : 'OFF'}</span>
-          <span>TIMESTAMP: {lastTimestamp}</span>
+          <span>TIMESTAMP: {lastTimestamp || '---'}</span>
         </div>
       </footer>
     </div>
