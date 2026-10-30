@@ -23,6 +23,17 @@ import {
   Shield,
   Clock,
   Compass,
+  Download,
+  FileText,
+  FileSpreadsheet,
+  Database,
+  Coffee,
+  Sparkles,
+  Wrench,
+  Info,
+  Check,
+  X,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 // ============================================================================
@@ -155,178 +166,280 @@ export const THEMES = {
 // 2. FSM STAGES DEFINITION
 // ============================================================================
 const FSM_STAGES = [
-  { id: 'IDLE', label: '01. IDLE', desc: 'Awaiting SOF' },
-  { id: 'SYNC_LOCK', label: '02. SYNC_LOCK', desc: 'Preamble Match' },
-  { id: 'HEADER_PARSE', label: '03. HDR_PARSE', desc: 'Opcode & Len' },
-  { id: 'PAYLOAD_STREAM', label: '04. PAYLOAD', desc: 'DMA Stream' },
-  { id: 'CRC_VERIFY', label: '05. CRC_VERIFY', desc: 'Polynomial 0x1021' },
-  { id: 'DISPATCH', label: '06. DISPATCH', desc: 'Bus Execution' },
+  { id: 'IDLE', label: '01. IDLE', desc: 'Awaiting SOF / Idle' },
+  { id: 'SYNC_LOCK', label: '02. SYNC_LOCK', desc: 'Carrier Synchronization' },
+  { id: 'HEADER_PARSE', label: '03. HDR_PARSE', desc: 'Opcode & Param Address' },
+  { id: 'PAYLOAD_STREAM', label: '04. PAYLOAD', desc: 'UART / EEPROM Nibbles' },
+  { id: 'CRC_VERIFY', label: '05. CRC_VERIFY', desc: 'Echo / Parity Check' },
+  { id: 'DISPATCH', label: '06. DISPATCH', desc: 'Diagnostic Dispatch' },
 ];
 
-// ============================================================================
-// 3. INITIAL MOCK TELEMETRY PACKETS
-// ============================================================================
-const INITIAL_PACKETS = [
-  {
-    id: 'PKT-0892',
-    timestamp: '00:14.208450',
-    bus: 'UART0_RX',
-    cmd: 'NTC_BOILER_TEMP',
-    hex: 'AA 55 14 04 03 A6 91 C0',
-    ascii: '.U.....',
-    decoded: 'NTC_BOILER_TEMP: 93.4°C',
-    telemetry: 'PID_ERR: +0.2°C // SSR_DUTY: 64%',
-    status: 'CRC16_OK',
-    fsmState: 'DISPATCH',
-    bytes: [
-      { offset: '0x00', hex: 'AA', bin: '10101010', desc: 'SOF Preamble Byte 0' },
-      { offset: '0x01', hex: '55', bin: '01010101', desc: 'SOF Preamble Byte 1' },
-      { offset: '0x02', hex: '14', bin: '00010100', desc: 'Opcode: 0x14 (Read NTC)' },
-      { offset: '0x03', hex: '04', bin: '00000100', desc: 'Payload Length: 4 bytes' },
-      { offset: '0x04', hex: '03', bin: '00000011', desc: 'ADC High: 0x03' },
-      { offset: '0x05', hex: 'A6', bin: '10100110', desc: 'ADC Low: 0xA6 (934 counts)' },
-      { offset: '0x06', hex: '91', bin: '10010001', desc: 'CRC16-CCITT High' },
-      { offset: '0x07', hex: 'C0', bin: '11000000', desc: 'CRC16-CCITT Low' },
-    ],
-  },
-  {
-    id: 'PKT-0893',
-    timestamp: '00:14.225100',
-    bus: 'I2C_SDA',
-    cmd: 'OPTICAL_BEAN_ADC',
-    hex: 'AA 55 22 04 06 18 06 7D',
-    ascii: '.U."...}',
-    decoded: 'BEAN_OPTIC: Delta +101 counts',
-    telemetry: 'CHARGED (Thresh: 115 ± 5) // OK',
-    status: 'CRC16_OK',
-    fsmState: 'DISPATCH',
-    bytes: [
-      { offset: '0x00', hex: 'AA', bin: '10101010', desc: 'SOF Preamble Byte 0' },
-      { offset: '0x01', hex: '55', bin: '01010101', desc: 'SOF Preamble Byte 1' },
-      { offset: '0x02', hex: '22', bin: '00100010', desc: 'Opcode: 0x22 (Optic ADC)' },
-      { offset: '0x03', hex: '04', bin: '00000100', desc: 'Payload Length: 4 bytes' },
-      { offset: '0x04', hex: '06', bin: '00000110', desc: 'Ambient ADC High: 0x06' },
-      { offset: '0x05', hex: '18', bin: '00011000', desc: 'Ambient ADC Low: 0x18 (1560)' },
-      { offset: '0x06', hex: '06', bin: '00000110', desc: 'Pulsed ADC High: 0x06' },
-      { offset: '0x07', hex: '7D', bin: '01111101', desc: 'Pulsed ADC Low: 0x7D (1661)' },
-    ],
-  },
-  {
-    id: 'PKT-0894',
-    timestamp: '00:14.241850',
-    bus: 'UART0_RX',
-    cmd: 'BREW_ENCODER_POS',
-    hex: 'AA 55 31 04 00 E2 02 7E',
-    ascii: '.U.1...~',
-    decoded: 'ENCODER: 226 / 638 ticks',
-    telemetry: 'HOME / MILL POS // Stroke 0%',
-    status: 'CRC16_OK',
-    fsmState: 'DISPATCH',
-    bytes: [
-      { offset: '0x00', hex: 'AA', bin: '10101010', desc: 'SOF Preamble Byte 0' },
-      { offset: '0x01', hex: '55', bin: '01010101', desc: 'SOF Preamble Byte 1' },
-      { offset: '0x02', hex: '31', bin: '00110001', desc: 'Opcode: 0x31 (Encoder Pos)' },
-      { offset: '0x03', hex: '04', bin: '00000100', desc: 'Payload Length: 4 bytes' },
-      { offset: '0x04', hex: '00', bin: '00000000', desc: 'Current Pos High: 0x00' },
-      { offset: '0x05', hex: 'E2', bin: '11100010', desc: 'Current Pos Low: 0xE2 (226)' },
-      { offset: '0x06', hex: '02', bin: '00000010', desc: 'Upper Ref High: 0x02' },
-      { offset: '0x07', hex: '7E', bin: '01111110', desc: 'Upper Ref Low: 0x7E (638)' },
-    ],
-  },
-  {
-    id: 'PKT-0895',
-    timestamp: '00:14.258900',
-    bus: 'SPI_MOSI',
-    cmd: 'MICROSWITCH_HZ',
-    hex: 'AA 55 40 04 01 00 00 1F',
-    ascii: '.U.@....',
-    decoded: 'SWITCHES: Tank OK, Tray OK',
-    telemetry: 'BU_INIT: 1 // MACHINE_READY',
-    status: 'CRC16_OK',
-    fsmState: 'DISPATCH',
-    bytes: [
-      { offset: '0x00', hex: 'AA', bin: '10101010', desc: 'SOF Preamble Byte 0' },
-      { offset: '0x01', hex: '55', bin: '01010101', desc: 'SOF Preamble Byte 1' },
-      { offset: '0x02', hex: '40', bin: '01000000', desc: 'Opcode: 0x40 (Live Switches)' },
-      { offset: '0x03', hex: '04', bin: '00000100', desc: 'Payload Length: 4 bytes' },
-      { offset: '0x04', hex: '01', bin: '00000001', desc: 'HZ[0]: Tank Reed Present' },
-      { offset: '0x05', hex: '00', bin: '00000000', desc: 'HZ[1]: Grinder Triac Off' },
-      { offset: '0x06', hex: '00', bin: '00000000', desc: 'HZ[2]: Drip Tray Inserted' },
-      { offset: '0x07', hex: '1F', bin: '00011111', desc: 'Status Flags: Nominal Ready' },
-    ],
-  },
-  {
-    id: 'PKT-0896',
-    timestamp: '00:14.281300',
-    bus: 'UART0_RX',
-    cmd: 'EEPROM_WORD_SYNC',
-    hex: 'AA 55 52 04 00 28 FF 00',
-    ascii: '.U.R.(..',
-    decoded: 'EEPROM: RE:0028 -> 0xFF00',
-    telemetry: 'SERVICE_FLAG: HISTORICAL_OK',
-    status: 'CRC16_OK',
-    fsmState: 'DISPATCH',
-    bytes: [
-      { offset: '0x00', hex: 'AA', bin: '10101010', desc: 'SOF Preamble Byte 0' },
-      { offset: '0x01', hex: '55', bin: '01010101', desc: 'SOF Preamble Byte 1' },
-      { offset: '0x02', hex: '52', bin: '01010010', desc: 'Opcode: 0x52 (EEPROM Read)' },
-      { offset: '0x03', hex: '04', bin: '00000100', desc: 'Payload Length: 4 bytes' },
-      { offset: '0x04', hex: '00', bin: '00000000', desc: 'Addr High: 0x00' },
-      { offset: '0x05', hex: '28', bin: '00101000', desc: 'Addr Low: 0x28 (Fault Reg)' },
-      { offset: '0x06', hex: 'FF', bin: '11111111', desc: 'Data Word High: 0xFF' },
-      { offset: '0x07', hex: '00', bin: '00000000', desc: 'Data Word Low: 0x00' },
-    ],
-  },
-];
-
-// ============================================================================
-// 4. MAIN SPECTRA WORKSPACE COMPONENT
-// ============================================================================
 export default function SpectraWorkspace() {
   const [activeThemeId, setActiveThemeId] = useState('cyberpunk');
   const theme = THEMES[activeThemeId] || THEMES.cyberpunk;
 
+  // Active Workspace Tab
+  const [activeTab, setActiveTab] = useState('switches'); // 'switches', 'diagnostics', 'beverages', 'maintenance', 'system', 'packets'
+
+  // Hardware Connection & Port State
+  const [availablePorts, setAvailablePorts] = useState([]);
+  const [selectedPort, setSelectedPort] = useState('');
+  const [isConnected, setIsConnected] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
+  const [isInterrogating, setIsInterrogating] = useState(false);
+  const [connectionStatusText, setConnectionStatusText] = useState('Select a port to connect');
+  const [lastTimestamp, setLastTimestamp] = useState('---');
+
+  // Live Telemetry from Hardware API
+  const [liveData, setLiveData] = useState({
+    switches: [],
+    sensors: [],
+    telemetry: {},
+    alerts: [],
+  });
+
+  // Full Stats from Interrogation API
+  const [statsData, setStatsData] = useState(null);
+
+  // Optical Bean Calibration State
+  const [beanThreshold, setBeanThreshold] = useState(115);
+  const [beanHysteresis, setBeanHysteresis] = useState(5);
+  const [isSavingCalib, setIsSavingCalib] = useState(false);
+
   // Waveform State
-  const [isRunning, setIsRunning] = useState(true);
+  const [isWaveformRunning, setIsWaveformRunning] = useState(true);
   const [triggerMode, setTriggerMode] = useState('PACKET_SOF');
   const [timebase, setTimebase] = useState('50µs');
   const [threshTrim, setThreshTrim] = useState(1.65);
   const [channels, setChannels] = useState({
-    ch1: true, // UART_TX
-    ch2: true, // I2C_SDA
-    ch3: true, // SPI_CLK
-    ch4: true, // LDO_3V3
+    ch1: true, // UART_TX / RX
+    ch2: true, // FLOW_PULSES
+    ch3: true, // BU_ENCODER
+    ch4: true, // TB1_NTC
     ch5: true, // TRIAC_ZC
   });
 
-  // FSM and Packet State
-  const [packets, setPackets] = useState(INITIAL_PACKETS);
-  const [selectedPacket, setSelectedPacket] = useState(INITIAL_PACKETS[0]);
+  // Packet Decoder State
+  const [packets, setPackets] = useState([]);
+  const [selectedPacket, setSelectedPacket] = useState(null);
   const [activeFsmStage, setActiveFsmStage] = useState('DISPATCH');
   const [fsmLocked, setFsmLocked] = useState(false);
-
-  // Table Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [busFilter, setBusFilter] = useState('ALL');
 
-  // Telemetry Gauge States
-  const [boilerTemp, setBoilerTemp] = useState(94.2);
-  const [railVoltage, setRailVoltage] = useState(3.315);
-  const [railRipple, setRailRipple] = useState(12.4);
-  const [ringBufferPct, setRingBufferPct] = useState(48);
-  const [ssrDuty, setSsrDuty] = useState(62);
-
-  // Command Injector
-  const [txCommand, setTxCommand] = useState('AA 55 14 00 00 00 E1 4B');
+  // UART Command Injector
+  const [txCommand, setTxCommand] = useState('HZ:');
   const [txSuccessFlash, setTxSuccessFlash] = useState(false);
+  const [txResponseHistory, setTxResponseHistory] = useState([]);
 
-  // Canvas Ref
+  // Canvas Refs
   const canvasRef = useRef(null);
   const animFrameId = useRef(null);
   const phaseRef = useRef(0);
 
   // --------------------------------------------------------------------------
-  // Waveform Canvas Rendering Engine (60 FPS)
+  // 1. Initial Load: Fetch Serial Ports & Calibration
+  // --------------------------------------------------------------------------
+  const fetchPorts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ports');
+      if (!res.ok) return;
+      const ports = await res.json();
+      setAvailablePorts(ports);
+      if (ports.length > 0 && !selectedPort) {
+        // Prefer hardware ttyUSB / COM ports, or first available
+        const hwPort = ports.find((p) => p.includes('ttyUSB') || p.startsWith('COM') || p.includes('by-id'));
+        setSelectedPort(hwPort || ports[0]);
+      }
+    } catch (e) {
+      console.warn('API error fetching ports:', e);
+    }
+  }, [selectedPort]);
+
+  const fetchCalibration = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calibration');
+      if (!res.ok) return;
+      const calib = await res.json();
+      if (calib.threshold) setBeanThreshold(calib.threshold);
+      if (calib.hysteresis) setBeanHysteresis(calib.hysteresis);
+    } catch (e) {
+      console.warn('API error fetching calibration:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPorts();
+    fetchCalibration();
+  }, [fetchPorts, fetchCalibration]);
+
+  // --------------------------------------------------------------------------
+  // 2. Query Live Sensors (Hardware or Demo)
+  // --------------------------------------------------------------------------
+  const querySensors = useCallback(async (isFast = true) => {
+    if (!selectedPort) return;
+    try {
+      const res = await fetch(`/api/sensors?port=${encodeURIComponent(selectedPort)}&fast=${isFast ? '1' : '0'}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (data.error) {
+        setConnectionStatusText(`Hardware Warning: ${data.error}`);
+        return;
+      }
+
+      setLiveData(data);
+      setIsConnected(true);
+      setLastTimestamp(data.timestamp || new Date().toLocaleTimeString());
+      setConnectionStatusText(`Connected to ${selectedPort} [Nominal Telemetry]`);
+
+      // Add decoded UART packet to live packet stream
+      const pktId = `PKT-${String(Math.floor(Date.now() / 100) % 10000).padStart(4, '0')}`;
+      const tb = data.telemetry || {};
+      const newPkt = {
+        id: pktId,
+        timestamp: data.timestamp || new Date().toLocaleTimeString(),
+        bus: 'UART0_RX',
+        cmd: 'HZ_TELEMETRY',
+        hex: '48 5A 3A 0D 0A ' + (tb.button_matrix || '0000'),
+        ascii: 'HZ:....',
+        decoded: `TB1: ${tb.heater_coffee_c ?? '--'}°C // ENCODER: ${tb.bu_encoder_pos ?? '--'} ticks`,
+        telemetry: `BEANS: ${tb.beans_ok ? 'OK' : 'EMPTY'} // FLOW: ${tb.flow_rate_ml_s ?? 0} ml/s`,
+        status: 'CRC16_OK',
+        fsmState: 'DISPATCH',
+        bytes: [
+          { offset: '0x00', hex: '48', bin: '01001000', desc: 'ASCII "H"' },
+          { offset: '0x01', hex: '5A', bin: '01011010', desc: 'ASCII "Z"' },
+          { offset: '0x02', hex: '3A', bin: '00111010', desc: 'ASCII ":"' },
+          { offset: '0x03', hex: '0D', bin: '00001101', desc: 'CR Carriage Return' },
+          { offset: '0x04', hex: '0A', bin: '00001010', desc: 'LF Line Feed' },
+          { offset: '0x05', hex: (tb.bu_encoder_pos ? (tb.bu_encoder_pos & 0xFF).toString(16).toUpperCase() : '00'), bin: '00000000', desc: 'Encoder Low Byte' },
+          { offset: '0x06', hex: (tb.optical_delta ? (Math.abs(tb.optical_delta) & 0xFF).toString(16).toUpperCase() : '00'), bin: '00000000', desc: 'Optic Delta Byte' },
+          { offset: '0x07', hex: (tb.flow_pulses ? (tb.flow_pulses & 0xFF).toString(16).toUpperCase() : '00'), bin: '00000000', desc: 'Turbine Pulse Byte' },
+        ],
+      };
+
+      setPackets((prev) => [newPkt, ...prev.slice(0, 49)]);
+      if (!selectedPacket) setSelectedPacket(newPkt);
+
+    } catch (err) {
+      setConnectionStatusText(`Connection Error: ${err.message}`);
+    }
+  }, [selectedPort, selectedPacket]);
+
+  // --------------------------------------------------------------------------
+  // 3. Auto-Polling Timer
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isPolling || !selectedPort) return;
+    const interval = setInterval(() => {
+      querySensors(true);
+    }, 1100);
+    return () => clearInterval(interval);
+  }, [isPolling, selectedPort, querySensors]);
+
+  // --------------------------------------------------------------------------
+  // 4. Full Interrogation Routine
+  // --------------------------------------------------------------------------
+  const runFullInterrogation = async () => {
+    if (!selectedPort) return;
+    setIsInterrogating(true);
+    setConnectionStatusText(`Reading complete EEPROM & statistics from ${selectedPort}...`);
+    try {
+      const res = await fetch(`/api/stats?port=${encodeURIComponent(selectedPort)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) {
+        setConnectionStatusText(`Interrogation Failed: ${data.error}`);
+      } else {
+        setStatsData(data);
+        setConnectionStatusText(`Interrogation Complete: ${data.machine_model || 'Appliance'} (${data.total_preparations || 0} preparations)`);
+        setActiveTab('beverages');
+      }
+    } catch (err) {
+      setConnectionStatusText(`Interrogation Error: ${err.message}`);
+    } finally {
+      setIsInterrogating(false);
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // 5. Optical Bean Threshold Calibration Controls
+  // --------------------------------------------------------------------------
+  const handleSaveThreshold = async (val) => {
+    setBeanThreshold(val);
+    try {
+      setIsSavingCalib(true);
+      const res = await fetch('/api/set_threshold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threshold: val }),
+      });
+      const data = await res.json();
+      if (data.calib) {
+        setBeanThreshold(data.calib.threshold);
+        setBeanHysteresis(data.calib.hysteresis);
+      }
+    } catch (e) {
+      console.warn('Error saving threshold:', e);
+    } finally {
+      setIsSavingCalib(false);
+    }
+  };
+
+  const handleResetThreshold = async () => {
+    try {
+      setIsSavingCalib(true);
+      const res = await fetch('/api/reset_threshold', { method: 'POST' });
+      const data = await res.json();
+      if (data.calib) {
+        setBeanThreshold(data.calib.threshold);
+        setBeanHysteresis(data.calib.hysteresis);
+      }
+    } catch (e) {
+      console.warn('Error resetting threshold:', e);
+    } finally {
+      setIsSavingCalib(false);
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // 6. UART Command Injection Form
+  // --------------------------------------------------------------------------
+  const handleTransmitCommand = async (customCmd) => {
+    const cmdToSend = customCmd || txCommand;
+    if (!cmdToSend.trim() || !selectedPort) return;
+
+    try {
+      const res = await fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: selectedPort, cmd: cmdToSend.trim() }),
+      });
+      const data = await res.json();
+
+      setTxSuccessFlash(true);
+      setTimeout(() => setTxSuccessFlash(false), 800);
+
+      const entry = {
+        cmd: cmdToSend,
+        reply: data.response || (data.error ? `ERR: ${data.error}` : '[NO_REPLY]'),
+        timestamp: new Date().toLocaleTimeString(),
+        ok: data.success,
+      };
+      setTxResponseHistory((prev) => [entry, ...prev.slice(0, 9)]);
+
+      // If query was HZ or AS, refresh sensors immediately
+      if (cmdToSend.includes('HZ') || cmdToSend.includes('AS')) {
+        querySensors(true);
+      }
+    } catch (err) {
+      console.warn('Error sending command:', err);
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // 7. 60 FPS HTML5 Canvas Mixed-Domain Oscilloscope Engine
   // --------------------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -334,7 +447,7 @@ export default function SpectraWorkspace() {
     const ctx = canvas.getContext('2d');
 
     const render = () => {
-      if (isRunning) {
+      if (isWaveformRunning) {
         phaseRef.current += 0.04;
       }
       const phase = phaseRef.current;
@@ -345,7 +458,7 @@ export default function SpectraWorkspace() {
       ctx.fillStyle = theme.canvasBg;
       ctx.fillRect(0, 0, width, height);
 
-      // Draw 12x5 DSO Graticule Grid
+      // 12x5 DSO Graticule Grid
       const cols = 12;
       const rows = 5;
       const dx = width / cols;
@@ -389,100 +502,100 @@ export default function SpectraWorkspace() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw Channels
+      // Base Y coordinates for 5 channels
       const channelBaseY = [
         height * 0.18, // CH1 UART
-        height * 0.36, // CH2 I2C
-        height * 0.54, // CH3 SPI
-        height * 0.72, // CH4 3.3V
-        height * 0.88, // CH5 TRIAC
+        height * 0.36, // CH2 FLOW_PULSES
+        height * 0.54, // CH3 BU_ENCODER
+        height * 0.72, // CH4 TB1_NTC
+        height * 0.88, // CH5 TRIAC_ZC
       ];
 
-      // CH1: UART_TX (Digital Squarewave with Protocol Packets)
+      const telem = liveData.telemetry || {};
+
+      // CH1: UART Wire Activity
       if (channels.ch1) {
         ctx.strokeStyle = theme.primary;
         ctx.lineWidth = 2;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
           const bitIndex = Math.floor((x + phase * 40) / 28);
-          // Pseudo-random but deterministic square wave pattern
           const isHigh = ((bitIndex * 13 + (bitIndex % 3)) % 7) > 3;
-          const y = isHigh ? channelBaseY[0] - 18 : channelBaseY[0] + 6;
+          const y = isHigh ? channelBaseY[0] - 16 : channelBaseY[0] + 6;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
 
-        // Protocol Annotations (Pills)
+        // Protocol Annotation Pills
         const annotations = [
-          { text: '0xAA [SOF]', x: 40 },
-          { text: '0x55 [SYNC]', x: 140 },
-          { text: 'CMD:0x14', x: 260 },
-          { text: 'DATA:0x03A6', x: 420 },
-          { text: 'CRC16:OK', x: 580 },
+          { text: '0x48 [H]', x: 50 },
+          { text: '0x5A [Z]', x: 150 },
+          { text: '0x3A [:]', x: 250 },
+          { text: `TB1:${telem.heater_coffee_c || 95}°C`, x: 380 },
+          { text: `ENC:${telem.bu_encoder_pos || 226}`, x: 540 },
+          { text: telem.beans_ok ? 'BEANS:OK' : 'EMPTY', x: 700 },
         ];
         annotations.forEach((ann) => {
-          const drawX = (ann.x - (phase * 40) % (width + 200) + width) % width;
+          const drawX = (ann.x - (phase * 40) % (width + 250) + width) % width;
           ctx.fillStyle = `${theme.primary}22`;
           ctx.strokeStyle = theme.primary;
           ctx.lineWidth = 1;
-          ctx.fillRect(drawX, channelBaseY[0] - 34, 85, 14);
-          ctx.strokeRect(drawX, channelBaseY[0] - 34, 85, 14);
+          ctx.fillRect(drawX, channelBaseY[0] - 32, 85, 14);
+          ctx.strokeRect(drawX, channelBaseY[0] - 32, 85, 14);
           ctx.fillStyle = theme.primary;
           ctx.font = '9px monospace';
-          ctx.fillText(ann.text, drawX + 4, channelBaseY[0] - 23);
+          ctx.fillText(ann.text, drawX + 4, channelBaseY[0] - 22);
         });
       }
 
-      // CH2: I2C_SDA (Open drain transitions with clock stretching)
+      // CH2: Turbine Flowmeter Pulses (Frequency scaled with flow rate)
       if (channels.ch2) {
         ctx.strokeStyle = theme.secondary;
         ctx.lineWidth = 1.8;
         ctx.beginPath();
+        const flowRate = telem.flow_rate_ml_s || 0;
+        const freq = flowRate > 0 ? 0.35 : 0.05;
         for (let x = 0; x < width; x++) {
-          const bit = Math.floor((x + phase * 25) / 20);
-          const isHigh = ((bit * 7) % 5) > 1;
-          const y = isHigh ? channelBaseY[1] - 16 : channelBaseY[1] + 6;
+          const isHigh = Math.sin((x + phase * 60) * freq) > 0;
+          const y = isHigh ? channelBaseY[1] - 14 : channelBaseY[1] + 6;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
 
-      // CH3: SPI_CLK (High-frequency clock bursts)
+      // CH3: Brew Unit Quadrature Optical Encoder
       if (channels.ch3) {
         ctx.strokeStyle = '#BB9AF7';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const burstCycle = (x + phase * 60) % 200;
-          let y = channelBaseY[2] + 4;
-          if (burstCycle < 140) {
-            // Active clock burst
-            const clkState = Math.sin((x + phase * 60) * 0.4) > 0;
-            y = clkState ? channelBaseY[2] - 14 : channelBaseY[2] + 4;
-          }
+          const isHigh = Math.sin((x + phase * 30) * 0.15) > 0;
+          const y = isHigh ? channelBaseY[2] - 14 : channelBaseY[2] + 4;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
 
-      // CH4: LDO_3V3 (Analog voltage rail with subtle ripple)
+      // CH4: Thermoblock NTC Analog Curve & PID Ripple
       if (channels.ch4) {
         ctx.strokeStyle = '#38BDF8';
         ctx.lineWidth = 2;
         ctx.beginPath();
+        const tbTemp = telem.heater_coffee_c || 95.0;
+        const normalizedY = channelBaseY[3] - ((tbTemp - 80) / 30) * 16;
         for (let x = 0; x < width; x++) {
-          const ripple = Math.sin((x + phase * 80) * 0.15) * 2.5 + Math.cos(x * 0.05) * 1.0;
-          const y = channelBaseY[3] + ripple;
+          const ripple = Math.sin((x + phase * 80) * 0.15) * 2.0;
+          const y = normalizedY + ripple;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }
 
-      // CH5: TRIAC_ZC (Sinusoidal AC zero-cross + Triac gate pulse)
+      // CH5: Mains AC Zero-Crossing Reference Sine & Triac Pulse
       if (channels.ch5) {
         ctx.strokeStyle = '#F97316';
         ctx.lineWidth = 1.8;
@@ -490,10 +603,7 @@ export default function SpectraWorkspace() {
         for (let x = 0; x < width; x++) {
           const sine = Math.sin((x + phase * 15) * 0.03) * 16;
           let y = channelBaseY[4] + sine;
-          // Pulse on zero crossing
-          if (Math.abs(sine) < 1.2) {
-            y -= 8;
-          }
+          if (Math.abs(sine) < 1.2) y -= 8;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -505,120 +615,63 @@ export default function SpectraWorkspace() {
 
     render();
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [isRunning, theme, channels, threshTrim]);
+  }, [isWaveformRunning, theme, channels, threshTrim, liveData]);
 
-  // --------------------------------------------------------------------------
-  // Live Telemetry Auto-Step / FSM Simulation
-  // --------------------------------------------------------------------------
-  useEffect(() => {
-    if (!isRunning || fsmLocked) return;
-    const interval = setInterval(() => {
-      // Step through FSM stages during live capture
-      setActiveFsmStage((prev) => {
-        const idx = FSM_STAGES.findIndex((s) => s.id === prev);
-        const nextIdx = (idx + 1) % FSM_STAGES.length;
-        return FSM_STAGES[nextIdx].id;
-      });
+  // Derived Telemetry Values
+  const telem = liveData.telemetry || {};
+  const coffeeTemp = telem.heater_coffee_c ?? 95.0;
+  const steamTemp = telem.heater_steam_c;
+  const isDualHeater = telem.is_dual_heater ?? false;
+  const buPos = telem.bu_encoder_pos ?? 226;
+  const buUpper = telem.bu_encoder_upper ?? 638;
+  const buStrokePct = telem.bu_stroke_pct ?? 0.0;
+  const buZone = telem.bu_position_state || 'Home / Mill Position';
+  const flowRate = telem.flow_rate_ml_s ?? 0.0;
+  const flowVolume = telem.flow_volume_ml ?? 0.0;
+  const beansOk = telem.beans_ok ?? true;
+  const opticalDelta = telem.optical_delta ?? 92;
+  const machineState = telem.machine_state_status || 'Ready to Brew';
+  const machineBadge = telem.machine_state_badge || 'READY';
 
-      // Subtle dynamic analog variations
-      setBoilerTemp((t) => Number((93.0 + Math.sin(Date.now() / 3000) * 1.5).toFixed(1)));
-      setRailVoltage((v) => Number((3.315 + (Math.random() - 0.5) * 0.006).toFixed(3)));
-      setRailRipple((r) => Number((12.0 + Math.random() * 1.5).toFixed(1)));
-      setRingBufferPct((p) => Math.min(95, Math.max(30, p + (Math.random() > 0.5 ? 2 : -2))));
-    }, 1200);
+  // Find switch statuses
+  const tankSw = liveData.switches.find((s) => s.id === 'water_tank');
+  const traySw = liveData.switches.find((s) => s.id === 'drip_tray');
+  const filterSw = liveData.switches.find((s) => s.id === 'claris_filter');
 
-    return () => clearInterval(interval);
-  }, [isRunning, fsmLocked]);
-
-  // --------------------------------------------------------------------------
-  // User Actions & Command Transmission
-  // --------------------------------------------------------------------------
-  const handleSelectPacket = (pkt) => {
-    setSelectedPacket(pkt);
-    setActiveFsmStage(pkt.fsmState || 'DISPATCH');
-    setFsmLocked(true);
-  };
-
-  const handleTransmitCommand = (cmdStr) => {
-    const raw = cmdStr || txCommand;
-    if (!raw.trim()) return;
-
-    const newId = `PKT-0${900 + packets.length}`;
-    const timestamp = `00:${(14.3 + packets.length * 0.02).toFixed(6)}`;
-    const hexBytes = raw.trim().split(/\s+/);
-
-    const byteBreakdown = hexBytes.slice(0, 8).map((b, idx) => ({
-      offset: `0x0${idx}`,
-      hex: b.toUpperCase(),
-      bin: parseInt(b, 16).toString(2).padStart(8, '0'),
-      desc: idx === 0 ? 'SOF Preamble' : idx === 1 ? 'SYNC Preamble' : idx === 2 ? 'Injected Opcode' : `Data Byte ${idx}`,
-    }));
-
-    // Pad to 8 bytes if shorter
-    while (byteBreakdown.length < 8) {
-      const idx = byteBreakdown.length;
-      byteBreakdown.push({
-        offset: `0x0${idx}`,
-        hex: '00',
-        bin: '00000000',
-        desc: `Pad Byte ${idx}`,
-      });
-    }
-
-    const newPkt = {
-      id: newId,
-      timestamp,
-      bus: 'UART0_TX',
-      cmd: raw.includes('14') ? 'POLL_BOILER_NTC' : raw.includes('FF') ? 'CRC_INJECT_ERR' : 'SYNC_PING',
-      hex: raw.toUpperCase(),
-      ascii: '.U.TX...',
-      decoded: raw.includes('FF') ? 'MANUAL_CRC_FAULT_INJECT' : 'INJECTED_CMD_TX_ACK',
-      telemetry: 'TRANSMITTED VIA CP2102 // ACK: 0x06',
-      status: raw.includes('FF') ? 'ERR_FRAME_DESYNC' : 'CRC16_OK',
-      fsmState: 'DISPATCH',
-      bytes: byteBreakdown,
-    };
-
-    setPackets((prev) => [newPkt, ...prev]);
-    setSelectedPacket(newPkt);
-    setTxSuccessFlash(true);
-    setTimeout(() => setTxSuccessFlash(false), 800);
-  };
-
-  // Filtered Packets List
+  // Filtered Packets
   const filteredPackets = packets.filter((p) => {
     const matchesBus = busFilter === 'ALL' || p.bus === busFilter;
     const matchesSearch =
       searchTerm === '' ||
       p.hex.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.cmd.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.decoded.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.status.toLowerCase().includes(searchTerm.toLowerCase());
+      p.decoded.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesBus && matchesSearch;
   });
 
   return (
     <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-colors duration-200 select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
       {/* ==================================================================== */}
-      {/* ZONE 1: TOP PARADIGM SWITCHER BAR (Sticky) */}
+      {/* ZONE 1: TOP PARADIGM SWITCHER & HARDWARE CONNECTION BAR */}
       {/* ==================================================================== */}
-      <header className={`sticky top-0 z-50 px-4 py-2 flex items-center justify-between border-b ${theme.border} ${theme.headerBg} backdrop-blur-md`}>
+      <header className={`sticky top-0 z-50 px-4 py-2 flex flex-wrap items-center justify-between border-b ${theme.border} ${theme.headerBg} backdrop-blur-md gap-3`}>
+        {/* Left: 5 Theme Buttons */}
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5">
             <Compass className={`w-4 h-4 ${theme.textPrimary}`} />
-            <span className="text-xs uppercase font-bold tracking-wider text-gray-400">
-              PARADIGM MATRIX:
+            <span className="text-[11px] uppercase font-bold tracking-wider text-gray-400">
+              PARADIGM:
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1">
             {Object.values(THEMES).map((t) => {
               const active = t.id === activeThemeId;
               return (
                 <button
                   key={t.id}
                   onClick={() => setActiveThemeId(t.id)}
-                  className={`text-xs px-2.5 py-1 font-bold tracking-wide transition-all duration-150 ${
+                  className={`text-[11px] px-2.5 py-1 font-bold tracking-wide transition-all duration-150 ${
                     active
                       ? `${t.bg} ${t.textPrimary} border ${t.borderActive} ${t.accentGlow}`
                       : 'bg-black/30 text-gray-400 border border-transparent hover:border-gray-600'
@@ -631,92 +684,208 @@ export default function SpectraWorkspace() {
           </div>
         </div>
 
-        {/* Live Status Indicator */}
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-black/40 border border-emerald-500/30 text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>HARDWARE ONLINE</span>
+        {/* Right: Hardware Port Controls */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {/* Serial Port Dropdown */}
+          <div className="flex items-center space-x-1 bg-black/40 px-2 py-1 rounded border border-gray-800">
+            <Radio className="w-3.5 h-3.5 text-gray-400" />
+            <select
+              value={selectedPort}
+              onChange={(e) => {
+                setSelectedPort(e.target.value);
+                setIsPolling(false);
+              }}
+              className="bg-transparent text-gray-200 text-xs font-mono outline-none cursor-pointer max-w-[200px]"
+            >
+              {availablePorts.map((p) => (
+                <option key={p} value={p} className="bg-gray-900 text-gray-200">
+                  {p}
+                </option>
+              ))}
+            </select>
+            <button onClick={fetchPorts} title="Refresh Serial Ports" className="text-gray-400 hover:text-white ml-1">
+              <RefreshCw className="w-3 h-3" />
+            </button>
           </div>
-          <span className="text-[11px] text-gray-500 hidden md:inline">
-            EF518M V02.20 [XJ5 PRO]
-          </span>
+
+          {/* Action Buttons */}
+          <button
+            onClick={() => querySensors(true)}
+            className="flex items-center space-x-1 px-2.5 py-1 bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/60 text-sky-300 font-bold rounded"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>REFRESH</span>
+          </button>
+
+          <button
+            onClick={() => setIsPolling(!isPolling)}
+            className={`flex items-center space-x-1 px-3 py-1 font-bold rounded ${
+              isPolling
+                ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/60 hover:bg-emerald-600/40'
+                : 'bg-gray-800/40 text-gray-300 border border-gray-700 hover:bg-gray-800/60'
+            }`}
+          >
+            {isPolling ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            <span>{isPolling ? 'POLLING' : 'START POLL'}</span>
+          </button>
+
+          <button
+            onClick={runFullInterrogation}
+            disabled={isInterrogating}
+            className={`flex items-center space-x-1 px-3 py-1 font-bold rounded transition-all ${
+              isInterrogating
+                ? 'bg-purple-900/40 text-purple-300 border border-purple-500 animate-pulse'
+                : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/60'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>{isInterrogating ? 'READING...' : 'FULL STATS'}</span>
+          </button>
+
+          {/* Hardware Online Pill */}
+          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-black/40 border border-emerald-500/30 text-emerald-400">
+            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
+            <span>{isConnected ? 'ONLINE' : 'STANDBY'}</span>
+          </div>
         </div>
       </header>
 
       {/* ==================================================================== */}
-      {/* ZONE 2: MASTER HARDWARE TELEMETRY HEADER */}
+      {/* ZONE 2: 9 REAL-TIME HARDWARE KPI TILES */}
       {/* ==================================================================== */}
-      <section className={`px-4 py-3 border-b ${theme.border} ${theme.panelBg} flex flex-col lg:flex-row lg:items-center justify-between gap-4`}>
-        {/* Logo and Titles */}
-        <div className="flex items-center space-x-3">
-          <div className={`p-2 rounded ${theme.clipClass} border ${theme.borderActive} bg-black/40`}>
-            {/* Hexagonal Shield + Dispersion Logo */}
-            <svg className="w-8 h-8" viewBox="0 0 100 100" fill="none">
-              <polygon points="50,5 90,25 90,75 50,95 10,75 10,25" stroke={theme.primary} strokeWidth="6" fill={`${theme.primary}15`} />
-              <polygon points="50,22 75,36 75,64 50,78 25,64 25,36" stroke={theme.secondary} strokeWidth="4" fill="none" />
-              <line x1="10" y1="50" x2="90" y2="50" stroke={theme.primary} strokeWidth="2" strokeDasharray="4 2" />
-              <line x1="50" y1="5" x2="50" y2="95" stroke={theme.secondary} strokeWidth="2" strokeDasharray="4 2" />
-            </svg>
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className={`text-lg font-extrabold tracking-wider ${theme.textPrimary}`}>
-                SPECTRA
-              </h1>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-black/40 text-gray-400 border border-gray-700">
-                v0.6.0-DEV
-              </span>
+      <section className={`px-4 py-3 border-b ${theme.border} ${theme.panelBg}`}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
+          {/* 1. Water Tank */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              💧 WATER TANK
             </div>
-            <p className="text-xs text-gray-400 tracking-wide">
-              {theme.subtitle}
-            </p>
+            <div className={`text-xs font-bold font-mono my-1 ${tankSw?.ok !== false ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {tankSw?.status ? (tankSw.ok ? 'WATER OK' : 'EMPTY / TANK') : 'READY'}
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">Reed Switch</div>
           </div>
-        </div>
 
-        {/* 6-Card Live Telemetry Strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
-          {[
-            { label: 'SAMPLE RATE', val: '24.0 MHz', color: theme.textSecondary },
-            { label: 'UART BUS', val: '9600 8N1', color: theme.textPrimary },
-            { label: 'DMA BUFFER', val: `${ringBufferPct}%`, color: ringBufferPct > 80 ? 'text-rose-400' : 'text-emerald-400' },
-            { label: 'NTC BOILER', val: `${boilerTemp} °C`, color: 'text-amber-400' },
-            { label: '3.3V LDO RAIL', val: `${railVoltage} V`, color: 'text-sky-400' },
-            { label: 'LOGIC THRESH', val: `${threshTrim.toFixed(2)} V`, color: theme.textPrimary },
-          ].map((card, i) => (
-            <div key={i} className={`px-2.5 py-1.5 bg-black/40 border border-gray-800 rounded text-left ${theme.clipClass}`}>
-              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
-                {card.label}
-              </div>
-              <div className={`text-xs font-bold font-mono ${card.color}`}>
-                {card.val}
-              </div>
+          {/* 2. Drip Tray */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              📥 DRIP TRAY
             </div>
-          ))}
+            <div className={`text-xs font-bold font-mono my-1 ${traySw?.ok !== false ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {traySw?.status ? (traySw.ok ? 'INSERTED' : 'MISSING') : 'INSERTED'}
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">Contact Switch</div>
+          </div>
+
+          {/* 3. Bean Hopper (Optical Sensor) */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              🫘 BEAN HOPPER
+            </div>
+            <div className={`text-xs font-bold font-mono my-1 ${beansOk ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {beansOk ? 'BEANS OK' : 'FILL BEANS'}
+            </div>
+            <div className="text-[10px] text-gray-500 font-mono truncate">
+              Δ: {opticalDelta}c (T:{beanThreshold})
+            </div>
+          </div>
+
+          {/* 4. Machine State */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              ⚡ APPLIANCE
+            </div>
+            <div className={`text-xs font-bold font-mono my-1 ${machineBadge === 'READY' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {machineBadge}
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">{machineState}</div>
+          </div>
+
+          {/* 5. Brew Unit */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              ⚙️ BREW UNIT
+            </div>
+            <div className="text-xs font-bold font-mono my-1 text-sky-400">
+              {buPos} / {buUpper}
+            </div>
+            <div className="text-[10px] text-gray-500 font-mono truncate">
+              {buStrokePct}% {buZone}
+            </div>
+          </div>
+
+          {/* 6. Coffee TB1 */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              ☕ COFFEE TB1
+            </div>
+            <div className="text-xs font-bold font-mono my-1 text-amber-400">
+              {coffeeTemp} °C
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">Thermoblock 1</div>
+          </div>
+
+          {/* 7. Steam TB2 */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              💨 STEAM TB2
+            </div>
+            <div className="text-xs font-bold font-mono my-1 text-purple-400">
+              {isDualHeater && steamTemp ? `${steamTemp} °C` : 'SINGLE-TB'}
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">
+              {isDualHeater ? 'Thermoblock 2' : 'Not Installed'}
+            </div>
+          </div>
+
+          {/* 8. Water Flow */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              🌊 FLOW RATE
+            </div>
+            <div className="text-xs font-bold font-mono my-1 text-cyan-400">
+              {flowRate} ml/s
+            </div>
+            <div className="text-[10px] text-gray-500 font-mono truncate">
+              {flowVolume.toFixed(1)} ml total
+            </div>
+          </div>
+
+          {/* 9. Water Filter */}
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+              🛡️ FILTER
+            </div>
+            <div className="text-xs font-bold font-mono my-1 text-emerald-400">
+              {filterSw?.status ? 'BYPASS' : 'ACTIVE'}
+            </div>
+            <div className="text-[10px] text-gray-500 truncate">Hardness: 30°dH</div>
+          </div>
         </div>
       </section>
 
       {/* ==================================================================== */}
-      {/* ZONE 3: TOP SPLIT GRID (WAVEFORM DSO + ANALOG RAILS) */}
+      {/* ZONE 3: 60 FPS OSCILLOSCOPE & THERMAL SENSOR GAUGES */}
       {/* ==================================================================== */}
-      <section className="px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow-0">
-        {/* Left: Waveform Engine (Col 9) */}
-        <div className={`lg:col-span-9 flex flex-col justify-between ${theme.surfaceClass} p-3`}>
-          {/* Waveform Controls Toolbar */}
+      <section className="px-4 py-2 grid grid-cols-1 lg:grid-cols-12 gap-3 flex-grow-0">
+        {/* Left: Waveform Engine (Col 8) */}
+        <div className={`lg:col-span-8 flex flex-col justify-between ${theme.surfaceClass} p-3`}>
+          {/* Waveform Header Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-gray-800 mb-2">
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => setIsRunning(!isRunning)}
-                className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-bold uppercase rounded ${
-                  isRunning
+                onClick={() => setIsWaveformRunning(!isWaveformRunning)}
+                className={`flex items-center space-x-1.5 px-2.5 py-0.5 text-xs font-bold uppercase rounded ${
+                  isWaveformRunning
                     ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-600/30'
                     : 'bg-rose-600/20 text-rose-400 border border-rose-500/50 hover:bg-rose-600/30'
                 }`}
               >
-                {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{isRunning ? 'RUNNING' : 'STOPPED'}</span>
+                {isWaveformRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                <span>{isWaveformRunning ? 'RUNNING' : 'STOPPED'}</span>
               </button>
 
-              <div className="flex items-center space-x-1.5 text-xs text-gray-400 bg-black/40 px-2 py-1 rounded border border-gray-800">
+              <div className="flex items-center space-x-1.5 text-xs text-gray-400 bg-black/40 px-2 py-0.5 rounded border border-gray-800">
                 <span className="text-gray-500 font-bold">TRIGGER:</span>
                 <select
                   value={triggerMode}
@@ -725,11 +894,11 @@ export default function SpectraWorkspace() {
                 >
                   <option value="RISING_EDGE">RISING_EDGE</option>
                   <option value="FALLING_EDGE">FALLING_EDGE</option>
-                  <option value="PACKET_SOF">PACKET_SOF (0xAA)</option>
+                  <option value="PACKET_SOF">PACKET_SOF (0x48 'H')</option>
                 </select>
               </div>
 
-              <div className="flex items-center space-x-1.5 text-xs text-gray-400 bg-black/40 px-2 py-1 rounded border border-gray-800">
+              <div className="flex items-center space-x-1.5 text-xs text-gray-400 bg-black/40 px-2 py-0.5 rounded border border-gray-800">
                 <span className="text-gray-500 font-bold">TIMEBASE:</span>
                 <select
                   value={timebase}
@@ -746,37 +915,30 @@ export default function SpectraWorkspace() {
             </div>
 
             <div className="text-[11px] font-mono text-gray-500 hidden sm:block">
-              TRIGGER LEVEL: <span className={theme.textPrimary}>{threshTrim.toFixed(2)}V</span>
+              LIVE SAMPLING // <span className={theme.textPrimary}>24.0 MHz BUS CLK</span>
             </div>
           </div>
 
           {/* HTML5 Canvas DSO */}
-          <div className="relative w-full h-[240px] sm:h-[260px] bg-black/60 rounded border border-gray-900 overflow-hidden">
-            <canvas
-              ref={canvasRef}
-              width={960}
-              height={260}
-              className="w-full h-full block"
-            />
+          <div className="relative w-full h-[210px] bg-black/60 rounded border border-gray-900 overflow-hidden">
+            <canvas ref={canvasRef} width={920} height={210} className="w-full h-full block" />
           </div>
 
-          {/* Channel Visibility & Thresh Slider Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 mt-2 border-t border-gray-800 text-xs">
-            <div className="flex flex-wrap items-center gap-2">
+          {/* Channel Visibility Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 mt-2 border-t border-gray-800 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
               {[
                 { key: 'ch1', label: 'CH1: UART_TX', color: theme.primary },
-                { key: 'ch2', label: 'CH2: I2C_SDA', color: theme.secondary },
-                { key: 'ch3', label: 'CH3: SPI_CLK', color: '#BB9AF7' },
-                { key: 'ch4', label: 'CH4: 3.3V_RAIL', color: '#38BDF8' },
+                { key: 'ch2', label: 'CH2: FLOW_TURBINE', color: theme.secondary },
+                { key: 'ch3', label: 'CH3: BU_ENCODER', color: '#BB9AF7' },
+                { key: 'ch4', label: 'CH4: TB1_NTC', color: '#38BDF8' },
                 { key: 'ch5', label: 'CH5: TRIAC_ZC', color: '#F97316' },
               ].map((ch) => (
                 <button
                   key={ch.key}
                   onClick={() => setChannels((prev) => ({ ...prev, [ch.key]: !prev[ch.key] }))}
-                  className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-all ${
-                    channels[ch.key]
-                      ? 'bg-black/50 border'
-                      : 'bg-black/20 text-gray-600 border border-transparent'
+                  className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                    channels[ch.key] ? 'bg-black/50 border' : 'bg-black/20 text-gray-600 border border-transparent'
                   }`}
                   style={{
                     borderColor: channels[ch.key] ? ch.color : 'transparent',
@@ -789,7 +951,6 @@ export default function SpectraWorkspace() {
               ))}
             </div>
 
-            {/* Threshold Slider */}
             <div className="flex items-center space-x-2 text-xs">
               <span className="text-gray-500 font-bold">THRESH TRIM:</span>
               <input
@@ -799,7 +960,7 @@ export default function SpectraWorkspace() {
                 step="0.05"
                 value={threshTrim}
                 onChange={(e) => setThreshTrim(parseFloat(e.target.value))}
-                className="w-24 accent-amber-400 cursor-pointer"
+                className="w-20 accent-amber-400 cursor-pointer"
               />
               <span className={`font-mono text-xs w-10 text-right ${theme.textPrimary}`}>
                 {threshTrim.toFixed(2)}V
@@ -808,414 +969,561 @@ export default function SpectraWorkspace() {
           </div>
         </div>
 
-        {/* Right: Analog & Thermal Rails Panel (Col 3) */}
-        <div className={`lg:col-span-3 flex flex-col justify-between ${theme.surfaceClass} p-3 gap-3`}>
+        {/* Right: Thermal & Optical Calibration Controls (Col 4) */}
+        <div className={`lg:col-span-4 flex flex-col justify-between ${theme.surfaceClass} p-3 gap-2`}>
           <div>
-            <div className="flex items-center justify-between pb-2 border-b border-gray-800">
+            <div className="flex items-center justify-between pb-1.5 border-b border-gray-800">
               <span className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center space-x-1.5">
                 <Flame className="w-3.5 h-3.5 text-amber-500" />
-                <span>THERMAL & POWER RAILS</span>
+                <span>THERMAL & CALIBRATION</span>
               </span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold">
-                REGULATED
+                NOMINAL
               </span>
             </div>
 
-            {/* Radial Gauges */}
-            <div className="grid grid-cols-2 gap-2 my-3">
-              {/* Boiler Temp Gauge */}
-              <div className="bg-black/40 border border-gray-800 p-2.5 rounded text-center">
+            {/* Dual Gauges */}
+            <div className="grid grid-cols-2 gap-2 my-2">
+              {/* Coffee Boiler Temp */}
+              <div className="bg-black/40 border border-gray-800 p-2 rounded text-center">
                 <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold mb-1">
-                  BOILER NTC
+                  COFFEE TB1
                 </div>
                 <div className="relative flex items-center justify-center my-1">
-                  <svg className="w-20 h-20 transform -rotate-90">
-                    <circle cx="40" cy="40" r="32" stroke="#222" strokeWidth="6" fill="none" />
+                  <svg className="w-16 h-16 transform -rotate-90">
+                    <circle cx="32" cy="32" r="26" stroke="#222" strokeWidth="5" fill="none" />
                     <circle
-                      cx="40"
-                      cy="40"
-                      r="32"
+                      cx="32"
+                      cy="32"
+                      r="26"
                       stroke="#F59E0B"
-                      strokeWidth="6"
-                      strokeDasharray="201"
-                      strokeDashoffset={201 - (201 * (boilerTemp / 140))}
+                      strokeWidth="5"
+                      strokeDasharray="163"
+                      strokeDashoffset={163 - (163 * (coffeeTemp / 140))}
                       strokeLinecap="round"
                       fill="none"
                     />
                   </svg>
                   <div className="absolute text-center">
-                    <div className="text-sm font-bold font-mono text-amber-400">
-                      {boilerTemp}
+                    <div className="text-xs font-bold font-mono text-amber-400">
+                      {coffeeTemp}
                     </div>
-                    <div className="text-[9px] text-gray-500">°C</div>
+                    <div className="text-[8px] text-gray-500">°C</div>
                   </div>
                 </div>
-                <div className="text-[10px] text-gray-400 font-mono">
-                  TARGET: 95.0°C
-                </div>
+                <div className="text-[10px] text-gray-400 font-mono">TARGET: 95°C</div>
               </div>
 
-              {/* 3.3V CMOS Rail Gauge */}
-              <div className="bg-black/40 border border-gray-800 p-2.5 rounded text-center">
+              {/* Water Flow / Rate */}
+              <div className="bg-black/40 border border-gray-800 p-2 rounded text-center">
                 <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold mb-1">
-                  3.3V CMOS RAIL
+                  FLOWMETER
                 </div>
                 <div className="relative flex items-center justify-center my-1">
-                  <svg className="w-20 h-20 transform -rotate-90">
-                    <circle cx="40" cy="40" r="32" stroke="#222" strokeWidth="6" fill="none" />
+                  <svg className="w-16 h-16 transform -rotate-90">
+                    <circle cx="32" cy="32" r="26" stroke="#222" strokeWidth="5" fill="none" />
                     <circle
-                      cx="40"
-                      cy="40"
-                      r="32"
+                      cx="32"
+                      cy="32"
+                      r="26"
                       stroke="#38BDF8"
-                      strokeWidth="6"
-                      strokeDasharray="201"
-                      strokeDashoffset={201 - (201 * (railVoltage / 3.6))}
+                      strokeWidth="5"
+                      strokeDasharray="163"
+                      strokeDashoffset={163 - (163 * Math.min(1.0, flowRate / 15.0))}
                       strokeLinecap="round"
                       fill="none"
                     />
                   </svg>
                   <div className="absolute text-center">
-                    <div className="text-sm font-bold font-mono text-sky-400">
-                      {railVoltage}
+                    <div className="text-xs font-bold font-mono text-sky-400">
+                      {flowRate}
                     </div>
-                    <div className="text-[9px] text-gray-500">VOLTS</div>
+                    <div className="text-[8px] text-gray-500">ml/s</div>
                   </div>
                 </div>
-                <div className="text-[10px] text-gray-400 font-mono">
-                  RIPPLE: {railRipple} mV
-                </div>
+                <div className="text-[10px] text-gray-400 font-mono">TURBINE</div>
               </div>
             </div>
 
-            {/* Linear Progress Bars */}
-            <div className="space-y-2 text-xs">
-              <div>
-                <div className="flex justify-between text-[11px] mb-1">
-                  <span className="text-gray-400">DMA RING BUFFER:</span>
-                  <span className="font-mono text-gray-300">{ringBufferPct}%</span>
-                </div>
-                <div className="w-full bg-black/50 h-2 rounded overflow-hidden border border-gray-800">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      ringBufferPct > 80 ? 'bg-rose-500' : 'bg-emerald-500'
-                    }`}
-                    style={{ width: `${ringBufferPct}%` }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-[11px] mb-1">
-                  <span className="text-gray-400">TRIAC SSR PHASE ANGLE:</span>
-                  <span className="font-mono text-amber-400">{ssrDuty}%</span>
-                </div>
-                <div className="w-full bg-black/50 h-2 rounded overflow-hidden border border-gray-800">
-                  <div
-                    className="h-full bg-amber-500 transition-all duration-300"
-                    style={{ width: `${ssrDuty}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Simulation Presets */}
-          <div className="pt-2 border-t border-gray-800 flex flex-col gap-1.5">
-            <div className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">
-              HARDWARE TESTBENCH MACROS:
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={() => {
-                  setBoilerTemp(96.8);
-                  setSsrDuty(88);
-                  handleTransmitCommand('AA 55 14 02 03 C6 18 A2');
-                }}
-                className="px-2 py-1 bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 text-[10px] font-bold rounded"
-              >
-                LOAD BREW_PWM
-              </button>
-              <button
-                onClick={() => {
-                  handleTransmitCommand('AA 55 FF 04 00 00 DE AD');
-                }}
-                className="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 text-[10px] font-bold rounded"
-              >
-                SIM DESYNC_ERR
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ==================================================================== */}
-      {/* ZONE 4: PROTOCOL FINITE STATE MACHINE (FSM PIPELINE) */}
-      {/* ==================================================================== */}
-      <section className="px-4 py-2">
-        <div className={`p-2.5 ${theme.surfaceClass}`}>
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-800 text-xs">
-            <div className="flex items-center space-x-2">
-              <Layers className={`w-3.5 h-3.5 ${theme.textPrimary}`} />
-              <span className="font-bold tracking-wider uppercase text-gray-400">
-                HARDWARE PROTOCOL FINITE STATE MACHINE (FSM PIPELINE)
-              </span>
-            </div>
-            <div className="flex items-center space-x-2">
-              {fsmLocked && (
-                <button
-                  onClick={() => setFsmLocked(false)}
-                  className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold"
-                >
-                  UNLOCK LIVE AUTO-STEP
-                </button>
-              )}
-              <span className="text-[11px] text-gray-500 font-mono">
-                STAGE: <b className={theme.textPrimary}>{activeFsmStage}</b>
-              </span>
-            </div>
-          </div>
-
-          {/* 6 Stage Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-            {FSM_STAGES.map((stage, idx) => {
-              const isActive = activeFsmStage === stage.id;
-              return (
-                <div
-                  key={stage.id}
-                  onClick={() => {
-                    setActiveFsmStage(stage.id);
-                    setFsmLocked(true);
-                  }}
-                  className={`p-2 rounded cursor-pointer transition-all duration-150 border ${
-                    isActive
-                      ? `${theme.borderActive} bg-black/60 ${theme.accentGlow}`
-                      : 'border-gray-800 bg-black/30 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-[11px] font-bold font-mono ${isActive ? theme.textPrimary : 'text-gray-400'}`}>
-                      {stage.label}
-                    </span>
-                    {isActive && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-gray-500">
-                    {stage.desc}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* ==================================================================== */}
-      {/* ZONE 5: BOTTOM SPLIT GRID (PACKET DECODER + BYTE INSPECTOR) */}
-      {/* ==================================================================== */}
-      <section className="px-4 py-2 grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow">
-        {/* Left: Real-Time Packet Decoder Table (Col 8) */}
-        <div className={`lg:col-span-8 flex flex-col justify-between ${theme.surfaceClass} p-3`}>
-          <div>
-            {/* Filter Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-gray-800">
-              <div className="flex items-center space-x-2">
-                <Terminal className={`w-3.5 h-3.5 ${theme.textPrimary}`} />
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                  REAL-TIME PACKET DECODER & BUS CAPTURE
+            {/* Live Bean Sensor Sensitivity Calibration */}
+            <div className="p-2 bg-black/40 border border-gray-800 rounded text-xs space-y-1.5">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-gray-300 flex items-center space-x-1">
+                  <SlidersHorizontal className="w-3 h-3 text-amber-400" />
+                  <span>OPTICAL BEAN CALIBRATION</span>
                 </span>
+                <button
+                  onClick={handleResetThreshold}
+                  disabled={isSavingCalib}
+                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold"
+                >
+                  ↺ RESET (115)
+                </button>
               </div>
 
-              {/* Bus Tabs */}
-              <div className="flex items-center gap-1">
-                {['ALL', 'UART0_RX', 'I2C_SDA', 'SPI_MOSI', 'UART0_TX'].map((bus) => (
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-gray-500">THRESHOLD:</span>
+                <span className={`font-bold ${theme.textPrimary}`}>{beanThreshold} counts</span>
+                <span className="text-gray-500">BAND: {beanThreshold - beanHysteresis} .. {beanThreshold + beanHysteresis}</span>
+              </div>
+
+              <input
+                type="range"
+                min="60"
+                max="160"
+                step="1"
+                value={beanThreshold}
+                onChange={(e) => handleSaveThreshold(parseInt(e.target.value))}
+                className="w-full accent-amber-400 cursor-pointer"
+              />
+
+              <div className="flex justify-between text-[9px] text-gray-500 font-mono">
+                <span>STRONG (60)</span>
+                <span>NOMINAL (115)</span>
+                <span>BARE (145)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Hardware Diagnostic Triggers */}
+          <div className="pt-1.5 border-t border-gray-800 flex justify-between gap-1.5">
+            <button
+              onClick={() => handleTransmitCommand('HZ:')}
+              className="flex-1 py-1 bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 text-[10px] font-bold rounded"
+            >
+              QUERY HZ:
+            </button>
+            <button
+              onClick={() => handleTransmitCommand('AS:')}
+              className="flex-1 py-1 bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 text-[10px] font-bold rounded"
+            >
+              QUERY AS:
+            </button>
+            <button
+              onClick={() => handleTransmitCommand('TY:')}
+              className="flex-1 py-1 bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 text-[10px] font-bold rounded"
+            >
+              QUERY TY:
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ==================================================================== */}
+      {/* ZONE 4: FUNCTIONAL DIAGNOSTIC WORKSPACE TABS */}
+      {/* ==================================================================== */}
+      <section className="px-4 py-2 flex-grow">
+        <div className={`p-3 ${theme.surfaceClass} flex flex-col justify-between h-full`}>
+          {/* Tab Navigation Buttons */}
+          <div className="flex flex-wrap items-center justify-between border-b border-gray-800 pb-2 mb-3 gap-2">
+            <div className="flex flex-wrap gap-1">
+              {[
+                { id: 'switches', label: '1. PHYSICAL CONTACTS & SWITCHES', icon: Layers },
+                { id: 'diagnostics', label: '2. HARDWARE SAFETY TESTS', icon: Shield },
+                { id: 'beverages', label: '3. BEVERAGES & DISPENSINGS', icon: Coffee },
+                { id: 'maintenance', label: '4. MAINTENANCE & HYGIENE', icon: Wrench },
+                { id: 'system', label: '5. SYSTEM IDENTITY & GS1', icon: Info },
+                { id: 'packets', label: '6. BUS PACKET DECODER', icon: Terminal },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
                   <button
-                    key={bus}
-                    onClick={() => setBusFilter(bus)}
-                    className={`text-[10px] px-2 py-0.5 font-mono font-bold rounded ${
-                      busFilter === bus
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-bold font-mono transition-all duration-150 rounded ${
+                      active
                         ? `${theme.bg} ${theme.textPrimary} border ${theme.borderActive}`
                         : 'bg-black/30 text-gray-400 border border-transparent hover:border-gray-700'
                     }`}
                   >
-                    {bus}
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {/* Search Input */}
-            <div className="relative mb-2">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-gray-500" />
-              <input
-                type="text"
-                placeholder="Filter HEX bytes, Opcode, CRC status..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-black/50 border border-gray-800 rounded pl-8 pr-3 py-1 text-xs text-gray-200 placeholder-gray-600 outline-none focus:border-gray-600 font-mono"
-              />
+            <div className="text-[11px] text-gray-500 font-mono">
+              LAST UPDATE: <span className="text-gray-300">{lastTimestamp}</span>
             </div>
+          </div>
 
-            {/* Table Stream */}
-            <div className="overflow-x-auto max-h-[220px] overflow-y-auto">
+          {/* TAB 1: PHYSICAL CONTACTS & MICROSWITCHES */}
+          {activeTab === 'switches' && (
+            <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
               <table className="w-full text-left text-xs font-mono">
                 <thead className="text-[10px] uppercase text-gray-500 border-b border-gray-800 sticky top-0 bg-[#0E0E12]">
                   <tr>
-                    <th className="py-1 px-2">ID / TIME</th>
-                    <th className="py-1 px-2">BUS</th>
-                    <th className="py-1 px-2">RAW HEX STREAM</th>
-                    <th className="py-1 px-2">DECODED TELEMETRY</th>
-                    <th className="py-1 px-2 text-right">STATUS</th>
+                    <th className="py-1 px-3">COMPONENT / SENSOR NAME</th>
+                    <th className="py-1 px-3">OPERATIONAL STATE</th>
+                    <th className="py-1 px-3">HARDWARE CODE</th>
+                    <th className="py-1 px-3 text-right">STATUS</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-900">
-                  {filteredPackets.map((pkt) => {
-                    const isSelected = selectedPacket?.id === pkt.id;
-                    return (
-                      <tr
-                        key={pkt.id}
-                        onClick={() => handleSelectPacket(pkt)}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-white/10 font-bold'
-                            : 'hover:bg-black/40 text-gray-300'
-                        }`}
-                      >
-                        <td className="py-1 px-2 whitespace-nowrap">
-                          <span className={theme.textPrimary}>{pkt.id}</span>
-                          <span className="text-gray-500 text-[10px] block">{pkt.timestamp}</span>
+                  {liveData.switches.length > 0 ? (
+                    liveData.switches.map((sw, idx) => (
+                      <tr key={idx} className="hover:bg-black/40 transition-colors">
+                        <td className="py-1.5 px-3 whitespace-nowrap">
+                          <span className="mr-2">{sw.icon || '⚙️'}</span>
+                          <span className="font-bold text-gray-200">{sw.name}</span>
                         </td>
-                        <td className="py-1 px-2 whitespace-nowrap">
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-gray-800 text-gray-300">
-                            {pkt.bus}
-                          </span>
+                        <td className="py-1.5 px-3 whitespace-nowrap text-gray-300">
+                          {sw.status}
                         </td>
-                        <td className="py-1 px-2 font-mono text-gray-300 whitespace-nowrap">
-                          {pkt.hex}
+                        <td className="py-1.5 px-3 whitespace-nowrap text-gray-500">
+                          {sw.id}
                         </td>
-                        <td className="py-1 px-2 whitespace-nowrap">
-                          <div className="text-gray-200">{pkt.decoded}</div>
-                          <div className="text-[10px] text-gray-500">{pkt.telemetry}</div>
-                        </td>
-                        <td className="py-1 px-2 text-right whitespace-nowrap">
+                        <td className="py-1.5 px-3 text-right whitespace-nowrap">
                           <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                              pkt.status === 'CRC16_OK'
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                              sw.ok
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                             }`}
                           >
-                            {pkt.status}
+                            {sw.badge || (sw.ok ? 'NORMAL' : 'FAULT')}
                           </span>
                         </td>
                       </tr>
-                    );
-                  })}
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="py-6 text-center text-gray-500 font-mono">
+                        No physical switch telemetry yet. Click '⚡ REFRESH' or 'START POLL' above.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
-          </div>
+          )}
 
-          <div className="text-[10px] text-gray-500 pt-2 border-t border-gray-800 flex justify-between">
-            <span>PACKET STREAM BUFFER: {filteredPackets.length} FRAMES</span>
-            <span>POLYNOMIAL: CRC-16/CCITT-FALSE (0x1021)</span>
-          </div>
-        </div>
-
-        {/* Right: Byte Inspector / Bitfield Drawer (Col 4) */}
-        <div className={`lg:col-span-4 flex flex-col justify-between ${theme.surfaceClass} p-3`}>
-          <div>
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-800">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center space-x-1.5">
-                <Cpu className={`w-3.5 h-3.5 ${theme.textSecondary}`} />
-                <span>BYTE-INSPECTOR & BITFIELDS</span>
-              </span>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-gray-300">
-                FRAME: {selectedPacket?.id || 'NONE'}
-              </span>
+          {/* TAB 2: HARDWARE SAFETY & COMPONENT DIAGNOSTICS */}
+          {activeTab === 'diagnostics' && (
+            <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="text-[10px] uppercase text-gray-500 border-b border-gray-800 sticky top-0 bg-[#0E0E12]">
+                  <tr>
+                    <th className="py-1 px-3">DIAGNOSTIC TEST / CHANNEL</th>
+                    <th className="py-1 px-3">VERIFICATION DETAILS</th>
+                    <th className="py-1 px-3">SAFETY MARGIN</th>
+                    <th className="py-1 px-3 text-right">INTEGRITY</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-900">
+                  {liveData.sensors.length > 0 ? (
+                    liveData.sensors.map((s, idx) => (
+                      <tr key={idx} className="hover:bg-black/40 transition-colors">
+                        <td className="py-1.5 px-3 font-bold text-gray-200 whitespace-nowrap">
+                          {s.name}
+                        </td>
+                        <td className="py-1.5 px-3 text-gray-300">
+                          {s.status}
+                        </td>
+                        <td className="py-1.5 px-3 text-gray-500">
+                          {s.verification || 'Continuity Verified'}
+                        </td>
+                        <td className="py-1.5 px-3 text-right whitespace-nowrap">
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                              s.ok
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                            }`}
+                          >
+                            {s.badge || (s.ok ? 'NOMINAL' : 'FAULT')}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="py-6 text-center text-gray-500 font-mono">
+                        No safety test telemetry loaded. Click '⚡ REFRESH'.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
+          )}
 
-            {/* Selected Packet Header Info */}
-            {selectedPacket && (
-              <div className="mb-2 p-2 bg-black/40 rounded border border-gray-800 text-xs">
-                <div className="flex justify-between text-[11px] mb-1">
-                  <span className="text-gray-500">OPCODE / SYMBOL:</span>
-                  <span className={`font-mono font-bold ${theme.textPrimary}`}>
-                    {selectedPacket.cmd}
-                  </span>
+          {/* TAB 3: BEVERAGES & DISPENSING COUNTERS */}
+          {activeTab === 'beverages' && (
+            <div>
+              {statsData ? (
+                <div>
+                  <div className="flex flex-wrap items-center justify-between mb-3 pb-2 border-b border-gray-800 gap-2">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xs font-bold text-gray-400">TOTAL CUPS:</span>
+                      <span className={`text-base font-bold font-mono ${theme.textPrimary}`}>
+                        {statsData.total_cups || 0}
+                      </span>
+                      <span className="text-gray-600">//</span>
+                      <span className="text-xs font-bold text-gray-400">TOTAL PREPARATIONS:</span>
+                      <span className={`text-base font-bold font-mono ${theme.textSecondary}`}>
+                        {statsData.total_preparations || 0}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([JSON.stringify(statsData, null, 2)], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `spectra_${statsData.machine_model || 'jura'}_stats.json`;
+                          a.click();
+                        }}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-black/40 hover:bg-black/60 border border-gray-700 text-xs font-bold text-gray-300 rounded"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>JSON</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto max-h-[220px] overflow-y-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead className="text-[10px] uppercase text-gray-500 border-b border-gray-800 sticky top-0 bg-[#0E0E12]">
+                        <tr>
+                          <th className="py-1 px-3">CODE</th>
+                          <th className="py-1 px-3">BEVERAGE PRODUCT</th>
+                          <th className="py-1 px-3">PREPARATIONS</th>
+                          <th className="py-1 px-3">PROPORTION</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-900">
+                        {statsData.beverages && statsData.beverages.length > 0 ? (
+                          statsData.beverages.map((bev) => {
+                            const total = statsData.total_preparations || 1;
+                            const pct = Math.round(((bev.count || 0) / total) * 100);
+                            return (
+                              <tr key={bev.code} className="hover:bg-black/40">
+                                <td className="py-1 px-3 text-gray-500">#{bev.code}</td>
+                                <td className="py-1 px-3 font-bold text-gray-200">{bev.name}</td>
+                                <td className="py-1 px-3 text-amber-400 font-bold">{bev.count}</td>
+                                <td className="py-1 px-3 w-48">
+                                  <div className="flex items-center space-x-2">
+                                    <div className="flex-grow bg-black/50 h-1.5 rounded overflow-hidden border border-gray-800">
+                                      <div className="h-full bg-amber-500" style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span className="text-[10px] text-gray-500 w-8">{pct}%</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={4} className="py-6 text-center text-gray-500">
+                              No beverage counters recorded for this model.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-                <div className="flex justify-between text-[11px]">
-                  <span className="text-gray-500">PAYLOAD SUMMARY:</span>
-                  <span className="font-mono text-gray-300 truncate max-w-[200px]">
-                    {selectedPacket.decoded}
-                  </span>
+              ) : (
+                <div className="py-12 text-center font-mono">
+                  <Database className="w-8 h-8 text-purple-400 mx-auto mb-2 opacity-60" />
+                  <div className="text-sm font-bold text-gray-300">NO INTERROGATION DATA LOADED</div>
+                  <div className="text-xs text-gray-500 my-1">
+                    Click '📊 FULL STATS' in the header to read lifetime beverage counters & memory maps.
+                  </div>
+                  <button
+                    onClick={runFullInterrogation}
+                    className="mt-3 px-3 py-1.5 bg-purple-900/50 hover:bg-purple-800/60 text-purple-200 border border-purple-600 rounded text-xs font-bold"
+                  >
+                    RUN INTERROGATION NOW
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: MAINTENANCE & HYGIENE COUNTERS */}
+          {activeTab === 'maintenance' && (
+            <div>
+              {statsData && statsData.maintenance ? (
+                <div className="overflow-x-auto max-h-[260px] overflow-y-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="text-[10px] uppercase text-gray-500 border-b border-gray-800 sticky top-0 bg-[#0E0E12]">
+                      <tr>
+                        <th className="py-1 px-3">HYGIENE CATEGORY</th>
+                        <th className="py-1 px-3">EXECUTION COUNT</th>
+                        <th className="py-1 px-3">SERVICE INTERVAL PROGRESS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-900">
+                      {statsData.maintenance.map((m, idx) => (
+                        <tr key={idx} className="hover:bg-black/40">
+                          <td className="py-1.5 px-3 font-bold text-gray-200">{m.label || m.name}</td>
+                          <td className="py-1.5 px-3 text-emerald-400 font-bold">{m.count} cycles</td>
+                          <td className="py-1.5 px-3 w-56">
+                            <div className="flex items-center space-x-2">
+                              <div className="flex-grow bg-black/50 h-2 rounded overflow-hidden border border-gray-800">
+                                <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (m.count % 200) / 2)}%` }} />
+                              </div>
+                              <span className="text-[10px] text-gray-400">NOMINAL</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="py-12 text-center font-mono">
+                  <Wrench className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-60" />
+                  <div className="text-sm font-bold text-gray-300">NO HYGIENE COUNTERS LOADED</div>
+                  <div className="text-xs text-gray-500 my-1">
+                    Click '📊 FULL STATS' to read descaling, cleaning, and filter cycle records.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: SYSTEM IDENTITY & GS1 SPECIFICATIONS */}
+          {activeTab === 'system' && (
+            <div className="space-y-3 font-mono text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
+                  <div className="text-[11px] font-bold text-gray-400 border-b border-gray-800 pb-1">
+                    APPLIANCE IDENTIFICATION
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">MODEL FAMILY:</span>
+                    <span className={`font-bold ${theme.textPrimary}`}>{statsData?.machine_model || 'Jura IMPRESSA XJ5 Pro'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">EF CODE / PROFILE:</span>
+                    <span className="text-gray-300">{statsData?.ef_code || 'EF518M'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">MAIN FIRMWARE:</span>
+                    <span className="text-gray-300">{statsData?.firmware_string || 'EF518M V02.20'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">POWER SPEC:</span>
+                    <span className="text-gray-300">{statsData?.power_spec || '230V / 50Hz (EU/CH)'}</span>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
+                  <div className="text-[11px] font-bold text-gray-400 border-b border-gray-800 pb-1">
+                    GS1 IDENTIFIER & PRODUCTION
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">SERIAL NUMBER:</span>
+                    <span className="text-amber-400 font-bold">{statsData?.serial_number || '20130530018016'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">PRODUCTION DATE:</span>
+                    <span className="text-gray-300">{statsData?.production_date || '30.05.2013'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">APPLIANCE NO:</span>
+                    <span className="text-gray-300">{statsData?.machine_number || '18016'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">HARDWARE ADAPTER:</span>
+                    <span className="text-gray-300">{selectedPort || '/dev/ttyUSB0'}</span>
+                  </div>
                 </div>
               </div>
-            )}
-
-            {/* 8-Byte Register Breakdown Table */}
-            <div className="space-y-1 overflow-y-auto max-h-[190px]">
-              {selectedPacket?.bytes?.map((b) => (
-                <div
-                  key={b.offset}
-                  className="flex items-center justify-between px-2 py-1 bg-black/30 border border-gray-800/80 rounded text-[11px] font-mono hover:border-gray-700"
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="text-gray-500 text-[10px]">{b.offset}</span>
-                    <span className={`px-1.5 py-0.2 rounded bg-black/60 font-bold border border-gray-700 ${theme.textPrimary}`}>
-                      0x{b.hex}
-                    </span>
-                    <span className="text-gray-400 text-[10px]">{b.bin}</span>
-                  </div>
-                  <div className="text-gray-400 text-[10px] truncate max-w-[140px] text-right">
-                    {b.desc}
-                  </div>
-                </div>
-              ))}
             </div>
-          </div>
+          )}
 
-          <div className="text-[10px] text-gray-500 pt-2 border-t border-gray-800 text-right">
-            LITTLE-ENDIAN // 8-BIT WORD PACKING
+          {/* TAB 6: BUS PACKET DECODER TABLE */}
+          {activeTab === 'packets' && (
+            <div className="overflow-x-auto max-h-[260px] overflow-y-auto">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="text-[10px] uppercase text-gray-500 border-b border-gray-800 sticky top-0 bg-[#0E0E12]">
+                  <tr>
+                    <th className="py-1 px-3">FRAME ID / TIME</th>
+                    <th className="py-1 px-3">BUS</th>
+                    <th className="py-1 px-3">RAW HEX STREAM</th>
+                    <th className="py-1 px-3">DECODED TELEMETRY</th>
+                    <th className="py-1 px-3 text-right">STATUS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-900">
+                  {filteredPackets.map((pkt) => (
+                    <tr
+                      key={pkt.id}
+                      onClick={() => setSelectedPacket(pkt)}
+                      className={`cursor-pointer transition-colors ${
+                        selectedPacket?.id === pkt.id ? 'bg-white/10 font-bold' : 'hover:bg-black/40 text-gray-300'
+                      }`}
+                    >
+                      <td className="py-1 px-3 whitespace-nowrap">
+                        <span className={theme.textPrimary}>{pkt.id}</span>
+                        <span className="text-gray-500 text-[10px] block">{pkt.timestamp}</span>
+                      </td>
+                      <td className="py-1 px-3 whitespace-nowrap">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-gray-800">
+                          {pkt.bus}
+                        </span>
+                      </td>
+                      <td className="py-1 px-3 font-mono text-gray-300">{pkt.hex}</td>
+                      <td className="py-1 px-3">
+                        <div className="text-gray-200">{pkt.decoded}</div>
+                        <div className="text-[10px] text-gray-500">{pkt.telemetry}</div>
+                      </td>
+                      <td className="py-1 px-3 text-right">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          {pkt.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Status Bar */}
+          <div className="flex flex-wrap items-center justify-between pt-2 border-t border-gray-800 text-[11px] text-gray-500 mt-2">
+            <span>{connectionStatusText}</span>
+            <span className="font-mono">SPECTRA v0.6.0-DEV [PHYSICAL TESTBED]</span>
           </div>
         </div>
       </section>
 
       {/* ==================================================================== */}
-      {/* ZONE 6: INTERACTIVE UART TX COMMAND INJECTOR FOOTER */}
+      {/* ZONE 6: UART COMMAND INJECTOR FOOTER */}
       {/* ==================================================================== */}
       <footer className={`p-3 border-t ${theme.border} ${theme.panelBg}`}>
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          {/* Quick Macro Buttons */}
+          {/* Quick Macros */}
           <div className="flex items-center space-x-2 w-full sm:w-auto">
             <span className="text-[11px] font-bold uppercase text-gray-500 whitespace-nowrap">
-              TX MACROS:
+              QUICK COMMANDS:
             </span>
             <div className="flex flex-wrap gap-1">
-              <button
-                onClick={() => setTxCommand('AA 55 10 00 00 00 44 21')}
-                className="px-2 py-1 text-[10px] font-mono font-bold bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 rounded"
-              >
-                [SYNC_PING]
-              </button>
-              <button
-                onClick={() => setTxCommand('AA 55 14 02 00 00 8A 19')}
-                className="px-2 py-1 text-[10px] font-mono font-bold bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 rounded"
-              >
-                [POLL_NTC]
-              </button>
-              <button
-                onClick={() => setTxCommand('AA 55 FF 04 DE AD BE EF')}
-                className="px-2 py-1 text-[10px] font-mono font-bold bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 rounded"
-              >
-                [CRC_FAULT]
-              </button>
+              {['HZ:', 'AS:', 'TY:', 'IC:', 'RE:0028'].map((macro) => (
+                <button
+                  key={macro}
+                  onClick={() => {
+                    setTxCommand(macro);
+                    handleTransmitCommand(macro);
+                  }}
+                  className="px-2 py-1 text-[10px] font-mono font-bold bg-black/40 hover:bg-black/60 border border-gray-700 text-gray-300 rounded"
+                >
+                  [{macro}]
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Hex Stream Injection Form */}
-          <div className="flex items-center space-x-2 w-full sm:w-auto flex-grow max-w-2xl">
+          {/* Command Input & Transmit */}
+          <div className="flex items-center space-x-2 w-full sm:w-auto flex-grow max-w-xl">
             <div className="relative flex-grow">
               <span className={`absolute left-2.5 top-1.5 text-xs font-mono font-bold ${theme.textPrimary}`}>
                 TX&gt;
@@ -1224,7 +1532,7 @@ export default function SpectraWorkspace() {
                 type="text"
                 value={txCommand}
                 onChange={(e) => setTxCommand(e.target.value)}
-                placeholder="AA 55 ..."
+                placeholder="HZ: or TY: ..."
                 className="w-full bg-black/60 border border-gray-800 rounded pl-10 pr-3 py-1.5 text-xs text-gray-100 font-mono tracking-wider outline-none focus:border-gray-600 uppercase"
               />
             </div>
@@ -1238,10 +1546,22 @@ export default function SpectraWorkspace() {
               }`}
             >
               <Send className="w-3.5 h-3.5" />
-              <span>TRANSMIT FRAME</span>
+              <span>SEND</span>
             </button>
           </div>
         </div>
+
+        {/* Recent Responses Strip */}
+        {txResponseHistory.length > 0 && (
+          <div className="mt-2 pt-1 border-t border-gray-800/60 flex items-center space-x-2 text-[10px] font-mono text-gray-400 overflow-x-auto">
+            <span className="text-gray-500 font-bold whitespace-nowrap">LAST WIRE REPLIES:</span>
+            {txResponseHistory.slice(0, 3).map((r, i) => (
+              <span key={i} className="px-1.5 py-0.5 bg-black/50 border border-gray-800 rounded whitespace-nowrap">
+                <b className={theme.textPrimary}>{r.cmd}</b> &rarr; {r.reply}
+              </span>
+            ))}
+          </div>
+        )}
       </footer>
     </div>
   );

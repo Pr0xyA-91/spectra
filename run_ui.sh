@@ -3,8 +3,17 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/web"
 
+# Start Python hardware API server on port 8080 in background if not already running
+if ! ss -tulpn | grep -q ":8080 "; then
+    echo "[*] Starting SPECTRA Hardware REST API Server on http://127.0.0.1:8080 ..."
+    python3 "$SCRIPT_DIR/web_server.py" &
+    SERVER_PID=$!
+    trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+    sleep 0.8
+fi
+
+cd "$SCRIPT_DIR/web"
 MODE="${1:---dev}"
 
 if [ "$MODE" = "--build" ] || [ ! -d "dist" ]; then
@@ -12,12 +21,12 @@ if [ "$MODE" = "--build" ] || [ ! -d "dist" ]; then
     npm run build
 fi
 
-if [ "$MODE" = "--preview" ] || [ "$MODE" = "--prod" ]; then
-    echo "[*] Launching Production Preview at http://127.0.0.1:5173 ..."
-    (sleep 1 && (xdg-open "http://127.0.0.1:5173" 2>/dev/null || true)) &
-    exec npm run preview -- --host 127.0.0.1 --port 5173
+if [ "$MODE" = "--prod" ] || [ "$MODE" = "--preview" ]; then
+    echo "[*] Launching Production Interface at http://127.0.0.1:8080 ..."
+    (sleep 1 && (xdg-open "http://127.0.0.1:8080" 2>/dev/null || true)) &
+    wait $SERVER_PID
 else
-    echo "[*] Launching SPECTRA Interactive UI Workspace at http://127.0.0.1:5173 ..."
+    echo "[*] Launching SPECTRA Interactive Dev Workspace at http://127.0.0.1:5173 ..."
     (sleep 1 && (xdg-open "http://127.0.0.1:5173" 2>/dev/null || true)) &
     exec npm run dev -- --host 127.0.0.1 --port 5173
 fi
