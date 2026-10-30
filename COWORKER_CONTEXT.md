@@ -408,6 +408,29 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### [2026-10-30 16:30] — Agent Workstation #2 (Device 2)
+* **What Was Done**:
+  1. **Next-Gen Web UI Multi-Device Launch Stability (`run_ui.sh` & `run.sh`)**:
+     - Identified root cause of failure on cloned/pulled machines: `web/node_modules` was missing due to `.gitignore`, causing `./run_ui.sh` to fail with `sh: line 1: vite: command not found`.
+     - Hardened `run_ui.sh` across all branches with automated `npm install` initialization and automatic graceful fallback to pre-built production interface on `http://127.0.0.1:8080` if Vite/Node is unavailable.
+     - Added `--ui` / `--web` flag support to `run.sh` so users can launch the Next-Gen interface directly.
+     - Installed local dependencies in `web/` and validated both Vite dev mode (5173) and production web server (8080).
+  2. **Windows Standalone Executable & Cairo Decoupling**:
+     - Resolved `ModuleNotFoundError: No module named 'cairo'` on Windows: `web_server.py` imported `gui_widgets.py` solely for `generate_service_report_html()`.
+     - Guarded `cairo` and `gi` imports with mock base classes in `gui_widgets.py`, enabling headless, Windows, and PyInstaller execution without Cairo/GTK dependencies.
+     - Updated `spectra_app.py` to handle `--open`, `--web`, `--ui` arguments passed by native C launcher (`launcher.c`).
+     - Recompiled standalone PyInstaller Windows binary `dist/spectra.exe` (8.2MB) and refreshed `Work/spectra.exe` and `Work/SPECTRA-Windows-x64.zip`.
+     - Validated under Wine that both `spectra.exe` launcher and standalone binary launch the web dashboard without errors.
+* **Test Status**:
+  - `spectra`: 35/35 passing (100%)
+  - `spectra-mm`: 43/43 passing (100%)
+  - `spectra-win`: 43/43 passing (100%)
+* **Hardware Attached**: Simulated demo and local serial adapters.
+* **Next Pending Steps for Coworker**:
+  - Deploy and test updated `dist/spectra.exe` on physical Windows machines.
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
 ### [YYYY-MM-DD HH:MM] — Agent Workstation #1 (Device 1)

@@ -26,17 +26,33 @@ fi
 cd "$PROJECT_DIR/web"
 MODE="${1:---dev}"
 
+# If running in dev mode, ensure dependencies exist; otherwise fall back to production bundle
+if [ "$MODE" = "--dev" ]; then
+    if [ ! -d "node_modules" ]; then
+        if command -v npm >/dev/null 2>&1; then
+            echo "[*] Installing web dependencies for dev workspace..."
+            npm install || true
+        fi
+    fi
+    if [ ! -x "./node_modules/.bin/vite" ]; then
+        echo "[!] Vite dev dependencies not available. Launching pre-built production UI..."
+        MODE="--prod"
+    fi
+fi
+
 if [ "$MODE" = "--build" ] || [ ! -d "dist" ]; then
-    echo "[*] Building production bundle..."
-    npm run build
+    if command -v npm >/dev/null 2>&1 && [ -d "node_modules" ]; then
+        echo "[*] Building production bundle..."
+        npm run build || true
+    fi
 fi
 
 if [ "$MODE" = "--prod" ] || [ "$MODE" = "--preview" ]; then
     echo "[*] Launching Production Interface at http://127.0.0.1:8080 ..."
-    (sleep 1 && (xdg-open "http://127.0.0.1:8080" 2>/dev/null || true)) &
+    (sleep 0.8 && (xdg-open "http://127.0.0.1:8080" 2>/dev/null || sensible-browser "http://127.0.0.1:8080" 2>/dev/null || true)) &
     wait $SERVER_PID
 else
     echo "[*] Launching SPECTRA Interactive Dev Workspace at http://127.0.0.1:5173 ..."
-    (sleep 1 && (xdg-open "http://127.0.0.1:5173" 2>/dev/null || true)) &
+    (sleep 0.8 && (xdg-open "http://127.0.0.1:5173" 2>/dev/null || sensible-browser "http://127.0.0.1:5173" 2>/dev/null || true)) &
     exec npm run dev -- --host 127.0.0.1 --port 5173
 fi

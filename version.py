@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 __version__ = "0.6.0-alpha"
-__build__ = "20261030.1515"
+__build__ = "20261030.1630"
 __edition__ = "Windows Edition"
 
 

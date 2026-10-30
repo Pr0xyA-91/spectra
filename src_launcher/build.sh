@@ -61,8 +61,8 @@ echo "[*] Compiling PE32+ executable with zig..."
 rm -f "$SCRIPT_DIR/resources.res"
 
 mkdir -p "$ROOT_DIR/bin"
-cp "$ROOT_DIR/spectra.exe" "$ROOT_DIR/bin/spectra_build20261030.1515.exe"
+cp "$ROOT_DIR/spectra.exe" "$ROOT_DIR/bin/spectra_build20261030.1630.exe"
 cp "$ROOT_DIR/spectra.exe" "$ROOT_DIR/bin/spectra.exe"
 
 echo "[✓] Standalone Windows executable compiled successfully:"
-ls -lh "$ROOT_DIR/spectra.exe" "$ROOT_DIR/bin/spectra_build20261030.1515.exe"
+ls -lh "$ROOT_DIR/spectra.exe" "$ROOT_DIR/bin/spectra_build20261030.1630.exe"

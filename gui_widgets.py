@@ -9,16 +9,36 @@ Provides:
 - DiagnosticAdvisorWidget: Heuristic health analysis, smart alerts, and field service checklist.
 """
 
+from __future__ import annotations
+
 import math
 import html
 import collections
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
-import cairo
-import gi
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib, Pango
+try:
+    import cairo
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk, GLib, Pango
+    HAS_GTK = True
+except (ImportError, ValueError, Exception):
+    class _MockCairo:
+        class Context: pass
+        class ImageSurface: pass
+        class Format:
+            ARGB32 = 0
+            RGB24 = 1
+    cairo = _MockCairo()
+    HAS_GTK = False
+    class _MockGtk:
+        class DrawingArea: pass
+        class Box: pass
+    Gtk = _MockGtk()
+    Gdk = None
+    GLib = None
+    Pango = None
 
 try:
     from version import __version__, __build__

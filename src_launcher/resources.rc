@@ -21,8 +21,8 @@ BEGIN
             VALUE "LegalCopyright",   "Copyright (c) 2026 SPECTRA Contributors (MIT License)"
             VALUE "OriginalFilename", "spectra.exe"
             VALUE "ProductName",      "SPECTRA Universal Diagnostics"
-            VALUE "ProductVersion",   "v0.6.0-alpha (build 20261030.1515)"
-            VALUE "BuildNumber",      "20261030.1515"
+            VALUE "ProductVersion",   "v0.6.0-alpha (build 20261030.1630)"
+            VALUE "BuildNumber",      "20261030.1630"
         END
     END
     BLOCK "VarFileInfo"

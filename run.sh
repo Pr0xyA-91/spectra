@@ -18,6 +18,11 @@ if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER
     exec newgrp uucp -c "$cmd"
 fi
 
+# Check if user requested Web / Next-Gen UI
+if [[ "$*" == *"--ui"* ]] || [[ "$*" == *"--web"* ]]; then
+    exec "$PROJECT_DIR/run_ui.sh" "$@"
+fi
+
 # Check if user requested CLI mode or help
 if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]]; then
     python3 "$PROJECT_DIR/cli.py" "$@"
