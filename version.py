@@ -13,8 +13,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "0.5.1"
-__build__ = "20261029.1642"
+__version__ = "0.6.0-alpha"
+__build__ = "20261030.1515"
 __edition__ = "Main (Linux Jura)"
 
 
