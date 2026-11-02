@@ -65,10 +65,16 @@ def list_serial_ports() -> List[str]:
             ports.append(tty)
 
     # Always provide Demo / Simulation option
+    ports.append("DEMO / SIMULATION (Jura Impressa XJ5)")
+    ports.append("DEMO / SIMULATION (Jura Z6)")
     ports.append("DEMO / SIMULATION (Jura S8)")
+    ports.append("DEMO / SIMULATION (Jura S8 Smart Connect)")
+    ports.append("DEMO / SIMULATION (Jura WE8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
-    ports.append("DEMO / SIMULATION (Jura S8 Smart Connect)")
+    ports.append("DEMO / SIMULATION (Nivona NICR768)")
+    ports.append("DEMO / SIMULATION (Lamanti-KL X680C)")
+    ports.append("DEMO / SIMULATION (Lamanti-JN JL300)")
     return ports
 
 
@@ -76,7 +82,10 @@ class JuraSerialConnection:
     """Universal serial transceiver interface for Jura diagnostics."""
 
     def __init__(self, port_name: str, baudrate: int = 9600, timeout: float = 1.5):
-        self.port_name = port_name
+        # Extract pure COM port if description is appended, e.g. "COM3 (USB-Serial)"
+        clean_port = port_name.split()[0] if port_name and port_name.upper().startswith("COM") else port_name
+        self.port_name = clean_port
+        self.raw_port_label = port_name
         self.baudrate = baudrate
         self.timeout = timeout
         self.is_demo = "DEMO" in port_name.upper() or port_name.lower() in ("mock", "demo")
@@ -86,24 +95,185 @@ class JuraSerialConnection:
         self.is_open = False
 
         if self.is_demo:
-            if "Z10" in port_name.upper():
+            p_up = port_name.upper()
+            if any(k in p_up for k in ("NIVONA", "NICR", "NIVO")):
+                self.demo_vendor = "nivona"
+            elif any(k in p_up for k in ("LAMANTI-KL", "X680", "KALERM", "E30", "E60", "K95")):
+                self.demo_vendor = "lamanti-kl"
+            elif any(k in p_up for k in ("LAMANTI-JN", "JL300", "JL500", "JETINNO", "JLTT")):
+                self.demo_vendor = "lamanti-jn"
+            else:
+                self.demo_vendor = "jura"
+
+            if "XJ5" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF518M V02.20", model_name="IMPRESSA XJ5")
+            elif "Z6" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF540M V01.22", model_name="Z6")
+            elif "Z10" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF545 V01.20", model_name="Z10")
-            elif "E8" in port_name.upper():
+            elif "WE8" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF533M V02.09", model_name="WE8")
+            elif "E8" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
+            elif "D4" in port_name.upper():
+                self.mock_machine = MockJuraMachine(model_ef="EF529M V01.02", model_name="D4")
+            elif "A1" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF509M V01.26", model_name="A1")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
+            self._init_mock_eeprom()
             self.is_open = True
         else:
+            self.demo_vendor = "hardware"
             self._open_hardware_port()
 
+    def _init_mock_eeprom(self):
+        """Initialize complete simulated EEPROM for offline demo & developer differential testing."""
+        if "WE8" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(1024)}
+            # Maintenance registers
+            self._mock_eeprom[0x0007] = 2268  # Coffee system rinsing
+            self._mock_eeprom[0x0008] = 74    # Cleaning
+            self._mock_eeprom[0x0009] = 0     # Descaling
+            self._mock_eeprom[0x0020] = 775   # Milk system rinsing
+            self._mock_eeprom[0x0021] = 377   # Milk system cleaning
+            self._mock_eeprom[0x0022] = 29    # Filter change
+            # Article number 15420 (0x3C3C)
+            self._mock_eeprom[0x007E] = 0x3C00
+            self._mock_eeprom[0x007F] = 0x3C00
+            # Cockpit percentages
+            self._mock_eeprom[0x0162] = 0x0000  # Descaling 0%
+            self._mock_eeprom[0x0163] = 0x1E1E  # Cleaning 30%
+            self._mock_eeprom[0x01E1] = 0x000A  # Filter 10%
+            # Beverage statistics
+            self._mock_eeprom[0x017F] = 75    # Hot water for green tea
+            self._mock_eeprom[0x0180] = 1450  # Espresso
+            self._mock_eeprom[0x0181] = 137   # Ristretto
+            self._mock_eeprom[0x0182] = 7233  # Coffee
+            self._mock_eeprom[0x0183] = 117   # Flat white
+            self._mock_eeprom[0x0184] = 390   # Cappuccino
+            self._mock_eeprom[0x0185] = 50    # Latte macchiato
+            self._mock_eeprom[0x0186] = 10    # Product with ground coffee
+            self._mock_eeprom[0x0187] = 72    # Portion of milk
+            self._mock_eeprom[0x0188] = 183   # Hot water
+            self._mock_eeprom[0x0189] = 176   # 2 x Espresso
+            self._mock_eeprom[0x018A] = 4     # 2 x Ristretto
+            self._mock_eeprom[0x018B] = 20    # 2 x Coffee
+            self._mock_eeprom[0x018C] = 5     # 2 x Special coffee
+            self._mock_eeprom[0x018D] = 901   # Special coffee
+            self._mock_eeprom[0x018E] = 31    # Macchiato
+            self._mock_eeprom[0x018F] = 354   # Espresso doppio
+            return
+
+        if "A1" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(256)}
+            self._mock_eeprom[0x0002] = 1954   # Single Coffee
+            self._mock_eeprom[0x0004] = 2234   # Single Espresso
+            self._mock_eeprom[0x0006] = 477    # Single Ristretto
+            self._mock_eeprom[0x0007] = 4618   # Rinses
+            self._mock_eeprom[0x0008] = 30     # Cleanings
+            self._mock_eeprom[0x0009] = 7      # Descalings
+            self._mock_eeprom[0x000A] = 10590  # Grinder operating seconds (2h 56m 30s)
+            self._mock_eeprom[0x0010] = 8287   # Water dispensed (828.7 dl)
+            self._mock_eeprom[0x0012] = 48     # Descaling agent (4.8 dl)
+            self._mock_eeprom[0x0014] = 90     # Filter changes
+            self._mock_eeprom[0x0015] = 5043   # Service counter (preparations since last service)
+            self._mock_eeprom[0x0030] = 45753  # Appliance Number (0xB2B9)
+            self._mock_eeprom[0x0031] = 450    # Serial Word (0x01C2)
+            self._mock_eeprom[0x0032] = 14219  # Production Date: 11.12.2017 (0x378B)
+            self._mock_eeprom[0x007E] = 0x3B00 # Article Number High byte (0x3B)
+            self._mock_eeprom[0x007F] = 0x1D00 # Article Number Low byte (0x1D) -> 15133
+            self._mock_eeprom[0x00C3] = 0x027C # Water Hardness (40 °dH)
+            return
+
+        if "D4" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(1024)}
+            self._mock_eeprom[0x0007] = 15105  # Rinses
+            self._mock_eeprom[0x0008] = 85     # Cleanings
+            self._mock_eeprom[0x0009] = 30     # Descalings
+            self._mock_eeprom[0x000A] = 28672  # Grinder operating seconds
+            self._mock_eeprom[0x000E] = 1      # Filter changes
+            self._mock_eeprom[0x0010] = 29074  # Water dispensed (dl)
+            self._mock_eeprom[0x0011] = 14     # Water hardness (°dH)
+            self._mock_eeprom[0x0012] = 143    # Descaling agent (dl)
+            self._mock_eeprom[0x0015] = 11851  # Service counter
+            self._mock_eeprom[0x0030] = 52772  # Appliance Number
+            self._mock_eeprom[0x0031] = 2      # Serial Word
+            self._mock_eeprom[0x0032] = 15088  # Production Date: 16.07.2019
+            self._mock_eeprom[0x0041] = 230    # BU Mill Target
+            self._mock_eeprom[0x0047] = 1296   # BU Upper Limit
+            self._mock_eeprom[0x0056] = 37     # BU Init count
+            self._mock_eeprom[0x0330] = 2061   # Single Espresso
+            self._mock_eeprom[0x0331] = 9755   # Single Coffee
+            self._mock_eeprom[0x0332] = 2      # 2 Espressi
+            self._mock_eeprom[0x0333] = 3      # 2 Coffee
+            self._mock_eeprom[0x0334] = 7      # Hot water
+            return
+
+        self._mock_eeprom = {i: 0x0000 for i in range(512)}
+        # Block seeds matching real machine captures
+        seeds = {
+            0x0000: "000010A747450000025F15F500000E1900A600266DFB00000000000000000000",
+            0x0010: "B0940000018700000001703A00000000000000000000000000000000000001FB",
+            0x0020: "00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E",
+            0x0030: "466000332EBE2996000000000000000000001E6F046E5028180F001401040276",
+            0x0040: "050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
+        }
+        for blk, hex_str in seeds.items():
+            for i in range(16):
+                w_hex = hex_str[i * 4: i * 4 + 4]
+                self._mock_eeprom[blk + i] = int(w_hex, 16)
+
+        # Pre-seed other known registers
+        self._mock_eeprom[0x0045] = 0x0048
+        self._mock_eeprom[0x0055] = 0x2801
+        self._mock_eeprom[0x00C3] = 0x1E32
+        self._mock_eeprom[0x00DA] = 0x435A
+        self._mock_eeprom[0x00DB] = 0x2F4C
+        self._mock_eeprom[0x00DC] = 0x2D8C
+        self._mock_eeprom[0x00E9] = 0x0000
+        self._mock_eeprom[0x00EA] = 0x0007
+        self._mock_eeprom[0x0015] = 0x703A
+        self._mock_eeprom[0x00B4] = 0x050A
+        self._mock_eeprom[0x00B5] = 0x040A
+        self._mock_eeprom[0x00B9] = 0x0050
+        self._mock_eeprom[0x00BA] = 0x0078
+        self._mock_eeprom[0x00BB] = 0x0096
+        self._mock_eeprom[0x00A9] = 0x0102
+
+    def set_mock_eeprom_word(self, addr: int, val: int):
+        """Developer/testing utility to update a simulated EEPROM register."""
+        if hasattr(self, "_mock_eeprom"):
+            self._mock_eeprom[addr & 0x03FF] = val & 0xFFFF
+
+    def get_mock_eeprom_word(self, addr: int) -> int:
+        """Developer/testing utility to inspect a simulated EEPROM register."""
+        if hasattr(self, "_mock_eeprom"):
+            return self._mock_eeprom.get(addr & 0x03FF, 0)
+        return 0
+
     def _open_hardware_port(self):
-        if not os.path.exists(self.port_name):
+        is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith("COM")
+        if not is_windows and not os.path.exists(self.port_name):
             raise FileNotFoundError(f"Serial port {self.port_name} does not exist.")
 
         # Prefer native POSIX termios on Linux
-        if HAS_TERMIOS:
+        if HAS_TERMIOS and not is_windows:
             try:
                 self.fd = os.open(self.port_name, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+                # Exclusive file lock to prevent multiple processes interleaving wire bytes
+                lock_deadline = time.time() + 1.5
+                locked = False
+                while time.time() < lock_deadline:
+                    try:
+                        fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        locked = True
+                        break
+                    except (BlockingIOError, IOError):
+                        time.sleep(0.05)
+                if not locked:
+                    raise IOError(f"Serial port {self.port_name} is locked by another SPECTRA process.")
+
                 attrs = termios.tcgetattr(self.fd)
                 # iflag: Raw input, ignore break condition
                 attrs[0] = termios.IGNBRK
@@ -131,7 +301,10 @@ class JuraSerialConnection:
                 return
             except Exception as e:
                 if self.fd is not None:
-                    os.close(self.fd)
+                    try:
+                        os.close(self.fd)
+                    except OSError:
+                        pass
                     self.fd = None
                 if not HAS_PYSERIAL:
                     raise IOError(f"Failed to configure serial port {self.port_name}: {e}")
@@ -157,11 +330,32 @@ class JuraSerialConnection:
             raise IOError("Serial port is not open.")
 
         if self.is_demo:
-            # Route directly to Mock device
+            if getattr(self, "demo_vendor", "jura") == "lamanti-kl":
+                import struct
+                from drivers.lamanti_kl.driver import calculate_modbus_crc
+                if len(data) >= 8 and data[1] == 0x04:
+                    reg_count = struct.unpack(">H", data[4:6])[0]
+                    byte_count = reg_count * 2
+                    payload = struct.pack(">HHHHH", 3, 93, 125, 150, 0x00FF)
+                    if byte_count > len(payload):
+                        payload += b"\x00" * (byte_count - len(payload))
+                    else:
+                        payload = payload[:byte_count]
+                    hdr = struct.pack(">BBB", 0x01, 0x04, byte_count) + payload
+                    self._demo_reply_buffer = hdr + calculate_modbus_crc(hdr)
+                return len(data)
+            elif getattr(self, "demo_vendor", "jura") == "lamanti-jn":
+                import struct
+                from drivers.lamanti_jn.driver import calculate_jetinno_crc
+                if len(data) >= 6 and data[0] == 0xFE and data[3] == 0x14:
+                    body = struct.pack(">BBBBBBBB", 0xFE, 0x01, 0x00, 0x14, 0x00, 0x04, 0x02, 0x00) + bytes([93, 88])
+                    self._demo_reply_buffer = body + calculate_jetinno_crc(body)
+                return len(data)
+            # Route directly to Mock Jura device
             self._demo_reply_buffer = self.mock_machine.process_input(data)
             return len(data)
 
-        if self.fd is not None:
+        if self.fd is not None and HAS_TERMIOS:
             written = os.write(self.fd, data)
             # Drain output buffer
             termios.tcdrain(self.fd)
@@ -210,7 +404,7 @@ class JuraSerialConnection:
             self._demo_reply_buffer = b""
             return
         time.sleep(0.04)
-        if self.fd is not None:
+        if self.fd is not None and HAS_TERMIOS:
             while select.select([self.fd], [], [], 0.04)[0]:
                 try:
                     os.read(self.fd, 1024)
@@ -232,75 +426,78 @@ class JuraSerialConnection:
         cmd_clean = cmd.strip()
 
         if self.is_demo:
-            if "SMART CONNECT" in self.port_name.upper() or "S8-SC" in self.port_name.upper():
-                return None
             time.sleep(0.02)
+            vendor = getattr(self, "demo_vendor", "jura")
+            if vendor in ("lamanti-kl", "lamanti-jn") or "SMART CONNECT" in self.port_name.upper():
+                return None
+            if vendor == "nivona":
+                if cmd_clean == "TY:":
+                    return "ty:NICR 0698 V01.04"
+                elif cmd_clean == "HZ:":
+                    return "hz:000000000000,0280,0000,0000,0000,0000,0,000000,0000,00"
+                elif cmd_clean == "RT:0002":
+                    return "rt:01720000"
+                return None
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"
             elif cmd_clean == "TL:":
+                if "WE8" in self.port_name.upper():
+                    return "tl:BL_RL78 V01.31"
+                elif "D4" in self.port_name.upper():
+                    return "tl:BL_RL78 V01.30"
+                elif "A1" in self.port_name.upper():
+                    return "tl:R8C Loader V1.04"
                 return "tl:R8Cx Loader V01.00"
             elif cmd_clean == "TY$:":
+                if "WE8" in self.port_name.upper():
+                    return "ty$:EF533D V02.04"
+                if "D4" in self.port_name.upper() or "A1" in self.port_name.upper():
+                    return None
                 return f"ty$:{self.mock_machine.model_ef.replace('M', 'D')}"
             elif cmd_clean == "TL$:":
+                if "D4" in self.port_name.upper() or "A1" in self.port_name.upper():
+                    return None
                 return "tl$:SubLoader V01.00"
             elif cmd_clean == "CS$:":
+                if "D4" in self.port_name.upper() or "A1" in self.port_name.upper():
+                    return None
                 return "cs$:1A2B"
             elif cmd_clean == "IC:":
+                if "WE8" in self.port_name.upper():
+                    return "ic:1389"
+                elif "D4" in self.port_name.upper():
+                    return "ic:5700"
+                elif "A1" in self.port_name.upper():
+                    return "ic:AC03"
                 return "ic:230A"
-            elif cmd_clean == "RT:0000":
-                return "rt:000010A747450000025F15F500000E1900A600266DFB00000000000000000000"
-            elif cmd_clean == "RT:0010":
-                return "rt:B0940000018700000001703A00000000000000000000000000000000000001FB"
-            elif cmd_clean == "RT:0020":
-                return "rt:00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E"
-            elif cmd_clean == "RT:0030":
-                return "rt:466000332EBE2996000000000000000000001E6F046E5028180F001401040276"
-            elif cmd_clean == "RT:0040":
-                return "rt:050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
-            elif cmd_clean == "RE:0030":
-                return "re:4660"
-            elif cmd_clean == "RE:0031":
-                return "re:0033"
-            elif cmd_clean == "RE:0032":
-                return "re:2EBE"
-            elif cmd_clean == "RE:0015":
-                return "re:703A"
-            elif cmd_clean == "RE:00DA":
-                return "re:435A"
-            elif cmd_clean == "RE:00DB":
-                return "re:2F4C"
-            elif cmd_clean == "RE:00DC":
-                return "re:2D8C"
-            elif cmd_clean == "RE:00E9":
-                return "re:0000"
-            elif cmd_clean == "RE:00EA":
-                return "re:0007"
             elif cmd_clean == "HZ:":
                 if "Z10" in self.port_name.upper():
                     # Dual heater demo model (Coffee: 94.2°C, Steam: 135.0°C)
                     return "hz:010001100000,027E,00E2,0000,03AE,0546,4,000000,0000,00"
+                elif "XJ5" in self.port_name.upper() or "Z6" in self.port_name.upper():
+                    # Dual heater demo model (Coffee: 92.4°C [0x039C], Steam: 135.0°C [0x0546])
+                    return "hz:010001100000,027E,00E2,0000,039C,0546,4,000000,0000,00"
                 else:
                     # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
                     return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
             elif cmd_clean == "AS:":
                 # Optical Bean Hopper Sensor (Ambient ADC: 0x0645 = 1605, Reflected IR ADC: 0x061C = 1564 -> Beans OK)
                 return "as:077206450000,0772061C0001"
-            elif cmd_clean == "RE:0028":
-                return "re:0000"
-            elif cmd_clean == "RE:0029":
-                return "re:0010"
-            elif cmd_clean == "RE:0045":
-                return "re:0048"
-            elif cmd_clean == "RE:0055":
-                return "re:2801"
-            elif cmd_clean == "RE:00C3":
-                return "re:1E32"
-            elif cmd_clean in ("RE:01B0", "RE:01B1", "RE:01B2", "RE:01B3", "RE:01B4", "RE:01B5", "RE:01B6", "RE:0103"):
-                return "re:0000"
             elif cmd_clean.startswith("RT:"):
-                return "rt:0000000000000000000000000000000000000000000000000000000000000000"
+                try:
+                    blk = int(cmd_clean[3:], 16)
+                    words = [self._mock_eeprom.get(blk + i, 0) for i in range(16)]
+                    return "rt:" + "".join(f"{w:04X}" for w in words)
+                except Exception:
+                    return "rt:" + "0000" * 16
             elif cmd_clean.startswith("RE:"):
-                return "re:0000"
+                try:
+                    addr = int(cmd_clean[3:], 16)
+                    val = self._mock_eeprom.get(addr, 0)
+                    return f"re:{val:04X}"
+                except Exception:
+                    return "re:0000"
+            return None
             return None
 
         self.drain_rx()
@@ -315,6 +512,8 @@ class JuraSerialConnection:
             chunk = self.read(max_bytes=256, timeout_sec=0.05)
             if chunk:
                 rx.extend(chunk)
+                if len(rx) > 4096:
+                    break
                 if b"\r\n" in rx:
                     lines = [l.strip().decode("latin1", errors="ignore") for l in rx.split(b"\r\n")]
                     complete_lines = lines[:-1]
@@ -337,6 +536,11 @@ class JuraSerialConnection:
     def close(self):
         """Close connection cleanly."""
         if self.fd is not None:
+            if HAS_TERMIOS:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
             try:
                 os.close(self.fd)
             except Exception:
@@ -359,4 +563,5 @@ class JuraSerialConnection:
 
 # Universal Alias for multi-vendor abstraction
 DirectSerialConnection = JuraSerialConnection
+
 

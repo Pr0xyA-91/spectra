@@ -145,13 +145,18 @@ def decode_encrypted_frame(frame: bytes) -> Optional[str]:
 # 3. Protocol Parser Helpers
 # ============================================================================
 
+_RE_TR32 = re.compile(r"^@tr:32,([0-9A-Fa-f]{2}),([0-9A-Fa-f]+)$")
+_RE_TG43 = re.compile(r"^@tg:43([0-9A-Fa-f]+)$")
+_RE_TG47 = re.compile(r"^@tg:47([0-9A-Fa-f]+)$")
+_RE_AN_ALERTS = re.compile(r"^@an:00([0-9A-Fa-f]+)$")
+
 def parse_tr32(plain: str) -> Optional[Tuple[int, List[int]]]:
     """
     Parse @tr:32,NN,WWWWWWWWWWWWWWWW
     Returns (bank_number, [word0, word1, word2, word3])
     """
     clean = plain.strip()
-    m = re.match(r"^@tr:32,([0-9A-Fa-f]{2}),([0-9A-Fa-f]+)$", clean)
+    m = _RE_TR32.match(clean)
     if not m:
         return None
     bank = int(m.group(1), 16)
@@ -168,7 +173,7 @@ def parse_tg43(plain: str) -> Optional[List[int]]:
     Parse @tg:43WWWWWWWWWWWW... (6 16-bit words for maintenance counters)
     """
     clean = plain.strip()
-    m = re.match(r"^@tg:43([0-9A-Fa-f]+)$", clean)
+    m = _RE_TG43.match(clean)
     if not m:
         return None
     hex_str = m.group(1)
@@ -252,6 +257,8 @@ class MockJuraMachine:
 
     def process_input(self, raw_bytes: bytes) -> bytes:
         """Feed incoming wire bytes from client and return wire reply bytes."""
+        if len(self.rx_buffer) > 4096:
+            self.rx_buffer = self.rx_buffer[-1024:]
         self.rx_buffer.extend(raw_bytes)
         tx_out = bytearray()
 

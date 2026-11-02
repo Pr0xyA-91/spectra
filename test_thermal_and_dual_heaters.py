@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unit and integration tests for temperature decoding, operational thermal evaluation,
-and dual-heater thermoblock accommodation in W.R.A.T. (Jura Module).
+and dual-heater thermoblock accommodation in SPECTRA (Jura Module).
 """
 
 import sys
@@ -276,11 +276,11 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
 
-        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0700 (1792 decimal > 1680)
+        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0718 (1816 decimal > 1688 -> delta = 128 >= 120)
         def mock_query_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077206980000,077207000001"
+                return "as:077206980000,077207180001"
             elif cmd_c == "HZ:":
                 # Machine heated, tray inserted, water present, cake thickness = 14 ticks (empty grind)
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
@@ -338,6 +338,132 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertTrue(opt_sensor["ok"])
         self.assertIn("Reflected IR ADC: 1564", opt_sensor["details"])
 
+    def test_bean_hopper_fast_poll_telemetry(self):
+        """Test continuous fast-poll bean hopper detection from active AS: sensor query."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
+
+        # 1. Fast poll with hopper empty (AS: delta = 128 >= 120)
+        def mock_query_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206980000,077207180001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query_empty
+
+        res_empty = sc.query_live_sensors("mock_fast_bean", conn=conn, fast_poll=True)
+        sw_empty = {s["id"]: s for s in res_empty["switches"]}
+        self.assertFalse(res_empty["telemetry"]["beans_ok"])
+        self.assertFalse(sw_empty["bean_hopper"]["ok"])
+        self.assertEqual(sw_empty["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertFalse(sw_empty["machine_ready"]["ok"])
+        self.assertEqual(sw_empty["machine_ready"]["badge"], "FILL BEANS")
+        self.assertEqual(sw_empty["machine_ready"]["status"], "Not Ready (Fill Beans)")
+        self.assertIn("Fill Beans", [a["name"] for a in res_empty["alerts"]])
+
+        # 2. Fast poll with hopper charged (AS: on_adc = 1564 < 1710)
+        conn_full = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query_full = conn_full.query_ascii
+
+        def mock_query_full(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206450000,0772061C0001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query_full(cmd, timeout=timeout)
+        conn_full.query_ascii = mock_query_full
+
+        res_full = sc.query_live_sensors("mock_fast_bean", conn=conn_full, fast_poll=True)
+        sw_full = {s["id"]: s for s in res_full["switches"]}
+        self.assertTrue(res_full["telemetry"]["beans_ok"])
+        self.assertTrue(sw_full["bean_hopper"]["ok"])
+        self.assertEqual(sw_full["bean_hopper"]["badge"], "NORMAL")
+        self.assertTrue(sw_full["machine_ready"]["ok"])
+        self.assertEqual(sw_full["machine_ready"]["badge"], "READY")
+
+    def test_optical_bean_sensor_ambient_light_and_standby_tolerance(self):
+        """Test that optical bean detection uses ambient-compensated delta and ignores standby noise."""
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+
+        # Case 1: High ambient room light (e.g. hopper lid open under bright light):
+        # off_adc = 2244, on_adc = 2328 -> delta = 84 counts (beans present, absorbed IR)
+        # Even though on_adc > 1700 (2328), delta <= 89 correctly identifies beans present!
+        def mock_ambient(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077308C40000,077309180001"  # 0x08C4=2244, 0x0918=2328 -> delta=84
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+            return ""
+        conn.query_ascii = mock_ambient
+
+        res_amb = sc.query_live_sensors("mock_amb", conn=conn, fast_poll=True)
+        self.assertTrue(res_amb["telemetry"]["beans_ok"])
+        sw_amb = {s["id"]: s for s in res_amb["switches"]}
+        self.assertTrue(sw_amb["bean_hopper"]["ok"])
+        self.assertEqual(sw_amb["bean_hopper"]["badge"], "NORMAL")
+
+        # Case 2: Machine enters standby (floating unpowered ADC noise: off=6103, on=6467 > 3500)
+        # Should reject invalid ADCs and preserve cached beans_ok=True
+        def mock_standby(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077317D70000,077319430001"  # Floating standby noise
+            elif cmd_c == "HZ:":
+                return "hz:000000100000,028A,00E6,0000,0202,0802,3,000000,0000,10"
+            return ""
+        conn.query_ascii = mock_standby
+
+        res_sb = sc.query_live_sensors("mock_standby", conn=conn, fast_poll=True)
+        self.assertTrue(res_sb["telemetry"]["beans_ok"])
+        sw_sb = {s["id"]: s for s in res_sb["switches"]}
+        self.assertTrue(sw_sb["bean_hopper"]["ok"])
+
+        # Case 3: Empty hopper bare terminal reflection (delta >= 120, e.g. 128)
+        conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206980000,077207180001"  # 0x0698=1688, 0x0718=1816 -> delta=128 >= 120
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+            return ""
+        conn_empty.query_ascii = mock_empty
+
+        res_emp = sc.query_live_sensors("mock_empty", conn=conn_empty, fast_poll=True)
+        self.assertFalse(res_emp["telemetry"]["beans_ok"])
+        sw_emp = {s["id"]: s for s in res_emp["switches"]}
+        self.assertFalse(sw_emp["bean_hopper"]["ok"])
+        self.assertEqual(sw_emp["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertFalse(sw_emp["machine_ready"]["ok"])
+        self.assertEqual(sw_emp["machine_ready"]["badge"], "FILL BEANS")
+        self.assertTrue(any(a["name"] == "Fill Beans" for a in res_emp["alerts"]))
+
+        # Case 4: IMPRESSA XJ5 (EF518M) live operating condition:
+        # HZ[0][3] == '1' during thermal regulation, but hopper is filled with beans (delta=88 <= 92).
+        # Live invariant: Optical AS: is the ground truth. Beans MUST be reported OK and ready.
+        conn_xj5 = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_xj5(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077205C70000,0772061F0001"  # 0x05C7=1479, 0x061F=1567 -> delta=88 <= 92
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,0289,00E5,006D,03EE,0802,3,000000,001E,00"
+            return ""
+        conn_xj5.query_ascii = mock_xj5
+
+        res_xj5 = sc.query_live_sensors("mock_xj5", conn=conn_xj5, fast_poll=True)
+        self.assertTrue(res_xj5["telemetry"]["beans_ok"])
+        sw_xj5 = {s["id"]: s for s in res_xj5["switches"]}
+        self.assertTrue(sw_xj5["bean_hopper"]["ok"])
+        self.assertEqual(sw_xj5["bean_hopper"]["badge"], "NORMAL")
+        self.assertTrue(sw_xj5["machine_ready"]["ok"])
+        self.assertEqual(sw_xj5["machine_ready"]["badge"], "READY")
+
+
     def test_ascii_and_smart_connect_counter_mapping(self):
         """Test that ASCII EEPROM mode and Smart Connect mode map maintenance and beverage labels accurately."""
         # 1. ASCII EEPROM Demo (S8)
@@ -362,6 +488,125 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(maint_sc.get("Cleaning"), (184, 85))
         self.assertEqual(maint_sc.get("FilterChange"), (2, 25))
         self.assertEqual(maint_sc.get("Decalc"), (41, 95))
+
+    def test_optical_bean_calibration_and_dev_slider(self):
+        """Test optical bean sensor threshold calibration and dev branch UI toggle."""
+        # 1. Verify default calibration (nominal 115 counts)
+        sc.reset_optical_bean_threshold(save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
+        calib = sc.get_optical_bean_calibration()
+        self.assertEqual(calib["lower_bound"], 110)
+        self.assertEqual(calib["upper_bound"], 120)
+
+        # 2. Delta of 125 with default threshold (115) -> Empty (125 >= 120)
+        conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query = conn.query_ascii
+        def mock_query(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                # off_adc = 1600, on_adc = 1725 -> delta = 125
+                return "as:077206400000,077206BD0001"
+            elif cmd_c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query(cmd, timeout=timeout)
+        conn.query_ascii = mock_query
+
+        res_default = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
+        self.assertFalse(res_default["telemetry"]["beans_ok"])
+
+        # 3. Adjust threshold to 130 (bounds 125 / 135) -> Beans OK (125 <= 125)
+        sc.set_optical_bean_threshold(130, save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 130)
+        res_calib = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
+        self.assertTrue(res_calib["telemetry"]["beans_ok"])
+        self.assertEqual(res_calib["telemetry"]["optical_threshold"], 130)
+        self.assertEqual(res_calib["telemetry"]["optical_delta"], 125)
+
+        # 4. Reset threshold back to 115
+        sc.reset_optical_bean_threshold(save=False)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
+
+        # 5. Verify dev branch GUI slider availability (Linux GTK only)
+        try:
+            import gui
+        except (ImportError, Exception):
+            return  # Skip GUI check on Windows or environments without PyGObject
+        self.assertTrue(gui.is_dev_branch())
+        app = gui.JuraDiagApp()
+        self.assertTrue(hasattr(app, "card_dev_calib"))
+        self.assertEqual(app.scale_bean_threshold.get_value(), 115.0)
+
+        # Changing slider updates calibration
+        app.scale_bean_threshold.set_value(130.0)
+        self.assertEqual(sc.get_optical_bean_threshold(), 130)
+        app._on_reset_bean_calibration_clicked(None)
+        self.assertEqual(sc.get_optical_bean_threshold(), 115)
+        app.destroy()
+
+    def test_z5_two_digit_addressing_and_ean_decoding(self):
+        """Test Top-Tronic 8-bit EEPROM 2-digit addressing, Z5 Gen II identification, and full EAN generation."""
+        conn = serial_io.JuraSerialConnection(port_name="DEMO:Z5")
+
+        def mock_z5_query(cmd, timeout=1.0):
+            c = cmd.strip()
+            if c == "TY:":
+                return "ty:EF642M V01.12"
+            if c == "TY$:":
+                return "ty$:EF642D V01.04"
+            if c == "IC:":
+                return "ic:230V 50Hz"
+            if c == "RT:00":
+                return "rt:1ECB112605CE0023005D00D800023D3B005F001800000000000000000000003D"
+            if c == "RT:10":
+                return "rt:82F1000000E90000000013B70000000000000000000000000000000000000000"
+            if c == "RT:20":
+                return "rt:00000000003F0000000000000000000000000000000000000000000000000000"
+            if c == "RT:30":
+                return "rt:07DD000426B90000000000000000000000000000000000000000000000000000"
+            if c == "RT:E0":
+                # Doubles: 0xE0=91, 0xE1=345, 0xE2=11, 0xE3=1, 0xE4=6, 0xE5=3, 0xE9=0, 0xEA=9957 (0x26E5)
+                return "rt:005B0159000B000100060003000000000000000026E500000000000000000000"
+            if c == "RE:30":
+                return "re:07DD"
+            if c == "RE:31":
+                return "re:0004"
+            if c == "RE:32":
+                return "re:26B9"
+            if c == "RE:15":
+                return "re:13B7"
+            if c == "RE:E9":
+                return "re:0000"
+            if c == "RE:EA":
+                return "re:26E5"
+            if c == "HZ:":
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            if c == "AS:":
+                return "as:077206400000,077206450001"
+            return None
+
+        conn.query_ascii = mock_z5_query
+
+        session = sc.JuraStatsSession(port_name="mock_z5")
+        session.conn = conn
+        success = session.run_interrogation()
+        self.assertTrue(success)
+
+        summary = session.get_structured_summary()
+        telem = summary["telemetry"]
+
+        self.assertEqual(summary["machine_model"], "IMPRESSA Z5 Generation II")
+        self.assertEqual(telem["article_number"], "13356")
+        self.assertEqual(telem["serial_number"], "20090525002013")
+        self.assertEqual(telem["serial_number_word"], 4)
+        self.assertEqual(telem["appliance_number"], 2013)
+        self.assertEqual(telem["production_date"], "25.5.2009")
+        self.assertEqual(telem["appliance_code"], "07DD26B9")
+        self.assertEqual(telem["ean_code"], "(01)07610917133567(21)20090525002013")
+        self.assertEqual(telem["software_version_display"], "EF642D V01.04")
+        self.assertEqual(telem["total_preparations"], 14562)
+        self.assertEqual(telem["total_cups"], 15019)
+        self.assertEqual(telem["preparations_since_intervention"], 5047)
+        self.assertEqual(telem["cups_since_intervention"], 5062)
 
 
 if __name__ == "__main__":

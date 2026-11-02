@@ -1,0 +1,14 @@
+[package]
+name = "spectra-core"
+version = "0.1.0"
+edition = "2021"
+description = "Universal appliance diagnostic protocols, EEPROM parsers, and telemetry metrics"
+
+[dependencies]
+spectra-hal = { path = "../spectra-hal" }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

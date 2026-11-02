@@ -8,6 +8,7 @@ for over 75 modern Jura coffee machines.
 import os
 import re
 import json
+from typing import Optional, Dict, Any, List
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
 DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
@@ -143,7 +144,12 @@ def find_profile(raw_model_or_ef: str) -> dict:
     profiles = load_profiles()
     matched_profile = None
 
-    if profiles:
+    # 1. Direct match in model specifications (docs/models/*.json) by EF code or Article Number
+    spec = get_model_spec(raw_model_or_ef)
+    if spec:
+        matched_profile = dict(spec)
+
+    if profiles and matched_profile is None:
         # Extract EF code from string if prefixed
         m = re.search(r'(EF\w+)', raw_model_or_ef.upper())
         target = m.group(1) if m else raw_model_or_ef.strip().upper()
@@ -171,13 +177,19 @@ def find_profile(raw_model_or_ef: str) -> dict:
             if best_key:
                 matched_profile = dict(profiles[best_key])
 
-        # Check model family substring match
+        # Check model family match (exact match first, then word-boundary match)
         if matched_profile is None:
             for key, p in profiles.items():
                 fam = p.get("model_family", "")
-                if fam and fam.upper() in target:
+                if fam and fam.upper() == target:
                     matched_profile = dict(p)
                     break
+            if matched_profile is None:
+                for key, p in profiles.items():
+                    fam = p.get("model_family", "")
+                    if fam and re.search(r'\b' + re.escape(fam.upper()) + r'\b', target):
+                        matched_profile = dict(p)
+                        break
 
     if matched_profile is None:
         matched_profile = dict(DEFAULT_PROFILE)
@@ -185,8 +197,8 @@ def find_profile(raw_model_or_ef: str) -> dict:
     # Dynamic Enrichment: Merge model-specific specifications from docs/models/*.json if available
     spec = get_model_spec(raw_model_or_ef)
     if spec:
-        for k in ("hardware", "custom_registers", "recipe_buttons", "article_numbers"):
-            if k in spec and k not in matched_profile:
+        for k in ("model_family", "article_number", "appliance_type", "series", "products", "hardware", "custom_registers", "recipe_buttons", "article_numbers"):
+            if k in spec:
                 matched_profile[k] = spec[k]
 
     _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile

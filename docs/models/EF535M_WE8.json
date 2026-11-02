@@ -1,0 +1,285 @@
+{
+  "model_family": "WE8",
+  "ef_code": "EF535M",
+  "display_ef": "EF533D",
+  "series": "WE-Line",
+  "article_number": "15420",
+  "article_numbers": [
+    "15420",
+    "15421",
+    "15141",
+    "15144"
+  ],
+  "appliance_type": "15420 WE8 (EA)",
+  "software_version_display": "EF533D V02.04",
+  "address_width": 4,
+  "max_words": 512,
+  "products": [
+    {
+      "code": 1,
+      "name": "Ristretto",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 2,
+      "name": "Espresso",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 3,
+      "name": "Coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 4,
+      "name": "Cappuccino",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 6,
+      "name": "Macchiato",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 7,
+      "name": "Latte macchiato",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 10,
+      "name": "Portion of milk",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 13,
+      "name": "Hot water",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 15,
+      "name": "Product with ground coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 17,
+      "name": "2 x Ristretto",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 18,
+      "name": "2 x Espresso",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 19,
+      "name": "2 x Coffee",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 45,
+      "name": "Hot water for green tea",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 46,
+      "name": "Flat white",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 47,
+      "name": "Special coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 48,
+      "name": "Espresso doppio",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 63,
+      "name": "2 x Special coffee",
+      "is_double": true,
+      "active": true
+    }
+  ],
+  "maintenance_counters": [
+    "Cleaning",
+    "Descaling",
+    "Coffee System Rinsing",
+    "Filter Change",
+    "Milk System Rinsing",
+    "Milk System Cleaning"
+  ],
+  "maintenance_percentages": [
+    "Cleaning",
+    "Descaling",
+    "FilterChange"
+  ],
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": true,
+    "has_external_plumbing": false,
+    "has_milk_system": true,
+    "flowmeter_pulses_per_ml": 2.366
+  },
+  "custom_registers": {
+    "0007": {
+      "name": "Coffee_System_Rinsing",
+      "description": "Total coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Total_Cleaning",
+      "description": "Total cleaning operations"
+    },
+    "0009": {
+      "name": "Total_Descaling",
+      "description": "Total descaling operations"
+    },
+    "000A": {
+      "name": "Grinder_Seconds",
+      "description": "Lifetime grinder operating duration in seconds"
+    },
+    "0010": {
+      "name": "Water_Volume_Total",
+      "description": "Cumulative water dispensed (dl)"
+    },
+    "0011": {
+      "name": "Water_Hardness",
+      "description": "Configured water hardness (dH)"
+    },
+    "0015": {
+      "name": "Service_Counter",
+      "description": "Preparations since last service intervention"
+    },
+    "0020": {
+      "name": "Milk_System_Rinsing",
+      "description": "Total milk system rinsing operations"
+    },
+    "0021": {
+      "name": "Milk_System_Cleaning",
+      "description": "Total milk system cleaning operations"
+    },
+    "0022": {
+      "name": "Filter_Change",
+      "description": "Total CLARIS Smart filter changes"
+    },
+    "0030": {
+      "name": "Appliance_Number",
+      "description": "Machine production sequence number"
+    },
+    "0031": {
+      "name": "Serial_Word",
+      "description": "Internal factory serial word"
+    },
+    "0032": {
+      "name": "Production_Date",
+      "description": "Encoded production date bitfield"
+    },
+    "007E": {
+      "name": "Article_Number_High",
+      "description": "Factory article number high byte"
+    },
+    "007F": {
+      "name": "Article_Number_Low",
+      "description": "Factory article number low byte"
+    },
+    "0162": {
+      "name": "Descaling_Percentage",
+      "description": "Descaling remaining percentage"
+    },
+    "0163": {
+      "name": "Cleaning_Percentage",
+      "description": "Cleaning remaining percentage"
+    },
+    "017F": {
+      "name": "Hot_Water_Green_Tea",
+      "description": "Hot water for green tea preparation counter"
+    },
+    "0180": {
+      "name": "Total_Espresso",
+      "description": "Single Espresso preparation counter"
+    },
+    "0181": {
+      "name": "Total_Ristretto",
+      "description": "Single Ristretto preparation counter"
+    },
+    "0182": {
+      "name": "Total_Coffee",
+      "description": "Single Coffee preparation counter"
+    },
+    "0183": {
+      "name": "Total_Flat_White",
+      "description": "Flat White preparation counter"
+    },
+    "0184": {
+      "name": "Total_Cappuccino",
+      "description": "Cappuccino preparation counter"
+    },
+    "0185": {
+      "name": "Total_Latte_Macchiato",
+      "description": "Latte Macchiato preparation counter"
+    },
+    "0186": {
+      "name": "Product_Ground_Coffee",
+      "description": "Product with ground coffee counter"
+    },
+    "0187": {
+      "name": "Total_Portion_Milk",
+      "description": "Portion of milk counter"
+    },
+    "0188": {
+      "name": "Total_Hot_Water",
+      "description": "Hot water counter"
+    },
+    "0189": {
+      "name": "Total_2x_Espresso",
+      "description": "2 x Espresso preparation counter"
+    },
+    "018A": {
+      "name": "Total_2x_Ristretto",
+      "description": "2 x Ristretto preparation counter"
+    },
+    "018B": {
+      "name": "Total_2x_Coffee",
+      "description": "2 x Coffee preparation counter"
+    },
+    "018C": {
+      "name": "Total_2x_Special_Coffee",
+      "description": "2 x Special coffee preparation counter"
+    },
+    "018D": {
+      "name": "Total_Special_Coffee",
+      "description": "Special coffee preparation counter"
+    },
+    "018E": {
+      "name": "Total_Macchiato",
+      "description": "Macchiato preparation counter"
+    },
+    "018F": {
+      "name": "Total_Espresso_Doppio",
+      "description": "Espresso Doppio preparation counter"
+    },
+    "01E1": {
+      "name": "Filter_Percentage",
+      "description": "CLARIS filter remaining percentage"
+    }
+  }
+}

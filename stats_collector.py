@@ -30,13 +30,106 @@ import json
 import csv
 import io
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Tuple
 
 import jura_protocol as jp
 import profiles_db
 from serial_io import JuraSerialConnection
 
-__version__ = "0.4.2"
+try:
+    from version import __version__, __build__
+except ImportError:
+    __build__ = "20261102.1435"
+    __version__ = f"Build {__build__}"
+
+# ---------------------------------------------------------------------------
+# Optical Bean Sensor Calibration Settings (Dev-configurable)
+# ---------------------------------------------------------------------------
+DEFAULT_OPTICAL_BEAN_THRESHOLD = 115
+DEFAULT_OPTICAL_BEAN_HYSTERESIS = 5
+
+# ---------------------------------------------------------------------------
+# Jura Top-Tronic 8-bit EEPROM Models (2-digit hex addressing: RT:xx / RE:xx)
+# ---------------------------------------------------------------------------
+TWO_DIGIT_ADDRESS_EFS = {
+    "EF509M", "EF511", "EF511M", "EF527M", "EF631D", "EF632D",
+    "EF642D", "EF642M", "EF643D", "EF644D", "EPSILON", "IOTA",
+    "UFO", "E90", "ALPHAM", "ALPHAD", "C1300", "E1300", "E100"
+}
+
+_optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
+_optical_bean_hysteresis = DEFAULT_OPTICAL_BEAN_HYSTERESIS
+
+CONFIG_DIR = os.path.expanduser("~/.config/spectra")
+CALIBRATION_FILE = os.path.join(CONFIG_DIR, "calibration.json")
+
+
+def get_optical_bean_threshold() -> int:
+    """Return active optical bean sensor threshold in counts (default 115)."""
+    return _optical_bean_threshold
+
+
+def set_optical_bean_threshold(val: int, save: bool = True) -> int:
+    """Set optical bean sensor threshold in counts (clamped 30..250)."""
+    global _optical_bean_threshold
+    _optical_bean_threshold = max(30, min(250, int(val)))
+    if save:
+        _save_calibration()
+    return _optical_bean_threshold
+
+
+def reset_optical_bean_threshold(save: bool = True) -> int:
+    """Reset optical bean threshold to factory default (115 counts)."""
+    return set_optical_bean_threshold(DEFAULT_OPTICAL_BEAN_THRESHOLD, save=save)
+
+
+def get_optical_bean_calibration() -> Dict[str, Any]:
+    """Return dictionary of active optical calibration parameters and bounds."""
+    return {
+        "threshold": _optical_bean_threshold,
+        "hysteresis": _optical_bean_hysteresis,
+        "lower_bound": _optical_bean_threshold - _optical_bean_hysteresis,
+        "upper_bound": _optical_bean_threshold + _optical_bean_hysteresis
+    }
+
+
+def _load_calibration():
+    global _optical_bean_threshold, _optical_bean_hysteresis
+    if os.path.exists(CALIBRATION_FILE):
+        try:
+            with open(CALIBRATION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if "optical_bean_threshold" in data:
+                    loaded_thresh = max(30, min(250, int(data["optical_bean_threshold"])))
+                    # Migrate legacy 99 default to new calibrated 115 default
+                    if loaded_thresh == 99:
+                        _optical_bean_threshold = DEFAULT_OPTICAL_BEAN_THRESHOLD
+                    else:
+                        _optical_bean_threshold = loaded_thresh
+                if "optical_bean_hysteresis" in data:
+                    loaded_hyst = max(0, min(20, int(data["optical_bean_hysteresis"])))
+                    if loaded_hyst == 2:
+                        _optical_bean_hysteresis = DEFAULT_OPTICAL_BEAN_HYSTERESIS
+                    else:
+                        _optical_bean_hysteresis = loaded_hyst
+        except Exception:
+            pass
+
+
+def _save_calibration():
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CALIBRATION_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "optical_bean_threshold": _optical_bean_threshold,
+                "optical_bean_hysteresis": _optical_bean_hysteresis,
+                "updated_at": datetime.now().isoformat()
+            }, f, indent=2)
+    except Exception:
+        pass
+
+
+_load_calibration()
 
 
 def decode_jura_date(val: int) -> Optional[datetime]:
@@ -204,13 +297,25 @@ def query_live_sensors(
     conn: Optional[JuraSerialConnection] = None,
     profile: Optional[Dict[str, Any]] = None,
     is_legacy: bool = True,
-    fast_poll: bool = False
+    fast_poll: bool = False,
+    manufacturer: str = "auto",
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Query live physical microswitches, hardware sensor statuses,
-    temperature ADC readings, and component fault registers from the connected Jura machine.
-    Works for both ASCII and Smart Connect modes.
+    temperature ADC readings, and component fault registers from the connected appliance.
+    Supports Jura (ASCII / Smart Connect) and multi-manufacturer protocols (Nivona, Kalerm, Jetinno).
     """
+    mfr_clean = (manufacturer or "auto").strip().lower()
+    demo_vendor = getattr(conn, "demo_vendor", "jura") if conn else "jura"
+
+    if mfr_clean not in ("jura", "auto") or demo_vendor not in ("jura", "hardware"):
+        try:
+            from spectra_engine import SpectraSession
+            sess = SpectraSession(port_name=port_name, baudrate=baudrate, conn=conn, manufacturer=mfr_clean)
+            return sess.query_live_sensors(fast_poll=fast_poll)
+        except Exception:
+            pass
     close_when_done = False
     if conn is None or not conn.is_open:
         conn = JuraSerialConnection(port_name, baudrate=baudrate)
@@ -239,6 +344,10 @@ def query_live_sensors(
             is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
             if not is_ascii and conn.is_demo:
                 is_ascii = True
+            elif not is_ascii and ("tty" in port_name.lower() or "com" in port_name.lower()):
+                hz_check = conn.query_ascii("HZ:")
+                if hz_check and hz_check.startswith("hz:"):
+                    is_ascii = True
             detected_ef = ""
             if ty_resp and ty_resp.startswith("ty:"):
                 toks = ty_resp[3:].strip().split()
@@ -274,12 +383,14 @@ def query_live_sensors(
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
             cake_thickness_ticks = 0
+            has_hz_status = False
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
                 parts = payload.split(",")
 
                 if len(parts) > 0 and len(parts[0]) >= 7:
+                    has_hz_status = True
                     bu_init_ok = (parts[0][1] == "1")
                     mv_busy = (parts[0][2] == "1")
                     heater_ready_flag = (parts[0][5] == "1")
@@ -443,25 +554,6 @@ def query_live_sensors(
                 if ty_disp_resp and ty_disp_resp.startswith("ty$:"):
                     display_firmware = ty_disp_resp[4:].strip()
 
-                # Optical Bean Hopper Sensor (AS: Check Sensor)
-                as_resp = conn.query_ascii("AS:")
-                if as_resp and as_resp.startswith("as:"):
-                    results["raw_as"] = as_resp
-                    as_parts = as_resp[3:].split(",")
-                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
-                        try:
-                            off_adc = int(as_parts[0][4:8], 16)
-                            on_adc = int(as_parts[1][4:8], 16)
-                            # On Jura optical sensor:
-                            # Reflected IR when empty > 1680 ADC
-                            # Absorbed IR when beans present <= 1660 ADC
-                            beans_empty = (on_adc > 1680)
-                            beans_ok = not beans_empty
-                            setattr(conn, "_cached_beans_ok", beans_ok)
-                            setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
-                        except ValueError:
-                            pass
-
                 # Flowmeter lifetime timeout diagnostic counters
                 r1b4 = conn.query_ascii("RE:01B4")
                 if r1b4 and r1b4.startswith("re:"):
@@ -473,12 +565,89 @@ def query_live_sensors(
                         pass
                 total_fm_timeouts = fm_intake_timeouts + fm_rinse_timeouts
             else:
-                cached_beans = getattr(conn, "_cached_beans_ok", None)
-                if cached_beans is not None:
-                    beans_ok = cached_beans
-                    beans_empty = not beans_ok
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
+
+            # Optical Bean Hopper Sensor (AS: Check Sensor - commercial lines: XJ, GIGA)
+            # Polled during manual refresh (not fast_poll), on first query of a session, or every ~2.0s in Live Data
+            last_as_ts = getattr(conn, "_last_as_ts", 0.0)
+            cached_beans = getattr(conn, "_cached_beans_ok", None)
+            as_supported = getattr(conn, "_as_supported", None)
+            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 2.0))
+
+            if should_query_as:
+                as_resp = conn.query_ascii("AS:")
+                if as_resp and as_resp.startswith("as:"):
+                    results["raw_as"] = as_resp
+                    as_parts = as_resp[3:].split(",")
+                    if len(as_parts) >= 2 and len(as_parts[0]) >= 8 and len(as_parts[1]) >= 8:
+                        try:
+                            off_adc = int(as_parts[0][4:8], 16)
+                            on_adc = int(as_parts[1][4:8], 16)
+                            # Reject floating / invalid ADCs (e.g. machine in standby or unpowered sensor bus)
+                            if 0 < off_adc < 3500 and 0 < on_adc < 3500:
+                                setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
+                                setattr(conn, "_last_as_ts", now_ts)
+                                setattr(conn, "_as_supported", True)
+                                setattr(conn, "_as_fail_count", 0)
+                        except ValueError:
+                            pass
+                elif as_resp is None and not conn.is_demo:
+                    # Require 3 consecutive initial failures before treating AS: as unsupported
+                    fail_cnt = getattr(conn, "_as_fail_count", 0) + 1
+                    setattr(conn, "_as_fail_count", fail_cnt)
+                    if fail_cnt >= 3 and getattr(conn, "_as_supported", None) is None:
+                        setattr(conn, "_as_supported", False)
+
+            # Evaluate bean hopper level:
+            # Multi-layer safety verification:
+            # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
+            #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
+            #    Calibrated via configurable threshold (default 115 ± 5):
+            #    - Covered / Charged: delta <= (threshold - hysteresis, <= 110) -> Beans OK
+            #    - Uncovered / Empty: delta >= (threshold + hysteresis, >= 120) -> Fill Beans
+            #    - Normal thermal drift band (85..105 counts) is safely classified as Beans OK.
+            #    - Extraction Transient Immunity: During mechanical compression (bu_encoder_pos_raw > 250),
+            #      water extraction (flow_pulses_raw > 0 and flow_ml_s > 0), or valve travel, electrical
+            #      load sag causes optical baseline shifts. Spurious empty triggers are suppressed during brew.
+            # 2. Puck Compression Fallback:
+            #    When optical sensor is absent, cake thickness <= 14 ticks indicates dry grinder run.
+            optical_empty = False
+            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            opt_thresh = _optical_bean_threshold
+            opt_hyst = _optical_bean_hysteresis
+            opt_lower = opt_thresh - opt_hyst
+            opt_upper = opt_thresh + opt_hyst
+
+            # Detect active brewing cycle to prevent electrical sag false alarms
+            is_active_brew = (
+                bu_encoder_pos_raw > 250
+                or (flow_pulses_raw > 0 and flow_ml_s > 0.0)
+                or mv_busy
+            )
+
+            if cached_adcs:
+                off_adc, on_adc = cached_adcs
+                delta = on_adc - off_adc
+                if is_active_brew:
+                    # Suppress transient ADC swings during active brew
+                    optical_empty = False
+                elif delta <= opt_lower:
+                    optical_empty = False
+                elif delta >= opt_upper:
+                    optical_empty = True
+                else:
+                    # Latch previous state across hysteresis deadband
+                    optical_empty = not getattr(conn, "_cached_beans_ok", True)
+
+                beans_empty = optical_empty
+            else:
+                # Fallback for models without optical sensor (e.g. standard residential lines)
+                puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
+                beans_empty = puck_empty
+
+            beans_ok = not beans_empty
+            setattr(conn, "_cached_beans_ok", beans_ok)
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
             prev_bu = _last_bu_samples.get(port_key)
@@ -752,13 +921,14 @@ def query_live_sensors(
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
+                delta = on_adc - off_adc
                 sensor_list.append({
                     "id": "optical_bean_sensor",
                     "name": "Optical Bean Hopper Sensor",
                     "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
                     "ok": beans_ok,
                     "badge": "NOMINAL" if beans_ok else "EMPTY",
-                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {on_adc - off_adc} counts | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
+                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {delta} counts (Threshold: {opt_thresh} ± {opt_hyst}, Bounds: ≤{opt_lower} / ≥{opt_upper}) | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
                     "icon": "🫘",
                     "value": on_adc,
                     "unit": "ADC"
@@ -855,6 +1025,11 @@ def query_live_sensors(
                 "machine_state_status": ready_status,
                 "cake_thickness_ticks": cake_thickness_ticks,
                 "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
+                "optical_threshold": opt_thresh,
+                "optical_hysteresis": opt_hyst,
+                "optical_lower": opt_lower,
+                "optical_upper": opt_upper,
+                "optical_delta": (on_adc - off_adc) if cached_adcs else None,
                 "button_matrix": button_matrix_hex,
                 "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
@@ -907,6 +1082,7 @@ def query_live_sensors(
             alert_names = [a["name"].lower() for a in active_alerts]
             tank_ok = not any("water" in a for a in alert_names)
             tray_ok = not any("tray" in a for a in alert_names)
+            beans_ok = not any("bean" in a for a in alert_names)
             ready_ok = any("ready" in a for a in alert_names) or (len(active_alerts) == 0)
 
             results["switches"] = [
@@ -925,6 +1101,14 @@ def query_live_sensors(
                     "ok": tray_ok,
                     "badge": "NORMAL" if tray_ok else "WARNING",
                     "icon": "📥"
+                },
+                {
+                    "id": "bean_hopper",
+                    "name": "Bean Hopper / Charge Sensor",
+                    "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
+                    "ok": beans_ok,
+                    "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "icon": "🫘"
                 },
                 {
                     "id": "machine_ready",
@@ -959,6 +1143,7 @@ def query_live_sensors(
 
             results["telemetry"] = {
                 "active_alert_count": len(active_alerts),
+                "beans_ok": beans_ok,
                 "is_dual_heater": is_dual_sc,
                 "heater_count": 2 if is_dual_sc else 1,
                 "heater_coffee_str": "Nominal",
@@ -1051,6 +1236,8 @@ class JuraStatsSession:
             chunk = self.conn.read(max_bytes=1024, timeout_sec=0.15)
             if chunk:
                 rx_wire.extend(chunk)
+                if len(rx_wire) > 4096:
+                    break
                 decoded, _ = jp.decode_wire(bytes(rx_wire))
                 if b"\r\n" in decoded:
                     plain_resp = jp.decode_encrypted_frame(decoded)
@@ -1111,24 +1298,54 @@ class JuraStatsSession:
                         self.power_spec = f"IC Code: {raw_ic}"
                     self.log(f"Machine Power Rating: {self.power_spec}")
 
-                # Query EEPROM memory blocks (RT:0000 .. RT:0030)
-                update_prog(0.30, "Reading EEPROM diagnostic blocks (RT:0000 .. RT:0030)...")
-                eeprom: Dict[int, int] = {}
+                # Determine EEPROM address width and architecture
+                is_two_digit = (
+                    self.profile.get("address_width") == 2
+                    or any(self.ef_code.upper().startswith(p) for p in TWO_DIGIT_ADDRESS_EFS)
+                )
+                address_width = 2 if is_two_digit else 4
+                is_z5 = "EF642" in self.ef_code.upper() or "Z5" in self.model_family.upper()
+                is_d4 = "EF529" in self.ef_code.upper() or "D4" in self.model_family.upper()
+                is_a1 = "EF509" in self.ef_code.upper() or "A1" in self.model_family.upper() or "ENA MICRO" in self.model_family.upper()
+                is_we8 = "EF535" in self.ef_code.upper() or "WE8" in self.model_family.upper()
+                is_e8 = "EF533" in self.ef_code.upper() or "E8" in self.model_family.upper()
+
+                # Query Display Sub-Bus Firmware Gateway (TY$:)
+                ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
+                if ty_sub and ty_sub.lower().startswith("ty$:"):
+                    display_fw = ty_sub[4:].strip()
+                elif ty_sub and ty_sub.lower().startswith("ty:"):
+                    display_fw = ty_sub[3:].strip()
+                else:
+                    display_fw = self.profile.get("software_version_display", "N/A (Symbol Display)" if (is_d4 or is_a1) else "EF518D V02.04")
+
+                # Query EEPROM memory blocks
                 blocks = [0x00, 0x10, 0x20, 0x30]
+                if is_z5 or is_two_digit:
+                    blocks.append(0x70)
+                    blocks.append(0xE0)
+                elif is_d4:
+                    blocks.append(0x0330)
+                elif is_we8 or is_e8:
+                    blocks.extend([0x70, 0xE0, 0x160, 0x170, 0x180, 0x1E0])
+
+                update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
+                eeprom: Dict[int, int] = {}
 
                 for b_idx, blk in enumerate(blocks):
                     pct = 0.30 + (b_idx / len(blocks)) * 0.50
-                    update_prog(pct, f"Reading memory block 0x{blk:04X}...")
-                    cmd = f"RT:{blk:04X}"
+                    blk_str = f"{blk:02X}" if address_width == 2 else f"{blk:04X}"
+                    update_prog(pct, f"Reading memory block 0x{blk_str}...")
+                    cmd = f"RT:{blk_str}"
                     ans = self.conn.query_ascii(cmd, timeout=1.8)
                     if ans and ans.startswith("rt:"):
                         raw_hex = ans[3:].strip()
                         words = [int(raw_hex[i * 4: i * 4 + 4], 16) for i in range(len(raw_hex) // 4)]
                         for idx, w in enumerate(words):
                             eeprom[blk + idx] = w
-                        self.log(f"EEPROM [0x{blk:04X}]: {len(words)} words read successfully")
+                        self.log(f"EEPROM [0x{blk_str}]: {len(words)} words read successfully")
                     else:
-                        self.log(f"Notice: Block 0x{blk:04X} returned empty/timeout")
+                        self.log(f"Notice: Block 0x{blk_str} returned empty/timeout")
 
                 # Explicitly query machine identity, production, and service history EEPROM words
                 # 0x0030: Appliance / Machine Number (Maschinennummer: e.g. 18016)
@@ -1143,47 +1360,211 @@ class JuraStatsSession:
                 # 0x00C3: Water Hardness (High byte: °dH)
                 update_prog(0.80, "Reading machine serial and production records...")
                 id_addrs = [
-                    (0x30, "0030", "Machine Number"),
-                    (0x31, "0031", "Serial Word"),
-                    (0x32, "0032", "Production Date"),
-                    (0x15, "0015", "Service Counter"),
-                    (0xDA, "00DA", "SPDL Country Code"),
-                    (0xDB, "00DB", "SPDL Download Date"),
-                    (0xDC, "00DC", "SPDL Language Date"),
-                    (0xE9, "00E9", "Retail High"),
-                    (0xEA, "00EA", "Retail Low"),
-                    (0xC3, "00C3", "Water Hardness"),
+                    (0x30, "Machine Number"),
+                    (0x31, "Serial Word"),
+                    (0x32, "Production Date"),
+                    (0x15, "Service Counter"),
+                    (0x7E, "Article High"),
+                    (0x7F, "Article Low"),
+                    (0xDA, "SPDL Country Code"),
+                    (0xDB, "SPDL Download Date"),
+                    (0xDC, "SPDL Language Date"),
+                    (0xE9, "Retail High"),
+                    (0xEA, "Retail Low"),
+                    (0xC3, "Water Hardness"),
                 ]
-                for addr_int, addr_hex, desc in id_addrs:
+                if is_z5:
+                    for a in range(0xE0, 0xE6):
+                        id_addrs.append((a, f"Double Beverage 0x{a:02X}"))
+                    id_addrs.append((0x22, "Filter Cycles"))
+                elif is_we8 or is_e8:
+                    id_addrs.append((0x20, "Milk Rinses"))
+                    id_addrs.append((0x21, "Milk Cleans"))
+                    id_addrs.append((0x22, "Filter Cycles"))
+                    id_addrs.append((0x17F, "Green Tea"))
+                    id_addrs.append((0x162, "Descaling Percentage"))
+                    id_addrs.append((0x163, "Cleaning Percentage"))
+                    id_addrs.append((0x1E1, "Filter Percentage"))
+
+                for addr_int, desc in id_addrs:
                     if addr_int not in eeprom or eeprom[addr_int] == 0:
-                        ans = self.conn.query_ascii(f"RE:{addr_hex}", timeout=1.0)
+                        addr_str = f"{addr_int:02X}" if address_width == 2 else f"{addr_int:04X}"
+                        ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
                         if ans and ans.lower().startswith("re:"):
                             try:
                                 eeprom[addr_int] = int(ans[3:].strip(), 16)
-                                self.log(f"EEPROM [0x{addr_hex}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
+                                self.log(f"EEPROM [0x{addr_str}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
                             except ValueError:
                                 pass
 
                 update_prog(0.85, "Parsing machine telemetry & statistics...")
-                # Map standard Jura EEPROM statistics addresses
-                esp1 = eeprom.get(1, 0)
-                cof1 = eeprom.get(2, 0)
-                spec1 = eeprom.get(3, 0)
-                esp2 = eeprom.get(4, 0)
-                cof2 = eeprom.get(5, 0)
-                spec2 = eeprom.get(6, 0)
+                if is_z5:
+                    esp1 = eeprom.get(0x00, 0)
+                    rist1 = eeprom.get(0x01, 0)
+                    cof1 = eeprom.get(0x02, 0)
+                    spec1 = eeprom.get(0x03, 0)
+                    capp1 = eeprom.get(0x04, 0)
+                    latte1 = eeprom.get(0x05, 0)
+                    ground = eeprom.get(0x06, 0)
 
-                self.counters[1] = esp1
-                self.counters[2] = cof1
-                if spec1 > 0:
-                    self.counters[3] = spec1
-                self.counters[4] = esp2
-                self.counters[5] = cof2
-                if spec2 > 0:
-                    self.counters[6] = spec2
+                    esp2 = eeprom.get(0xE0, 0)
+                    rist2 = eeprom.get(0xE1, 0)
+                    cof2 = eeprom.get(0xE2, 0)
+                    spec2 = eeprom.get(0xE3, 0)
+                    capp2 = eeprom.get(0xE4, 0)
+                    latte2 = eeprom.get(0xE5, 0)
 
-                self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
-                self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
+                    self.counters[1] = esp1
+                    self.counters[2] = rist1
+                    self.counters[3] = cof1
+                    self.counters[4] = spec1
+                    self.counters[5] = capp1
+                    self.counters[6] = latte1
+                    if ground > 0:
+                        self.counters[7] = ground
+                    self.counters[8] = esp2
+                    self.counters[9] = rist2
+                    self.counters[10] = cof2
+                    self.counters[11] = spec2
+                    self.counters[12] = capp2
+                    self.counters[13] = latte2
+
+                    single_preps = esp1 + rist1 + cof1 + spec1 + capp1 + latte1 + ground
+                    double_preps = esp2 + rist2 + cof2 + spec2 + capp2 + latte2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    filter_cycles = eeprom.get(0x22, eeprom.get(20, 0))
+                elif is_d4:
+                    # Jura D4 (EF529M / RL78 platform) stores beverage counters in Block 0x0330
+                    esp1 = eeprom.get(0x0330, 0)
+                    cof1 = eeprom.get(0x0331, 0)
+                    esp2 = eeprom.get(0x0332, 0)
+                    cof2 = eeprom.get(0x0333, 0)
+                    water = eeprom.get(0x0334, 0)
+
+                    self.counters[2] = esp1
+                    self.counters[3] = cof1
+                    self.counters[49] = esp2
+                    self.counters[54] = cof2
+                    self.counters[13] = water
+
+                    single_preps = esp1 + cof1 + water
+                    double_preps = esp2 + cof2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    # D4 Filter changes are stored at 0x000E
+                    filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
+                elif is_a1:
+                    # Jura A1 / ENA Micro single-cup architecture:
+                    # Physical panel features only 3 single-serve coffee buttons:
+                    # 0x0002: Coffee (1 cup)
+                    # 0x0004: Espresso (1 cup)
+                    # 0x0006: Ristretto (1 cup)
+                    # All are single-cup preparations (no 2-cup buttons or modes)
+                    cof = eeprom.get(2, 0)
+                    esp = eeprom.get(4, 0)
+                    rist = eeprom.get(6, 0)
+
+                    self.counters[1] = rist
+                    self.counters[2] = esp
+                    self.counters[3] = cof
+
+                    self.total_preparations = rist + esp + cof
+                    self.total_cups = self.total_preparations
+
+                    filter_cycles = eeprom.get(20, 0)
+                elif is_we8 or is_e8:
+                    # Jura WE8 / E8 TFT platform (EF533 / EF535 / Renesas RL78)
+                    # Block 0x0180 (and 0x017F) holds consolidated beverage statistics
+                    if 0x0180 in eeprom and any(eeprom.get(0x0180 + i, 0) > 0 for i in range(16)):
+                        esp = eeprom.get(0x0180, 0)
+                        rist = eeprom.get(0x0181, 0)
+                        cof = eeprom.get(0x0182, 0)
+                        flat_white = eeprom.get(0x0183, 0)
+                        capp = eeprom.get(0x0184, 0)
+                        latte = eeprom.get(0x0185, 0)
+                        ground = eeprom.get(0x0186, 0)
+                        milk = eeprom.get(0x0187, 0)
+                        water = eeprom.get(0x0188, 0)
+                        esp2 = eeprom.get(0x0189, 0)
+                        rist2 = eeprom.get(0x018A, 0)
+                        cof2 = eeprom.get(0x018B, 0)
+                        spec2 = eeprom.get(0x018C, 0)
+                        spec = eeprom.get(0x018D, 0)
+                        macchiato = eeprom.get(0x018E, 0)
+                        doppio = eeprom.get(0x018F, 0)
+                        green_tea = eeprom.get(0x017F, 0)
+                    else:
+                        # Fallback to lower block registers if 0x0180 is not returned
+                        esp = eeprom.get(0x0000, eeprom.get(1, 0))
+                        rist = eeprom.get(0x0001, 0)
+                        cof = eeprom.get(0x0002, eeprom.get(2, 0))
+                        flat_white = eeprom.get(0x0003, 0)
+                        capp = eeprom.get(0x0004, 0)
+                        latte = eeprom.get(0x0005, 0)
+                        ground = eeprom.get(0x0006, 0)
+                        milk = eeprom.get(0x0013, 0)
+                        water = eeprom.get(0x0014, 0)
+                        esp2 = eeprom.get(0x00E0, eeprom.get(4, 0))
+                        rist2 = eeprom.get(0x00E1, 0)
+                        cof2 = eeprom.get(0x00E2, eeprom.get(5, 0))
+                        spec2 = eeprom.get(0x00E3, eeprom.get(6, 0))
+                        spec = eeprom.get(0x018D, eeprom.get(3, 0))
+                        macchiato = eeprom.get(0x018E, 0)
+                        doppio = eeprom.get(0x018F, 0)
+                        green_tea = eeprom.get(0x017F, 0)
+
+                    self.counters[1] = rist
+                    self.counters[2] = esp
+                    self.counters[3] = cof
+                    self.counters[4] = capp
+                    self.counters[6] = macchiato
+                    self.counters[7] = latte
+                    self.counters[10] = milk
+                    self.counters[13] = water
+                    if ground > 0:
+                        self.counters[15] = ground
+                    self.counters[17] = rist2
+                    self.counters[18] = esp2
+                    self.counters[19] = cof2
+                    self.counters[45] = green_tea
+                    self.counters[46] = flat_white
+                    self.counters[47] = spec
+                    self.counters[48] = doppio
+                    self.counters[63] = spec2
+
+                    single_preps = rist + esp + cof + flat_white + capp + latte + milk + water + spec + macchiato + doppio + green_tea + ground
+                    double_preps = rist2 + esp2 + cof2 + spec2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
+                    milk_rinses = eeprom.get(0x0020, 0)
+                    milk_cleanings = eeprom.get(0x0021, 0)
+                else:
+                    # Map standard Jura EEPROM statistics addresses
+                    esp1 = eeprom.get(1, 0)
+                    cof1 = eeprom.get(2, 0)
+                    spec1 = eeprom.get(3, 0)
+                    esp2 = eeprom.get(4, 0)
+                    cof2 = eeprom.get(5, 0)
+                    spec2 = eeprom.get(6, 0)
+
+                    self.counters[1] = esp1
+                    self.counters[2] = cof1
+                    if spec1 > 0:
+                        self.counters[3] = spec1
+                    self.counters[4] = esp2
+                    self.counters[5] = cof2
+                    if spec2 > 0:
+                        self.counters[6] = spec2
+
+                    self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
+                    self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
+
+                    filter_cycles = eeprom.get(20, 0)
 
                 rinses = eeprom.get(7, 0)
                 cleanings = eeprom.get(8, 0)
@@ -1192,7 +1573,6 @@ class JuraStatsSession:
 
                 water_dl = eeprom.get(16, 0)
                 decalc_dl = eeprom.get(18, 0)
-                filter_cycles = eeprom.get(20, 0)
                 since_serv = eeprom.get(21, 0)
                 water_since_decalc = eeprom.get(31, 0)
 
@@ -1244,7 +1624,10 @@ class JuraStatsSession:
                 spdl_lang_str = f"{spdl_lang_dt.day}.{spdl_lang_dt.month}.{spdl_lang_dt.year}" if spdl_lang_dt else "N/A"
 
                 # Water Hardness:
-                water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
+                if is_d4 and 0x11 in eeprom and eeprom[0x11] > 0:
+                    water_hardness = eeprom[0x11]
+                else:
+                    water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
 
                 # Cups and preparations since last service intervention:
                 retail_ref = (retail_high * 65536) + retail_low
@@ -1252,9 +1635,51 @@ class JuraStatsSession:
                 prep_since_intervention = since_prep if since_prep > 0 else since_serv
 
                 # Article Number and Full EAN Code:
-                article_num = str(self.profile.get("article_number", "13705"))
-                display_fw = self.profile.get("software_version_display", "EF518D V02.04")
-                app_type = self.profile.get("appliance_type", f"{article_num} {self.model_family}")
+                # Hardware EEPROM Article Number (words 0x7E/0x7F on EF509/A1/ENA platforms)
+                hw_article = None
+                if 0x7E in eeprom and 0x7F in eeprom:
+                    hi_w = eeprom.get(0x7E, 0)
+                    lo_w = eeprom.get(0x7F, 0)
+                    hi_b = (hi_w >> 8) if (hi_w & 0xFF00) else (hi_w & 0xFF)
+                    lo_b = (lo_w >> 8) if (lo_w & 0xFF00) else (lo_w & 0xFF)
+                    if hi_b > 0 and lo_b > 0:
+                        cand = (hi_b << 8) | lo_b
+                        if 10000 <= cand <= 99999:
+                            hw_article = str(cand)
+
+                ARTICLE_MODEL_MAP = {
+                    "15133": ("A1", "15133 A1 Piano Black", "A-Line"),
+                    "15171": ("A1", "15171 A1 Piano White", "A-Line"),
+                    "15125": ("A1", "15125 A1", "A-Line"),
+                    "15110": ("ENA Micro 101 Aroma+", "15110 ENA Micro 101 Aroma+", "ENA Micro"),
+                    "13594": ("ENA Micro 1", "13594 ENA Micro 1 Micro Black", "ENA Micro"),
+                    "13636": ("ENA Micro 1", "13636 ENA Micro 1 Micro Silver", "ENA Micro"),
+                    "13735": ("ENA Micro 1", "13735 ENA Micro 1", "ENA Micro"),
+                    "15221": ("D4", "15221 D4 Piano Black", "D-Line"),
+                    "13356": ("IMPRESSA Z5", "13356 IMPRESSA Z5 230V CH", "Z-Line"),
+                    "15420": ("WE8 (EA)", "15420 WE8 (EA)", "WE-Line"),
+                    "15421": ("WE8 (EA)", "15421 WE8 (EA)", "WE-Line"),
+                    "15141": ("WE8", "15141 WE8", "WE-Line"),
+                    "15144": ("WE8", "15144 WE8", "WE-Line"),
+                    "15109": ("E8", "15109 E8 Piano Black", "E-Line"),
+                    "15084": ("E8", "15084 E8 Chrome", "E-Line"),
+                }
+
+                if hw_article:
+                    article_num = hw_article
+                    if hw_article in ARTICLE_MODEL_MAP:
+                        fam, app_desc, _ = ARTICLE_MODEL_MAP[hw_article]
+                        self.model_family = fam
+                        app_type = app_desc
+                        # If hardware article specifies a refined model (e.g. WE8 vs E8), switch to its profile
+                        art_profile = profiles_db.get_model_spec(hw_article) or profiles_db.find_profile(fam)
+                        if art_profile and art_profile != profiles_db.DEFAULT_PROFILE:
+                            self.profile = art_profile
+                    else:
+                        app_type = f"{hw_article} {self.model_family}"
+                else:
+                    article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else "13705"))))
+                    app_type = self.profile.get("appliance_type", self.model_family)
 
                 ean_code = "N/A"
                 if article_num and serial_number != "N/A":
@@ -1265,8 +1690,15 @@ class JuraStatsSession:
                     except Exception:
                         pass
 
-                self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
-                self.maint_pcts = [None, None, None, None]
+                if is_we8 or is_e8:
+                    clean_pct = eeprom.get(0x0163, 0) & 0xFF if 0x0163 in eeprom else None
+                    decalc_pct = eeprom.get(0x0162, 0) & 0xFF if 0x0162 in eeprom else None
+                    filter_pct = eeprom.get(0x01E1, 0) & 0xFF if 0x01E1 in eeprom else None
+                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles, milk_rinses, milk_cleanings]
+                    self.maint_pcts = [clean_pct, decalc_pct, None, filter_pct, None, None]
+                else:
+                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
+                    self.maint_pcts = [None, None, None, None]
 
                 gh = grinder_sec // 3600
                 gm = (grinder_sec % 3600) // 60
@@ -1433,9 +1865,10 @@ class JuraStatsSession:
         beverage_list = []
         profile_codes = set()
         profile_prods = self.profile.get("products", [])
-        # In ASCII EEPROM mode, if a Smart Connect profile was matched (which lacks code 1 or maps 4 to Cappuccino),
+        # In ASCII EEPROM mode, if a generic or unconfigured profile was matched,
         # fall back to classic 6-slot EEPROM beverage descriptors so counts are not mislabeled.
-        if self.is_legacy_cleartext and (not profile_prods or any(p.get("code") == 4 and not p.get("is_double") for p in profile_prods)):
+        # But if the matched profile has a specific product list (e.g. Z5 with 13 products), preserve it!
+        if self.is_legacy_cleartext and (not profile_prods or self.profile.get("model_family") == "Generic Jura Automatic"):
             profile_prods = [
                 {"code": 1, "name": "1 Espresso", "is_double": False, "active": True},
                 {"code": 2, "name": "1 Coffee", "is_double": False, "active": True},
@@ -1469,9 +1902,11 @@ class JuraStatsSession:
                 })
 
         # Build maintenance list
-        # In ASCII EEPROM mode, self.maint_counts is always [cleanings, descalings, rinses, filter_cycles]
         if self.is_legacy_cleartext:
-            mc_labels = ["Cleaning", "Descaling", "Rinsing", "Filter Change"]
+            if len(self.maint_counts) == 6:
+                mc_labels = ["Cleaning", "Descaling", "Coffee System Rinsing", "Filter Change", "Milk System Rinsing", "Milk System Cleaning"]
+            else:
+                mc_labels = ["Cleaning", "Descaling", "Rinsing", "Filter Change"]
         else:
             mc_labels = self.profile.get("maintenance_counters", [
                 "Cleaning", "FilterChange", "Decalc", "CappuRinse", "CoffeeRinse", "CappuClean"
@@ -1491,6 +1926,8 @@ class JuraStatsSession:
             })
 
         return {
+            "spectra_version": f"Build {__build__}",
+            "spectra_build": __build__,
             "timestamp": datetime.now().isoformat(),
             "port": self.port_name,
             "machine_model": self.model_family,
@@ -1527,7 +1964,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"SPECTRA Diagnostics Suite v{__version__} (Hardware Telemetry - Jura Module)")
+        out.append(f"SPECTRA Diagnostics Suite (Build {__build__}) (Hardware Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")

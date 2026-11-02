@@ -1,0 +1,4 @@
+# Node / Vite dependencies and build artifacts
+node_modules/
+dist-ssr/
+*.local

@@ -1,0 +1,16 @@
+[package]
+name = "spectra-hal"
+version = "0.1.0"
+edition = "2021"
+description = "Hardware Abstraction Layer and physical wire codecs for SPECTRA diagnostics"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-serial = { workspace = true, optional = true }
+rusb = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["serial"]
+serial = ["dep:tokio-serial"]
+usb = ["dep:rusb"]

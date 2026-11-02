@@ -1320,6 +1320,16 @@
       "description": "Model-specific register (Value: 0x0064 / 100)",
       "current_hex": "0x0064",
       "current_dec": 100
+    },
+    "0040": {
+      "name": "BU_Upper_Limit",
+      "description": "Brew Unit mechanical top travel limit encoder ticks",
+      "category": "calibration",
+      "unit": "ticks",
+      "status": "mapped",
+      "current_hex": "0x0000",
+      "current_dec": 0,
+      "last_updated": "2026-10-30 13:07:03Z"
     }
   },
   "recipe_buttons": [

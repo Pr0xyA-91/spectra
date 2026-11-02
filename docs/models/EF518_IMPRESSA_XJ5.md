@@ -75,17 +75,17 @@ The optical hopper sensor is read exclusively via the Jura analog diagnostic com
   * `Group 0` (`0000`): Ambient light reading when IR LED is off (`~1360–1614` ADC counts).
   * `Group 1` (`0001`): Reflected infrared light reading when IR LED is pulsed on (`~1445–1792` ADC counts).
 
-#### Calibration & State Thresholds
-* **Empty Hopper (Reflective)**:
-  * Infrared pulse reflects cleanly off the bare optical prism back into the photodiode.
-  * `ON_ADC` rises to **`1726`–`1792` counts** ($> 1710$ ADC threshold).
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ is **$+97$ to $+104$ counts**.
-  * Appliance indicates: *"Doplňte kávová zrna"* / *"Fill beans"*.
-* **Hopper Charged (Absorption)**:
-  * Dark coffee beans scatter and absorb the infrared pulse away from the photodiode.
-  * `ON_ADC` drops down to **`1445`–`1665` counts** ($\le 1680$ ADC threshold).
-  * Net delta $\Delta$ drops to **$+65$ to $+81$ counts**.
-  * Appliance indicates: *"Ready to brew"*.
+#### Multi-Layer Detection Architecture
+* **Optical Analog Calibration (`AS:`)**:
+  * Primary source of continuous bean level truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
+  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ completely eliminates ambient room light offsets (verified across ambient shifts from $1,466$ to $1,694$ counts).
+  * **Covered / Interrupted / Beans Present**: $\Delta \le +92$ counts (live calibrated: $+85$ to $+91$ counts, nominal $\sim +87$). Machine immediately switches to *"Ready"*.
+  * **Uncovered / Open / Bare Sensor**: $\Delta \ge +96$ counts (live calibrated: $+96$ to $+119$ counts, nominal $\sim +101$). The appliance CPU defers updating its LCD until a product selection/brew is attempted, at which point it refuses to grind and prompts *"Doplňte kávová zrna"* / *"Fill beans"*.
+  * **Hysteresis Deadband ($+93$ to $+95$ counts)**: Schmitt trigger latches the previous state, eliminating boundary flickering.
+* **Firmware Register (`HZ[0][3]`) Separation**:
+  * Bit 3 of `parts[0]` remains `'1'` during active thermal regulation on `EF518M` and must not gate optical sensor evaluation.
+* **Grind Dose Cake Measurement (`HZ[8]`)**:
+  * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle (acts as fallback when optical sensor is not fitted).
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:

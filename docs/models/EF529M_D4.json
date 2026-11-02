@@ -1,0 +1,155 @@
+{
+  "model_family": "D4",
+  "ef_code": "EF529M",
+  "display_ef": "None",
+  "series": "D-Line",
+  "article_number": "15221",
+  "article_numbers": [
+    "15221",
+    "15222",
+    "15223"
+  ],
+  "appliance_type": "15221 D4 Piano Black",
+  "software_version_display": "N/A (Symbol Display)",
+  "address_width": 4,
+  "max_words": 1024,
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": false,
+    "has_external_plumbing": false,
+    "has_milk_system": false,
+    "flowmeter_pulses_per_ml": 2.366,
+    "optical_hopper": {
+      "command": "AS:",
+      "empty_adc_threshold": 101,
+      "nominal_adc_threshold": 99,
+      "nominal_delta_max": 2,
+      "empty_delta_min": 10
+    },
+    "bu_calibration": {
+      "upper_limit_ticks": 1296,
+      "upper_reference_ticks": 650,
+      "compression_ticks": 520,
+      "prebrew_travel_ticks": 266,
+      "mill_target_ticks": 230,
+      "registers": {
+        "upper_limit": "0047",
+        "mill_target": "0041",
+        "prebrew_1": "0042",
+        "compression": "0043",
+        "prebrew_2": "0044"
+      }
+    }
+  },
+  "custom_registers": {
+    "0007": {
+      "name": "Coffee_System_Rinses",
+      "description": "Total coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Total_Cleaning",
+      "description": "Total cleaning cycles executed"
+    },
+    "0009": {
+      "name": "Total_Descaling",
+      "description": "Total descaling operations executed"
+    },
+    "000A": {
+      "name": "Grinder_Seconds",
+      "description": "Lifetime grinder operating duration in seconds"
+    },
+    "000E": {
+      "name": "Total_Filter_Change",
+      "description": "CLARIS Smart filter change operations"
+    },
+    "0010": {
+      "name": "Water_Volume_Total",
+      "description": "Cumulative water dispensed (dl)"
+    },
+    "0011": {
+      "name": "Water_Hardness",
+      "description": "Configured water hardness (°dH)"
+    },
+    "0012": {
+      "name": "Descaling_Agent_Volume",
+      "description": "Cumulative descaling fluid consumed (dl)"
+    },
+    "0015": {
+      "name": "Service_Counter",
+      "description": "Preparations since last intervention / service"
+    },
+    "0030": {
+      "name": "Appliance_Number",
+      "description": "Unique factory appliance / machine ID (Maschinennummer)"
+    },
+    "0031": {
+      "name": "Serial_Word",
+      "description": "Factory production line / batch serial word"
+    },
+    "0032": {
+      "name": "Production_Date",
+      "description": "Bitfield production date (Day: 0..4, Month: 5..8, Year: 1990 + 9..15)"
+    },
+    "0041": {
+      "name": "BU_Mill_Target",
+      "description": "Brew unit mill target position (ticks)"
+    },
+    "0047": {
+      "name": "BU_Upper_Limit",
+      "description": "Brew unit maximum upper stroke limit (ticks)"
+    },
+    "0056": {
+      "name": "BU_Init_Count",
+      "description": "Brew unit initialization / reference travel count"
+    },
+    "0330": {
+      "name": "Total_Espresso",
+      "description": "Single Espresso preparation count"
+    },
+    "0331": {
+      "name": "Total_Coffee",
+      "description": "Single Coffee preparation count"
+    },
+    "0332": {
+      "name": "Total_2x_Espresso",
+      "description": "Double Espresso preparation count (2 cups)"
+    },
+    "0333": {
+      "name": "Total_2x_Coffee",
+      "description": "Double Coffee preparation count (2 cups)"
+    },
+    "0334": {
+      "name": "Total_Hotwater",
+      "description": "Hot water portions dispensed"
+    }
+  },
+  "recipe_buttons": [
+    {
+      "button": 1,
+      "product": "Espresso",
+      "counter_reg": "0330"
+    },
+    {
+      "button": 2,
+      "product": "Coffee",
+      "counter_reg": "0331"
+    },
+    {
+      "button": 3,
+      "product": "2 Espressi",
+      "counter_reg": "0332"
+    },
+    {
+      "button": 4,
+      "product": "2 Coffee",
+      "counter_reg": "0333"
+    },
+    {
+      "button": 5,
+      "product": "Hot water",
+      "counter_reg": "0334"
+    }
+  ]
+}
