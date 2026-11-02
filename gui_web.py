@@ -24,8 +24,8 @@ from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 try:
     from version import __version__, __build__
 except ImportError:
-    __version__ = "0.5.1_win"
-    __build__ = "20261029.1130"
+    __build__ = "20261102.1605"
+    __version__ = f"Build {__build__}"
 
 # Global state for background polling
 _poll_lock = threading.Lock()
@@ -631,7 +631,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self._send_security_headers()
             self.end_headers()
-            html = HTML_TEMPLATE.replace("__VERSION__", f"{__version__} (build {__build__})")
+            html = HTML_TEMPLATE.replace("__VERSION__", f"Build {__build__}")
             self.wfile.write(html.encode("utf-8"))
 
         elif url.path == "/favicon.ico":
@@ -757,7 +757,7 @@ def main():
 
     url = f"http://127.0.0.1:{port}"
     print("=" * 78)
-    print(f"  SPECTRA (v{__version__}, build {__build__}) Universal Diagnostics — Web Dashboard")
+    print(f"  SPECTRA (Build {__build__}) Universal Diagnostics — Web Dashboard")
     print("=" * 78)
     print(f"[*] Server listening on: {url}")
     print("[*] Opening default web browser automatically...")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Lamanti-JN (Jetinno Platform) Appliance Driver
+SPECTRA - Lamanti-JN (Jetinno Platform) Appliance Driver
 Supports Lamanti J-line (JLTT, JL300, JL500, JL24, JL28, JL50 commercial & vending series).
 Communicates via Jetinno IO board packet protocol (9600 / 115200 baud, 8N1).
 """
@@ -73,7 +73,7 @@ def verify_jetinno_crc(data: bytes) -> bool:
 
 
 class LamantiJNDriver(BaseApplianceDriver):
-    """Lamanti-JN (Jetinno Platform) appliance driver for W.R.A.T."""
+    """Lamanti-JN (Jetinno Platform) appliance driver for SPECTRA."""
 
     vendor: str = "Lamanti-JN"
     name: str = "Lamanti Jetinno Diagnostics Module"

@@ -16,13 +16,13 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "SPECTRA Diagnostic Suite"
             VALUE "FileDescription",  "SPECTRA Hardware Telemetry & Logic Board Diagnostics"
-            VALUE "FileVersion",      "Build 20261102.1540"
+            VALUE "FileVersion",      "Build 20261102.1605"
             VALUE "InternalName",     "spectra"
             VALUE "LegalCopyright",   "Copyright (c) 2026 SPECTRA Contributors (MIT License)"
             VALUE "OriginalFilename", "spectra.exe"
             VALUE "ProductName",      "SPECTRA Universal Diagnostics"
-            VALUE "ProductVersion",   "Build 20261102.1540"
-            VALUE "BuildNumber",      "20261102.1540"
+            VALUE "ProductVersion",   "Build 20261102.1605"
+            VALUE "BuildNumber",      "20261102.1605"
         END
     END
     BLOCK "VarFileInfo"

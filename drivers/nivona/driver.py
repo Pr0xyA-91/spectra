@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Nivona Appliance Driver
+SPECTRA - Nivona Appliance Driver
 Supports Nivona CafeRomatica (NICR 5xx, 6xx, 7xx, 8xx, 9xx, 10xx, NIVO 810x) series.
 Engineered for Eugster/Frismag AG electronic architecture (9600 baud, 8N1).
 """
@@ -76,7 +76,7 @@ NIVONA_ERROR_CODES = {
 
 
 class NivonaDriver(BaseApplianceDriver):
-    """Nivona CafeRomatica appliance driver for W.R.A.T."""
+    """Nivona CafeRomatica appliance driver for SPECTRA."""
 
     vendor: str = "Nivona"
     name: str = "Nivona CafeRomatica Module"

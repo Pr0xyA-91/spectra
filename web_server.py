@@ -1227,7 +1227,7 @@ def main(auto_open: bool = False):
     httpd = HTTPServer(server_address, SpectraApiHandler)
 
     print("=" * 78)
-    print(f"  SPECTRA (v{__version__}, build {__build__}) Hardware Telemetry API & Web Server")
+    print(f"  SPECTRA (Build {__build__}) Hardware Telemetry API & Web Server")
     print("=" * 78)
     print(f"[*] API & Web Service listening on: http://127.0.0.1:{port}")
     print("[*] Serving Next-Gen Multi-Paradigm UI connected to live hardware adapters.")

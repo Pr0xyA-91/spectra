@@ -6,64 +6,53 @@ Comprehensive dependency specifications, runtime requirements, and driver compat
 
 ## 1. Editions & Dependency Matrix
 
-| Edition | Primary Target | Python Requirement | Mandatory Dependencies | Optional Dependencies | Primary UI |
+| Edition | Primary Target | Runtime Requirements | Mandatory Dependencies | Optional Dependencies | Primary UI |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| **`spectra`** | Linux (Jura Dedicated) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | CLI / GTK3 Desktop |
-| **`spectra-mm`** | Linux (Multi-Manufacturer) | `Python >= 3.8` | **None** *(Zero pip packages)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback) | Browser Web Dashboard / GTK3 |
-| **`spectra-win`** | Windows 10 / 11 (Multi-Manufacturer) | `Python >= 3.10` | `pyserial >= 3.5` | None *(Web dashboard is zero-dependency)* | Browser Web Dashboard / CLI |
+| **`spectra` (`main`)** | Linux (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10`<br>`Rust >= 1.80` *(for native crates)* | **None** *(Zero pip packages for core)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback)<br>`cargo` (Rust hybrid build) | 5-Paradigm Web Workstation / GTK3 Desktop / CLI |
+| **`spectra-win` (`windows`)** | Windows 10 / 11 (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10` *(embedded in installer)* | `pyserial >= 3.5` *(bundled in setup/launcher)* | None *(Standalone .exe and Web UI are self-contained)* | Browser Web Workstation / Standalone Launcher / CLI |
 
 ---
 
 ## 2. Edition Details
 
-### A. Linux Jura Edition (`spectra`)
-Built from the ground up for zero-dependency reliability in Linux field environments and embedded single-board computers (Raspberry Pi, Orange Pi, industrial PCs).
+### A. Linux Multi-Manufacturer Edition (`spectra` — branch `main`)
+Built from the ground up for high reliability in Linux field environments, desktop workstations, and embedded single-board computers (Raspberry Pi, industrial PCs).
 
-* **Core Diagnostics & Memory Dumper**:
+* **Core Multi-Manufacturer Diagnostics Engine**:
   * Runs using **100% Python Standard Library**:
-    * `termios`, `fcntl`, `select` (Native direct POSIX TTY serial communication)
-    * `os`, `sys`, `time`, `re`, `json`, `argparse`, `glob`, `unittest`
-  * No `pip install` commands required.
-* **Optional Desktop GUI (`gui.py`)**:
-  * Requires PyGObject for GTK3 rendering.
-  * System package manager installation:
-    * **Debian / Ubuntu**: `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0`
-    * **Arch / Manjaro**: `sudo pacman -S python-gobject gtk3`
-    * **Fedora**: `sudo dnf install python3-gobject gtk3`
-* **Optional Serial Fallback**:
-  * `pyserial >= 3.5` (auto-detected if installed, but POSIX termios is preferred).
-
----
-
-### B. Linux Multi-Manufacturer Edition (`spectra-mm`)
-Adds multi-vendor engine abstraction supporting Jura, Nivona, Lamanti-KL (Kalerm Modbus RTU), and Lamanti-JN (Colet binary protocol).
-
-* **CLI & Web Dashboard (`gui_web.py`)**:
-  * **Zero external dependencies**:
-    * Built-in HTTP server (`http.server`, `socketserver`)
-    * Embedded WebSocket streaming (`socket`, `struct`, `binascii`)
-    * Automatically opens your default web browser (`webbrowser`)
-    * Fully offline — loads local HTML5/CSS/JavaScript with zero CDNs or cloud queries.
+    * `termios`, `fcntl`, `select` (Native direct POSIX TTY serial communication with exclusive flock protection)
+    * `os`, `sys`, `time`, `re`, `json`, `argparse`, `glob`, `unittest`, `struct`
+  * Zero pip packages required for core CLI diagnostic routines.
+* **5-Paradigm Web Workstation (`run_ui.sh` / `web_server.py`)**:
+  * Native Python HTTP & REST API server serving production Vite React assets from `web/dist/`.
+  * Real-time telemetry streaming, interactive P&ID industrial diagrams, oscilloscope strip charts, and memory matrix.
+* **3-Layer Rust Workspace (`crates/`)**:
+  * High-performance native workspace:
+    * `crates/spectra-hal`: POSIX & async serial HAL.
+    * `crates/spectra-core`: Zero-allocation state machine, `@`-cipher, and EEPROM mapper.
+    * `crates/spectra-agent`: Tauri v2 async backend & WebSocket daemon.
+    * `crates/spectra-py`: PyO3 native extension (`spectra_py.so`).
 * **Desktop GTK3 GUI (`gui.py`)**:
   * Optional: Uses system PyGObject (`python3-gi`, `gir1.2-gtk-3.0`).
+  * Package manager installation:
+    * **Debian / Ubuntu**: `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0`
+    * **Arch / Manjaro / Omarchy**: `sudo pacman -S python-gobject gtk3`
+    * **Fedora**: `sudo dnf install python3-gobject gtk3`
 
 ---
 
-### C. Windows Edition (`spectra-win`)
+### B. Windows Edition (`spectra-win` — branch `windows`)
 Tailored for Windows 10 (1809+) and Windows 11 (64-bit) field laptops and workshop benches.
 
-* **Core Dependencies**:
-  * `Python >= 3.10` (from [python.org](https://www.python.org/downloads/))
-  * `pyserial >= 3.5` (provides cross-platform COM port access on Windows):
-    ```cmd
-    pip install -r requirements-win.txt
-    ```
-* **Web Dashboard (`gui_web.py`)**:
-  * Zero additional pip packages! Uses standard library HTTP/WebSocket server.
-  * Runs inside Microsoft Edge, Google Chrome, Mozilla Firefox, or Brave at `http://127.0.0.1:8080`.
-* **Automated Setup**:
-  * Automated PowerShell installer: `install_windows.ps1`
-  * One-click batch installer: `install_windows.bat`
+* **Native Windows Standalone Binaries**:
+  * `bin/spectra.exe`: Single-file PE32+ standalone launcher (22 MB) embedding isolated Python 3.12 runtime and PySerial.
+  * `dist/spectra_setup_build*.exe`: Native PE32+ offline installer (44 MB) compiled via Zig and LLVM-RC.
+  * `dist/spectra_update_build*.exe`: Fast in-place application updater (884 KB).
+* **Multi-Manufacturer Support**:
+  * Full driver support for Jura, Nivona, Lamanti-KL (Kalerm), and Lamanti-JN (Jetinno).
+  * Auto-discovers Windows `COM*` ports.
+* **Web Workstation (`gui_web.py` / `web_server.py`)**:
+  * Zero additional setup required! Automatically opens in Microsoft Edge, Google Chrome, Firefox, or Brave at `http://127.0.0.1:8080`.
 
 ---
 
@@ -86,7 +75,7 @@ On Linux systems, access to `/dev/ttyUSB*` and `/dev/ttyACM*` requires membershi
 # Ubuntu / Debian
 sudo usermod -aG dialout $USER
 
-# Arch Linux / Manjaro
+# Arch Linux / Manjaro / Omarchy
 sudo usermod -aG uucp $USER
 
 # Log out and log back in for changes to take effect
@@ -105,33 +94,26 @@ Open **Device Manager** (`devmgmt.msc`) and expand **Ports (COM & LPT)**:
 
 ### Debian / Ubuntu / Raspberry Pi OS
 ```bash
-# 1. Clone repository
+# 1. Clone private repository
 git clone https://github.com/Pr0xyA-91/spectra_dev.git
 cd spectra_dev
 
 # 2. (Optional) Install GTK3 GUI dependencies if running desktop environment
 sudo apt update && sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0
 
-# 3. Launch CLI or Web Dashboard
+# 3. Launch Web Workstation or CLI
+./run_ui.sh
 python3 cli.py
 ```
 
 ### Arch Linux / Manjaro / Omarchy
 ```bash
-# 1. Clone repository
-git clone https://github.com/Pr0xyA-91/spectra_dev.git
-cd spectra_dev
+# 1. Launch Web Workstation (Recommended)
+./run_ui.sh
 
-# 2. (Optional) Install GTK3 dependencies
-sudo pacman -S python-gobject gtk3
-
-# 3. Launch
+# 2. Or launch GTK3 desktop GUI
 ./run.sh
 ```
 
 ### Windows 10 / 11
-```powershell
-# Open PowerShell in the spectra-win folder and run:
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\install_windows.ps1
-```
+Run the native offline installer `dist/spectra_setup_build20261102.1605.exe` or execute `bin/spectra.exe`.

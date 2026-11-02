@@ -41,7 +41,7 @@ Jura coffee machine telemetry divides into two distinct layers:
 To document and add a new Jura model to this repository, follow these steps:
 
 ### 1. Perform a Complete Telemetry & Memory Dump
-Connect your machine via optical adapter and run the W.R.A.T. diagnostic dump:
+Connect your machine via optical adapter and run the SPECTRA diagnostic dump:
 ```bash
 # Dump complete JSON diagnostic state
 python3 cli.py --port /dev/ttyUSB0 --export-json model_dump.json

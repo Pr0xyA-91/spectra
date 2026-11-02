@@ -7,25 +7,21 @@
 
 ## 1. Multi-Device Onboarding & Setup for Agy
 
-When cloning or resuming work on a new machine, the private repository `spectra_dev.git` contains **3 independent branches** that correspond to the 3 editions of the project:
+When cloning or resuming work on a new machine, the private repository `spectra_dev.git` contains **2 active branches** that correspond to the 2 editions of the project:
 
 | Local Directory | Git Branch | Version | Edition Description | Allowed Remotes |
 | :--- | :--- | :--- | :--- | :--- |
-| `~/Projects/spectra` | `main` | `v0.5.1` | Linux Jura-Only Edition (also source for sanitized `public-main`) | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
-| `~/Projects/spectra-mm` | `multi-manufacturer` | `v0.5.1_mm` | Linux Multi-Manufacturer Suite (Jura, Nivona, Kalerm, Jetinno + Web UI) | `origin` (`spectra_dev` **ONLY**) |
-| `~/Projects/spectra-win` | `windows` | `v0.5.1_win` | Windows Cross-Platform Multi-Manufacturer Suite (`.bat` launchers + `COM*` support) | `origin` (`spectra_dev` **ONLY**) |
+| `~/Projects/spectra` | `main` | `Build 20261102.1605` | Linux Multi-Manufacturer & 3-Layer Rust Hybrid Suite | `origin` (`spectra_dev`) & `public` (`spectra` via `./publish_release.sh`) |
+| `~/Projects/spectra-win` | `windows` | `Build 20261102.1605` | Windows Cross-Platform Multi-Manufacturer Suite & Native Installers | `origin` (`spectra_dev` **ONLY**) |
 
 ### Cloning on a New Device
 ```bash
 mkdir -p ~/Projects && cd ~/Projects
 
-# 1. Main Linux Jura-only edition:
+# 1. Main Linux Multi-Manufacturer edition:
 git clone -b main https://github.com/Pr0xyA-91/spectra_dev.git spectra
 
-# 2. Linux Multi-Manufacturer edition:
-git clone -b multi-manufacturer https://github.com/Pr0xyA-91/spectra_dev.git spectra-mm
-
-# 3. Windows Cross-Platform edition:
+# 2. Windows Cross-Platform edition:
 git clone -b windows https://github.com/Pr0xyA-91/spectra_dev.git spectra-win
 ```
 
@@ -733,6 +729,33 @@ conn.close()
      - Bumped build numbers to `Build 20261102.1540` / `BUILD 20261102.1540` across `version.py`, CLI, GUI, and Web UI.
      - Recompiled `web/dist/` production assets via `npm run build`.
      - Recompiled native Windows installer suite: `bin/spectra.exe` (22 MB), `dist/spectra_setup_build20261102.1540.exe` (44 MB), and `dist/spectra_update_build20261102.1540.exe` (812 KB).
+* **Validation**:
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra`): 32/32 tests pass (0 errors, 0 warnings).
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra-win`): 32/32 tests pass (0 errors, 0 warnings).
+  - `python3 -m unittest discover -s .` (`spectra`): 46/46 tests pass (100%).
+  - `python3 -m unittest discover -s .` (`spectra-win`): 46/46 tests pass (100%).
+  - Total: 64 Rust tests + 92 Python tests = 156 tests passing.
+
+---
+
+### Phase 22: Universal Rebranding to Build 20261102.1605, Artifact Cleanup, and Suite Verification (2026-11-02 16:15)
+* **Problem Statement / Objective**:
+  - Execute a comprehensive audit, cleanup, and full rebranding pass across the entire codebase to reflect the unified status (Linux Multi-Manufacturer on `main`, Windows Multi-Manufacturer on `windows`, 3-layer Rust workspace, 5-paradigm web workstation, build-number-only branding).
+* **Implementation Details**:
+  1. *Universal Rebranding to Build 20261102.1605*:
+     - `version.py`: `__build__ = "20261102.1605"`, `__version__ = "Build 20261102.1605"`, `__edition__ = "Linux Multi-Manufacturer & Rust Hybrid"` (in `spectra`), `"Windows Multi-Manufacturer & Rust Hybrid"` (in `spectra-win`).
+     - Web UI: Updated `web/src/components/SpectraWorkspace.jsx` workspace badge to `BUILD 20261102.1605` and recompiled production assets into `web/dist/` via `npm run build` (Vite v6.4.5, 1593 modules transformed, 0 errors).
+     - Python UI & CLI: Purged all legacy semantic versions (`0.5.1`, `0.5.1_win`, `0.6.0-alpha`) and old prototype identifiers (`W.R.A.T.`) across `cli.py`, `gui.py`, `gui_web.py`, `web_server.py`, `memory_mapper.py`, `drivers/`, `test_thermal_and_dual_heaters.py`, and `docs/models/`. Standardized window titles and headers to strict `Build {__build__}` / `BUILD {__build__}` format.
+     - Documentation & Launchers: Rewrote `README.md`, `DEPENDENCIES.md`, and `SPECTRA.desktop` across all repositories to document the unified 2-branch topology (`main` and `windows`), multi-manufacturer drivers (Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno), 3-layer Rust hybrid workspace (`crates/spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`), and 5-paradigm web workstation.
+  2. *Native Win32 Binaries Recompiled (Zig + LLVM-RC)*:
+     - Updated `src_launcher/` (`installer.c`, `installer.rc`, `launcher.c`, `resources.rc`, `updater.c`, `updater.rc`) to Build `20261102.1605`.
+     - Recompiled native PE32+ suite via `src_launcher/build.sh`:
+       * Standalone Launcher: `bin/spectra.exe` (22 MB) & `bin/spectra_build20261102.1605.exe`
+       * Offline Standalone Installer: `dist/spectra_setup_build20261102.1605.exe` (44 MB) & `dist/spectra_setup.exe`
+       * Fast In-Place Updater: `dist/spectra_update_build20261102.1605.exe` (884 KB) & `dist/spectra_update.exe`
+  3. *Repository & Directory Cleanup*:
+     - Removed obsolete superseded build executables from `spectra-win/bin` and `spectra-win/dist`.
+     - Verified clean git state with zero orphan files.
 * **Validation**:
   - `cargo check --workspace` & `cargo test --workspace` (`spectra`): 32/32 tests pass (0 errors, 0 warnings).
   - `cargo check --workspace` & `cargo test --workspace` (`spectra-win`): 32/32 tests pass (0 errors, 0 warnings).

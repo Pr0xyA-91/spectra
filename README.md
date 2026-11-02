@@ -4,130 +4,92 @@
   <img src="docs/brand/spectra_banner.svg" alt="SPECTRA Diagnostic Suite" width="100%">
 </p>
 
-[![Version: 0.5.1_win](https://img.shields.io/badge/version-0.5.0__win-blue.svg)](https://github.com/Pr0xyA-91/spectra)
+[![Build: 20261102.1605](https://img.shields.io/badge/build-20261102.1605-blue.svg)](https://github.com/Pr0xyA-91/spectra)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![GUI](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
+[![Rust: 1.80+](https://img.shields.io/badge/rust-1.80+-orange.svg)](https://www.rust-lang.org/)
+[![GUI: GTK 3 | Web](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: Linux | Windows](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-orange.svg)](https://kernel.org)
+[![Platform: Windows | Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: v0.5.1_win (Windows Edition)** — Cross-platform Multi-Manufacturer Telemetry Engine.
-> **SPECTRA** is an extensible appliance hardware telemetry and diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across both Windows and Linux. Supports live sensor polling, hardware thermal diagnostics, beverage statistics, and maintenance lifecycle inspection with full offline simulation modes.
-> See **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)** for the complete Windows setup guide and **[DEPENDENCIES.md](DEPENDENCIES.md)** for platform dependency breakdowns.
-
-A native Linux diagnostic, telemetry, and statistics extraction suite for **Jura automatic coffee machines** (both modern Generation 7+ / Smart Connect machines and classic TOP-tronic machines) that are unsupported by legacy Windows diagnostic software.
+> **Project Status: Build 20261102.1605 (Windows Multi-Manufacturer & Rust Hybrid Suite)** — Cross-platform Telemetry Engine.
+> **SPECTRA** is an extensible appliance hardware telemetry and logic board diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across Windows and Linux.
+> Includes native PE32+ offline installer (`dist/spectra_setup_build20261102.1605.exe`), fast in-place updater (`dist/spectra_update_build20261102.1605.exe`), standalone launcher (`bin/spectra.exe`), and the 3-layer Rust hybrid workspace (`crates/spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`).
 
 ---
 
 ## 🌟 Overview
 
-The legacy Jura Service Software (from 2016 and earlier) was built around Delphi for 32-bit Windows and only supported older machines with hardcoded databases up to early 2016. Newer machines either trigger permission errors or refuse to yield statistical data.
+The legacy coffee service tools (from 2016 and earlier) were built around 32-bit Windows, lacked support for modern electronic architectures, and only recognized obsolete machines with frozen databases. Newer appliances trigger protocol rejections, encrypted handshake requirements, or locked logic boards.
 
-This application runs natively on Linux (no Wine or Windows VM required) and implements a **Dual-Mode Interrogation Engine**:
-1. **Plain-ASCII Optical Protocol**: Interrogates machines via the official **JURA USB Scanner N 010** or direct optical serial connections. Features optical loopback echo stripping, hardware pacing calibration (~16ms/char), and EEPROM memory block reading (`RT:0000`–`RT:0030`).
-2. **Encrypted Smart Connect Protocol**: Speaks the modern native `@`-protocol with 4:1 wire carrier modulation (`0xDB` base byte), recovered nibble-permutation S-box cipher, and complete dongle challenge-response handshake (`@T0` $\rightarrow$ `@T1` $\rightarrow$ `@t2` $\rightarrow$ `@T3` $\rightarrow$ `@t3`).
+**SPECTRA** runs natively on modern 64-bit Windows (Windows 10 / 11) with zero external script or dependency headaches:
+1. **Jura Diagnostics Engine**: Plain-ASCII optical transceiver protocol (`RT:`, `RE:`, `CS:`, `IC:`, `HZ:`) and modern encrypted Smart Connect `@`-protocol cipher.
+2. **Nivona CafeRomatica Driver**: Native support for NICR 5xx/6xx/7xx/8xx/9xx/10xx and NIVO 810x series.
+3. **Lamanti-KL (Kalerm Platform) Driver**: Diagnostics and live telemetry for Kalerm K95, KLM1601/2601, and commercial platforms.
+4. **Lamanti-JN (Jetinno Platform) Driver**: Commercial HORECA telemetry for Jetinno JLTT, JL08, JL10, JL15, JL28, and JL500 vending series via binary framing and CRC16 validation.
+5. **3-Layer Rust Hybrid Architecture**: Ultra-low-latency HAL, deterministic protocol parsing, Tauri v2 async backend, and native PyO3 C extension (`spectra_py.so`).
+6. **Native Win32 PE32+ Installers**: Compiled with Zig and LLVM-RC, embedding isolated Python 3.12 64-bit runtime, PySerial, and all diagnostic engines with automated Start Menu shortcuts and uninstallers.
 
 ---
 
 ## ✨ Features
 
-- **Native Linux Desktop Application**: Fast, dark-mode GTK 3 desktop application with KPI summary cards, sortable beverage breakdown tables, maintenance cycle progress bars, active alert bitfield inspection, a dedicated **Live Sensors & Hardware** tab with a manual **🔄 Refresh Live Sensors** button, and a live communication console.
-- **Full Headless CLI**: Command-line interface with colored output, progress bar, multi-format export capabilities, and a dedicated `--sensors` (`-s`) flag for rapid live sensor polling.
-- **Live Hardware Sensors & Safety Diagnostics**:
-  - **Accurate Celsius (°C) Temperature Decoding**: Accurately translates raw Jura microcontroller NTC sensor readings into tenths-of-a-degree Celsius (0.1 °C precision) for Coffee Thermoblock (`TB1`), Steam Thermoblock (`TB2`), and Cold Water Intake/Ambient temperature sensors. Automatically evaluates real-time operational thermal status (`Ready to Brew`, `Heating Up`, `Cold / Standby`, `Ready for Steam`).
-  - **Full Dual-Heater & Single-Heater Accommodation**: Built-in architecture detection seamlessly accommodates dual-thermoblock models (e.g., Jura Z10, GIGA series, commercial dual-heater units) and single-thermoblock models (e.g., E8, S8, IMPRESSA XJ5). Dynamically adjusts component diagnostic registers (`RE:0028`) and historical fault counters (`RE:01B3`) to Steam NTC sensors on dual-heater units while presenting single-heater machines with clean `Not Installed (Single Heater Model)` indicators.
-  - **Physical Microswitches & Contacts**: Interrogates water tank level float, drip tray/drawer presence switch, machine readiness state, and CLARIS water filter configuration in real time (`HZ:`).
-  - **Component Health & Safety Verification**: Decodes the 15-bit hardware fault and sensor verification register (`RE:0028`) covering thermoblock NTC short/open circuits, brew unit position alignment, zero-home microswitch, coffee heating element, main power relay, thermal overheat safety cutoff, flowmeter intake/rinse timeouts, ceramic valve, and multiway distribution valves.
-  - **Historical Sensor Trip Counters**: Reads exact lifetime fault trip frequencies (`0x01B0`–`0x01B6`, `0x0103`) directly from EEPROM logs.
-- **170+ Machine Profiles**: Unified database recognizing all generations of Jura machines:
-  - **Modern Gen 7+**: E4, E6, E8, ENA 4/8, D4/D6, S8, J6/J8/J10, Z6/Z8/Z10, C3/C8, Commercial X4/X6/X8/X10, W4/W8, WE6/WE8, and GIGA series (5, 6, 10, W10, X3, X7, X8, X9).
-  - **Classic / Professional**: IMPRESSA XJ5, XJ6, XJ9, XF50, XS90, F50, J9, C5, and WJ500.
-- **Telemetry & Operational Metrics**:
-  - **Serial Number & Production Identification**: Decodes the official 13/14-digit chassis barcode serial number (`YYYYMMDD` + 5-digit sequence), date of manufacture (decoded from days since Jura 1980 epoch), internal unit serial words, and regional destination codes (e.g. `CZ`, `EU`, `US`).
-  - **Beverage Counters**: Grand Total cups dispensed, single vs. double preparations, and per-specialty drink counts.
-  - **Hygiene & Maintenance**: Cleaning cycles, descaling cycles, filter replacements, and rinse counts.
-  - **Lifetime Telemetry**: Active grinder operating time (hours/minutes/seconds), total water throughput in Liters, descaling fluid consumed in Liters, cycles since last service intervention, and hardware appliance identification codes.
-  - **System Alerts**: Decodes live alarm and status bitfields (`@TF:`).
+- **Native Windows Standalone Launcher (`bin/spectra.exe`)**: Single-file executable with embedded runtime. Double-clicking automatically spins up the Web UI and opens your browser; passing CLI flags executes command-line routines.
+- **Offline Installer & Fast In-Place Updater**:
+  - `dist/spectra_setup_build20261102.1605.exe`: Full offline installer bundle (44 MB).
+  - `dist/spectra_update_build20261102.1605.exe`: Fast in-place application updater (884 KB).
+- **5 Interactive UI Paradigms & Web Workstation**:
+  - **Engineering Telemetry**: High-density gauges, strip charts, and component state trees.
+  - **Industrial Process**: Piping & Instrumentation (P&ID) schematics with active solenoid/heater animations.
+  - **Executive KPI**: High-level maintenance readiness, beverage yields, and lifecycle summaries.
+  - **Diagnostic Scopes**: Real-time temperature oscilloscope and live hydraulic flow rate monitoring.
+  - **Memory Matrix**: Real-time EEPROM memory cell viewer with byte-by-byte differential heatmaps.
+- **Accurate Sensor Decoding & Safety Systems**:
+  - **Tenths-of-a-Degree Celsius (°C) Decoding**: Accurately translates raw NTC sensor readings into 0.1 °C precision for Coffee Thermoblock (`TB1`), Steam Thermoblock (`TB2`), and Ambient/Intake NTCs.
+  - **Dual-Heater Accommodation**: Built-in architecture detection seamlessly accommodates dual-thermoblock models (e.g. Z10, GIGA) and single-thermoblock models (e.g. E8, S8).
+  - **Bean Hopper Optical Sensor (`AS:`)**: Net reflection delta ($\Delta = \text{ON} - \text{OFF}$) thermal calibration ($115 \pm 5$ counts) with hysteresis band ($110 < \Delta < 120$).
+  - **Physical Microswitches & Contacts**: Interrogates water tank level float, drip tray presence switch, machine readiness state, and CLARIS water filter configuration in real time (`HZ:`).
+- **170+ Machine Profiles**: Unified database recognizing all generations of Jura machines (Gen 7+, E/ENA/D/S/J/Z/C/X/W/WE/GIGA series, and classic TOP-tronic).
 - **Multi-Format Export**: Export clean diagnostic reports to formatted text (`.txt`), structured JSON (`.json`), or CSV (`.csv`).
-- **Offline Hardware Simulation**: Built-in mock devices (Jura S8, E8, Z10) allow full testing and UI exploration without physical hardware attached.
+- **Hardware Simulation Modes**: Built-in mock devices allow full testing across all vendors without physical hardware attached.
 
 ---
 
 ## 🪟 Windows Quick Start (Windows 10 / 11)
 
-W.R.A.T. runs natively on Windows with **zero external C-library or GTK dependencies required** when using the Web Dashboard or CLI. See **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)** for detailed walkthroughs, COM driver guides, and troubleshooting.
+### Option 1: Native Offline Installer (Recommended)
+1. Run **`dist/spectra_setup_build20261102.1605.exe`** (or `dist/spectra_setup.exe`).
+2. The installer automatically extracts to `%LOCALAPPDATA%\Programs\Spectra`, registers Start Menu shortcuts, and creates a clean uninstaller in Windows *Settings > Installed apps*.
+3. Launch **SPECTRA** from the Start Menu or desktop shortcut.
 
-### 1. Initial Setup (One-Time)
-Run either automated setup method:
-* **PowerShell (Recommended)**:
-  ```powershell
-  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-  .\install_windows.ps1
-  ```
-* **Batch Installer**: Double-click **`install_windows.bat`**.
-* **Manual Setup**:
-  ```cmd
-  python -m pip install -r requirements-win.txt
-  ```
+### Option 2: Portable Standalone Executable
+Run **`bin/spectra.exe`** directly from any folder or USB drive.
 
-### 2. Launching W.R.A.T. on Windows
-* **Web Dashboard (Recommended)**: Double-click **`run_web.bat`** (or run `python gui_web.py`).
-  - Automatically opens a sleek, responsive dark-mode dashboard in your default browser at `http://127.0.0.1:8080`.
-  - Features all 7 live sensor KPI cards, flow rate tracking, cup preparations, maintenance health bars, and JSON/CSV export.
-* **Universal GUI Launcher**: Double-click **`run.bat`** (launches GTK3 if installed, otherwise auto-falls back to Web Dashboard).
-* **Command Line Interface**: Double-click **`run_cli.bat`** (or run `python cli.py --sensors`).
-* **Offline Simulation Demo**: Double-click **`run_demo.bat`** to immediately test telemetry without hardware attached.
-* **Community Model Dumper**: Run `python contrib\dump_machine_spec.py --port COM3` to dump EEPROM and contribute a new model spec.
-
----
-
-## 🚀 Linux Quick Start
-
-### 1. Launch the Desktop GUI
-```bash
-./run.sh
-```
-*(Or launch **W.R.A.T.** from your desktop application launcher / menu).*
-
-### 2. Run from the Command Line (CLI)
-Read diagnostics from a connected machine:
-```bash
-./run.sh --cli -p /dev/ttyUSB0
-```
-
-Read live hardware sensors, microswitches, and fault trip counters only:
-```bash
-./run.sh --cli -p /dev/ttyUSB0 --sensors
-```
-
-Read in Demo / Simulation mode (no hardware required):
-```bash
-./run.sh --cli --demo --demo-model S8
-```
-
-Export report directly to a file:
-```bash
-./run.sh --cli -p /dev/ttyUSB0 -o diagnostic_report.txt
-./run.sh --cli -p /dev/ttyUSB0 -o telemetry.json --format json
-./run.sh --cli -p /dev/ttyUSB0 -o counters.csv --format csv
-```
-
-List detected serial ports:
-```bash
-./run.sh --cli --list-ports
-```
-
-List all 170+ supported machine models:
-```bash
-./run.sh --cli --list-models
+### Option 3: Developer / Python Environment
+```cmd
+python -m pip install -r requirements-win.txt
+python gui_web.py
 ```
 
 ---
 
-## 🔌 Hardware Connection Guide
+## 🏗️ 3-Layer Rust Hybrid Architecture
+
+SPECTRA features a high-performance native Rust core integrated via PyO3:
+
+| Crate | Purpose | Core Responsibilities |
+|---|---|---|
+| [`crates/spectra-hal`](crates/spectra-hal) | Hardware Abstraction Layer | POSIX termios / Win32 serial driver, `tokio-serial` async UART transport, cross-platform port discovery, Android ADB `/dev/ttyS*` bridge. |
+| [`crates/spectra-core`](crates/spectra-core) | Protocol & Memory Core | Zero-allocation byte-level state machine, optical loopback echo stripper, `@`-cipher encoder/decoder, differential EEPROM mapper, bean hopper thermal calibration. |
+| [`crates/spectra-agent`](crates/spectra-agent) | IPC & WebSocket Daemon | High-speed telemetry broadcaster and Tauri v2 async backend. |
+| [`crates/spectra-py`](crates/spectra-py) | PyO3 Native Extension | Bridges high-performance Rust parsing directly into Python (`spectra_py.so`). |
+
+---
+
+## 🔌 Hardware Connection Guide (Windows COM Ports)
 
 ### Option A: Official JURA USB Scanner (N 010)
-Connect the USB scanner to any USB port. The FTDI chip is recognized automatically on Linux as `/dev/ttyUSB0`. Attach the optical head to the machine's front optical port.
+Connect the USB scanner to any USB port. Windows automatically assigns a `COM*` port (e.g. `COM3`). Attach the optical head to the machine's front optical port.
 
 ### Option B: 5V USB-to-UART Adapter (FTDI FT232R, CP2102, CH340)
 For machines with internal or external 4-pin service ports:
@@ -139,90 +101,43 @@ For machines with internal or external 4-pin service ports:
   - Pin 3: `RX` (into machine) $\rightarrow$ Adapter `TX`
   - Pin 4: `+5V VCC` $\rightarrow$ *(Leave disconnected if using USB adapter to prevent ground loops)*.
 
-### Option C: Dangerous Prototypes Bus Pirate v3.6
-The Bus Pirate v3.6 can be used as a transparent 5V-tolerant UART bridge:
-
-1. **Wiring**:
-   - Jura Pin 1 (`GND`) $\rightarrow$ Bus Pirate `GND`
-   - Jura Pin 2 (`TX` machine) $\rightarrow$ Bus Pirate `MISO` (BP RX - 5V tolerant)
-   - Jura Pin 3 (`RX` machine) $\rightarrow$ Bus Pirate `MOSI` (BP TX)
-   - *(Optional for 5V pullup)*: Jura Pin 4 (`+5V`) $\rightarrow$ Bus Pirate `VPU` (Pullup voltage input).
-
-2. **Configure Transparent UART Bridge Mode on Bus Pirate**:
-   Connect via serial terminal at 115200 baud (e.g., `picocom -b 115200 /dev/ttyUSB0`):
-   ```
-   HiZ> m              (Select mode)
-   3. UART             (Select UART)
-   Set speed: 3 (9600 bps)
-   Data bits and parity: 1 (8/N)
-   Stop bits: 1 (1)
-   Receive polarity: 1 (Idle 1)
-   Output type: 1 (Normal 3.3V) or 2 (Open drain with VPU connected to 5V)
-   UART> (3)           (Macro 3: Transparent UART bridge with flow control)
-   Are you sure? y
-   ```
-   Exit your terminal (`Ctrl+A, Ctrl+X`). The Bus Pirate is now a transparent 9600-baud UART bridge. Run `./run.sh --cli -p /dev/ttyUSB0`.
-
----
-
-## 🔒 Permissions on Linux
-
-Serial adapters (`/dev/ttyUSB*`) belong to the `uucp` group on Arch Linux (or `dialout` on Debian/Ubuntu). Grant your user access:
-```bash
-# Arch / Omarchy
-sudo usermod -aG uucp $USER
-
-# Ubuntu / Debian
-sudo usermod -aG dialout $USER
-```
-*(Log out and log back in for group membership to take effect).*
-
 ---
 
 ## 📁 Repository Structure
 
 ```
 .
-├── run.bat                 # Windows Launcher (auto-detects GTK3 or Web UI)
-├── run_web.bat             # Dedicated Windows Web Dashboard launcher
-├── run_cli.bat             # Dedicated Windows CLI launcher
-├── install_windows.bat     # Windows batch dependency and environment installer
-├── install_windows.ps1     # Automated PowerShell installer with shortcut creation
-├── INSTALL_WINDOWS.md      # Comprehensive Windows installation and driver guide
-├── DEPENDENCIES.md         # Runtime requirements & serial driver reference
+├── bin/                    # Standalone PE32+ launcher (spectra.exe)
+├── dist/                   # Native offline installer & updater bundles
+├── src_launcher/           # Native Win32 C sources, resources, and Zig build script
+├── Cargo.toml              # Rust 3-layer workspace manifest
+├── crates/
+│   ├── spectra-hal/        # Serial POSIX & Win32 async transport
+│   ├── spectra-core/       # Jura protocol state machine & cipher
+│   ├── spectra-agent/      # Tauri v2 async backend & WS broadcaster
+│   └── spectra-py/         # PyO3 native spectra_py.so extension
+├── drivers/                # Unified multi-manufacturer driver suite
+│   ├── base.py             # Common appliance driver abstraction
+│   ├── jura/               # Jura optical & Smart Connect driver
+│   ├── nivona/             # Nivona CafeRomatica driver
+│   ├── lamanti_kl/         # Lamanti Kalerm platform driver
+│   └── lamanti_jn/         # Lamanti Jetinno HORECA driver
+├── web/                    # 5-Paradigm React + Vite Web UI
+│   ├── src/                # Modern telemetry & P&ID components
+│   └── dist/               # Production compiled UI bundle
 ├── gui.py                  # GTK 3 desktop application
-├── gui_web.py              # Zero-dependency Web Dashboard
+├── gui_web.py              # Lightweight fallback web dashboard
+├── web_server.py           # 5-paradigm API & static file web server
 ├── cli.py                  # Command-line interface runner
-├── stats_collector.py      # Dual-mode diagnostics orchestrator & report exporters
-├── jura_protocol.py        # 4:1 wire carrier encoder/decoder & cipher routines
-├── serial_io.py            # Serial driver with COM* auto-discovery
-├── profiles_db.py          # Machine profile resolver & database lookup engine
-├── profiles_data.json      # Database of 170+ Jura machine profiles & memory maps
-├── contrib/                # Community tools & specification dumper
-│   └── dump_machine_spec.py # Automated EEPROM dump & model spec generator
+├── stats_collector.py      # Telemetry orchestrator & report exporters
+├── memory_mapper.py        # Differential EEPROM memory mapper & logic scope
+├── profiles_db.py          # Machine profile resolver & database engine
+├── profiles_data.json      # Database of 170+ machine profiles & memory maps
 ├── docs/                   # Reverse-engineering protocol & memory documentation
-│   ├── JURA_MEMORY_MAP.md  # Universal EEPROM & telemetry register map
-│   └── models/             # Verified model-specific hardware specifications
-│       ├── README.md       # Model index & contribution template
-│       ├── EF518_IMPRESSA_XJ5.json # Structured machine specification
-│       └── EF518_IMPRESSA_XJ5.md   # IMPRESSA XJ5 hardware & memory profile
+├── DEPENDENCIES.md         # Runtime requirements & dependency reference
 ├── LICENSE                 # MIT License
-└── README.md               # Documentation & hardware guide
+└── README.md               # Unified Windows platform documentation
 ```
-
----
-
-## 📚 Protocol & Memory Documentation
-
-Detailed, verified technical specifications are maintained in the [`docs/`](docs/) directory for researchers and open-source contributors:
-
-* **[Universal Memory & Telemetry Map (`docs/JURA_MEMORY_MAP.md`)](docs/JURA_MEMORY_MAP.md)**: Master cross-platform reference documenting platform invariants (`[UNIVERSAL]`), generation variants (`[FAMILY-SHARED]`), and model-specific markers across 55+ Jura families.
-* **[Model-Specific Specifications (`docs/models/`)](docs/models/)**: Directory of detailed hardware profiles, optical sensor calibrations (`AS:`), external commercial plumbing registers, and custom recipe matrices:
-  * **[IMPRESSA XJ5 Professional GII (`docs/models/EF518_IMPRESSA_XJ5.md`)](docs/models/EF518_IMPRESSA_XJ5.md)** (`EF518M` / `EF518D` / Art. `13705`).
-  * See [`docs/models/README.md`](docs/models/README.md) for contribution guidelines and templates to document additional Jura models.
-* **[Community Auto-Dumper Tool (`contrib/dump_machine_spec.py`)](contrib/dump_machine_spec.py)**: Automated utility to dump EEPROM memory, interrogate gateways, and generate ready-to-commit specification `.json` and `.md` files.
-* **[Windows Installation Guide (`INSTALL_WINDOWS.md`)](INSTALL_WINDOWS.md)**: Detailed setup steps, COM port verification, and troubleshooting.
-* **[Software & Hardware Dependencies (`DEPENDENCIES.md`)](DEPENDENCIES.md)**: Comprehensive breakdown of runtime requirements, Python versions, serial drivers, and hardware adapters across all editions.
 
 ---
 
@@ -240,7 +155,7 @@ This project builds upon the shared knowledge, protocol analysis, and reverse-en
 - **tinaught ([Jura-Coffee-Machine-Home-Assistant](https://github.com/tinaught/Jura-Coffee-Machine-Home-Assistant)) & bpeoples**: Home Assistant integration, EEPROM word mapping, and beverage counter offsets.
 - **Smart Connect Protocol Researchers**: Reverse-engineering of modern Jura bus communication, 4:1 wire carrier modulation (`0xDB` base byte), and dongle challenge-response handshake sequence.
 - **Dangerous Prototypes**: Creators of the Bus Pirate hardware tool used for multi-protocol bus debugging.
-- **Google Antigravity (Agy / DeepMind)**: Advanced reverse-engineering, dynamic Brew Unit position tracking, optical infrared bean hopper sensor (`AS:`) decoding, real-time multi-manufacturer telemetry architectures, and Windows cross-platform implementation.
+- **Google Antigravity (Agy / DeepMind)**: Advanced reverse-engineering, 3-layer Rust hybrid workspace, dynamic Brew Unit position tracking, optical infrared bean hopper sensor (`AS:`) decoding, real-time multi-manufacturer telemetry architectures, and Windows cross-platform implementation.
 - **Kaffee-Welt & Kaffeevollautomaten Forum communities**: Pioneer technician insights into the classic Jura filling loop (*"System füllen Endlosschleife"*), thermoblock NTC temperature registers, and hydraulic diagnostic fault codes.
 
 ---

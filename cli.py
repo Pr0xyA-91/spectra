@@ -16,8 +16,8 @@ import stats_collector as sc
 try:
     from version import __version__, __build__
 except ImportError:
-    __version__ = "0.5.1_win"
-    __build__ = "20261029.1130"
+    __build__ = "20261102.1605"
+    __version__ = f"Build {__build__}"
 
 
 def print_banner():
@@ -28,16 +28,16 @@ def print_banner():
   ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══██╗██╔══██║
   ███████║██║     ███████╗╚██████╗   ██║   ██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝
-   — Universal Hardware Telemetry & Logic Board Diagnostics (v{__version__}, build {__build__}) —
+   — Universal Hardware Telemetry & Logic Board Diagnostics (Build {__build__}) —
     """
     print(banner)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description=f"SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (v{__version__}, build {__build__})"
+        description=f"SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics (Build {__build__})"
     )
-    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA {__version__} (build {__build__}) (Hardware Telemetry & Logic Board Diagnostics)")
+    parser.add_argument("-V", "--version", action="version", version=f"SPECTRA Build {__build__} (Hardware Telemetry & Logic Board Diagnostics)")
     parser.add_argument("--cli", action="store_true", help="Run in command-line mode")
     parser.add_argument("-p", "--port", help="Serial port to connect to (e.g. /dev/ttyUSB0, /dev/ttyACM0, or demo)")
     parser.add_argument("-b", "--baud", type=int, default=9600, help="Baud rate (default: 9600)")

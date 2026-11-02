@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Lamanti-KL (Kalerm Platform) Appliance Driver
+SPECTRA - Lamanti-KL (Kalerm Platform) Appliance Driver
 Supports Lamanti E-line (E30, E60), X-line (X680, X685), O-line, and Kalerm K95/KLM series.
 Communicates via Modbus RTU serial protocol (9600 / 115200 baud, 8N1).
 """
@@ -77,7 +77,7 @@ def verify_modbus_crc(data: bytes) -> bool:
 
 
 class LamantiKLDriver(BaseApplianceDriver):
-    """Lamanti-KL (Kalerm Platform) appliance driver for W.R.A.T."""
+    """Lamanti-KL (Kalerm Platform) appliance driver for SPECTRA."""
 
     vendor: str = "Lamanti-KL"
     name: str = "Lamanti Kalerm Diagnostics Module"

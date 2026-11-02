@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-W.R.A.T. - Jura Appliance Driver
+SPECTRA - Jura Appliance Driver
 Implements native Plain-ASCII Optical Transceiver Protocol & Smart Connect @-Protocol.
 Supports 170+ Jura models across all generations.
 """
@@ -21,7 +21,7 @@ import stats_collector as sc
 
 
 class JuraDriver(BaseApplianceDriver):
-    """Native Jura appliance driver for W.R.A.T."""
+    """Native Jura appliance driver for SPECTRA."""
 
     vendor: str = "Jura"
     name: str = "Jura Diagnostics Module"
