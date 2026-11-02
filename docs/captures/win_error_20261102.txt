@@ -1,0 +1,14 @@
+Exception occurred during processing of request from ('127.0.0.1', 56010)
+Traceback (most recent call last):
+  File "socketserver.py", line 318, in _handle_request_noblock
+  File "socketserver.py", line 349, in process_request
+  File "socketserver.py", line 362, in finish_request
+  File "socketserver.py", line 761, in __init__
+  File "http\server.py", line 436, in handle
+  File "http\server.py", line 424, in handle_one_request
+  File "C:\Users\phabr\AppData\Local\Programs\SPECTRA\web_server.py", line 790, in do_GET
+    self._send_json(data)
+  File "C:\Users\phabr\AppData\Local\Programs\SPECTRA\web_server.py", line 1211, in _send_json
+    self.wfile.write(payload)
+  File "socketserver.py", line 840, in write
+ConnectionAbortedError: [WinError 10053] Software v hostitelském počítači ukončil vytvořené připojení
