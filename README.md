@@ -12,7 +12,7 @@
 [![Platform: Windows | Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Build 20261102.1605 (Windows Multi-Manufacturer & Rust Hybrid Suite)** — Cross-platform Telemetry Engine.
+> **Project Status: Build 20261102.1738 (Windows Multi-Manufacturer & Rust Hybrid Suite)** — Cross-platform Telemetry Engine.
 > **SPECTRA** is an extensible appliance hardware telemetry and logic board diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)** across Windows and Linux.
 > Includes native PE32+ offline installer (`dist/spectra_setup_build20261102.1605.exe`), fast in-place updater (`dist/spectra_update_build20261102.1605.exe`), standalone launcher (`bin/spectra.exe`), and the 3-layer Rust hybrid workspace (`crates/spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`).
 
