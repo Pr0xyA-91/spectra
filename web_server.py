@@ -48,6 +48,7 @@ import stats_collector as sc
 import gui_widgets
 import memory_mapper
 import copy
+import spectra_probe
 from version import __version__, __build__, __edition__
 
 # Global Session State
@@ -858,7 +859,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.wfile.write(html_content.encode("utf-8"))
             return
 
-        # 6. API: Export Data (JSON, CSV, Plain Text Report)
+        # 6. API: Export Data (JSON, CSV, Plain Text Report, Diagnostic Capture Bundle)
         elif url.path == "/api/export":
             port = params.get("port", [""])[0].strip()
             fmt = params.get("format", ["json"])[0].lower()
@@ -867,30 +868,51 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 return
 
             with _session_lock:
-                if _active_session is None or _current_port != port or _last_stats_cache is None:
-                    self._send_json({
-                        "error": "Machine data has not been read yet. Please interrogate machine first before exporting.",
-                        "success": False
-                    })
-                    return
-
-                safe_model = re.sub(r'[^\w\-_]', '_', str(_active_session.model_family or "appliance"))
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-                if fmt == "csv":
-                    content = _active_session.export_csv()
-                    mime = "text/csv; charset=utf-8"
-                    ext = "csv"
-                elif fmt == "text" or fmt == "txt":
-                    content = _active_session.export_text_report()
-                    mime = "text/plain; charset=utf-8"
-                    ext = "txt"
-                else:
-                    content = _active_session.export_json()
+                if fmt in ("capture", "dump"):
+                    # Full hardware diagnostic capture bundle (raw EEPROM + gateways)
+                    safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                    owns = False
+                    if safe_conn is None:
+                        safe_conn = serial_io.JuraSerialConnection(port)
+                        owns = True
+                    try:
+                        bundle = spectra_probe.capture_machine_bundle(safe_conn)
+                    finally:
+                        if owns:
+                            safe_conn.close()
+
+                    content = json.dumps(bundle, indent=2, ensure_ascii=False)
+                    safe_model = re.sub(r'[^\w\-_]', '_', str(bundle.get("identity", {}).get("model_name") or "appliance"))
+                    filename = f"spectra_capture_{safe_model}_{timestamp}.json"
                     mime = "application/json; charset=utf-8"
                     ext = "json"
+                else:
+                    if _active_session is None or _current_port != port or _last_stats_cache is None:
+                        self._send_json({
+                            "error": "Machine data has not been read yet. Please interrogate machine first before exporting.",
+                            "success": False
+                        })
+                        return
 
-            filename = f"spectra_export_{safe_model}_{timestamp}.{ext}"
+                    safe_model = re.sub(r'[^\w\-_]', '_', str(_active_session.model_family or "appliance"))
+
+                    if fmt == "csv":
+                        content = _active_session.export_csv()
+                        mime = "text/csv; charset=utf-8"
+                        ext = "csv"
+                    elif fmt == "text" or fmt == "txt":
+                        content = _active_session.export_text_report()
+                        mime = "text/plain; charset=utf-8"
+                        ext = "txt"
+                    else:
+                        content = _active_session.export_json()
+                        mime = "application/json; charset=utf-8"
+                        ext = "json"
+
+                    filename = f"spectra_export_{safe_model}_{timestamp}.{ext}"
+
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
@@ -1018,6 +1040,41 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         "cmd": cmd,
                         "response": resp or "[NO_REPLY]",
                         "timestamp": time.strftime("%H:%M:%S")
+                    })
+                except Exception as e:
+                    self._send_json({"error": str(e), "success": False})
+            return
+
+        # 1b. API: Diagnostic Hardware Dump Bundle Capture
+        elif url.path == "/api/export_capture":
+            port = data.get("port", "").strip()
+            joe_csv = data.get("joe_csv", "").strip()
+
+            if not port or not is_valid_port(port):
+                self._send_json({"error": "Invalid serial port", "success": False})
+                return
+
+            joe_data = spectra_probe.parse_joe_csv_text(joe_csv) if joe_csv else {}
+            with _session_lock:
+                try:
+                    safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                    owns = False
+                    if safe_conn is None:
+                        safe_conn = serial_io.JuraSerialConnection(port)
+                        owns = True
+                    try:
+                        bundle = spectra_probe.capture_machine_bundle(safe_conn, joe_data=joe_data)
+                    finally:
+                        if owns:
+                            safe_conn.close()
+
+                    safe_model = re.sub(r'[^\w\-_]', '_', str(bundle.get("identity", {}).get("model_name") or "appliance"))
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    filename = f"spectra_capture_{safe_model}_{timestamp}.json"
+                    self._send_json({
+                        "success": True,
+                        "filename": filename,
+                        "bundle": bundle
                     })
                 except Exception as e:
                     self._send_json({"error": str(e), "success": False})
@@ -1176,7 +1233,7 @@ def main(auto_open: bool = False):
     print("[*] Serving Next-Gen Multi-Paradigm UI connected to live hardware adapters.")
     print("=" * 78)
 
-    # Automatically launch browser on Windows or when auto_open is True
+    # Automatically launch browser on Windows or when auto_open is True or --open is passed
     if auto_open or sys.platform.startswith("win") or "--open" in sys.argv:
         try:
             import webbrowser

@@ -47,11 +47,8 @@ except ImportError:
 SAFE_READ_COMMANDS = ("TY:", "TL:", "TY$:", "TL$:", "IC:", "CS$:", "HZ:", "AS:", "RT:", "RE:")
 
 
-def parse_joe_csv(filepath: str) -> Dict[str, Any]:
-    """Parse an official J.O.E. app CSV export file."""
-    if not filepath or not os.path.isfile(filepath):
-        return {}
-
+def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
+    """Parse lines of an official J.O.E. app CSV export."""
     result = {
         "model_name": "",
         "article_number": "",
@@ -63,17 +60,6 @@ def parse_joe_csv(filepath: str) -> Dict[str, Any]:
     }
 
     current_section = None
-    encodings = ["utf-8", "latin1", "cp1252", "iso-8859-1"]
-    lines = []
-
-    for enc in encodings:
-        try:
-            with open(filepath, "r", encoding=enc) as f:
-                lines = f.readlines()
-            break
-        except (UnicodeDecodeError, IOError):
-            continue
-
     for raw_line in lines:
         line = raw_line.strip()
         result["raw_lines"].append(line)
@@ -123,6 +109,32 @@ def parse_joe_csv(filepath: str) -> Dict[str, Any]:
                         result["products"][key] = val_str
 
     return result
+
+
+def parse_joe_csv_text(csv_text: str) -> Dict[str, Any]:
+    """Parse J.O.E. CSV from raw string content."""
+    if not csv_text:
+        return {}
+    return parse_joe_csv_lines(csv_text.splitlines())
+
+
+def parse_joe_csv(filepath: str) -> Dict[str, Any]:
+    """Parse an official J.O.E. app CSV export file from disk."""
+    if not filepath or not os.path.isfile(filepath):
+        return {}
+
+    encodings = ["utf-8", "latin1", "cp1252", "iso-8859-1"]
+    lines = []
+
+    for enc in encodings:
+        try:
+            with open(filepath, "r", encoding=enc) as f:
+                lines = f.readlines()
+            break
+        except (UnicodeDecodeError, IOError):
+            continue
+
+    return parse_joe_csv_lines(lines)
 
 
 def query_gateways(conn) -> Dict[str, str]:
@@ -393,6 +405,57 @@ def generate_mock_python_code(gateways: Dict[str, str], eeprom: Dict[int, int], 
     return "\n".join(lines)
 
 
+def capture_machine_bundle(
+    conn,
+    joe_data: Optional[Dict[str, Any]] = None,
+    max_words: int = 0,
+    on_progress=None
+) -> Dict[str, Any]:
+    """
+    Safely interrogate gateways, sweep EEPROM, decode identity,
+    correlate ground truth, and return self-contained capture bundle dictionary.
+    """
+    gateways = query_gateways(conn)
+
+    # Determine geometry
+    if max_words <= 0:
+        tl = gateways.get("TL:", "").upper()
+        ty = gateways.get("TY:", "").upper()
+        port_name = getattr(conn, "raw_port_label", getattr(conn, "port_name", ""))
+        if "EF529" in ty or "D4" in port_name.upper():
+            max_words = 1024
+        elif "RL78" in tl or "EF533" in ty or "EF535" in ty or "EF536" in ty:
+            probe_200 = conn.query_ascii("RT:0200", timeout=1.0)
+            if probe_200 and probe_200.lower().startswith("rt:") and not probe_200[3:].startswith("0000" * 16):
+                max_words = 1024
+            else:
+                max_words = 512
+        else:
+            max_words = 512
+
+    eeprom = sweep_eeprom(conn, max_words=max_words, on_progress=on_progress)
+    identity = decode_machine_identity(eeprom, gateways)
+    model_name = (joe_data or {}).get("model_name") or identity.get("article_number") or "Jura_Appliance"
+    identity["model_name"] = model_name
+
+    correlations = correlate_with_joe(eeprom, joe_data or {}) if joe_data else {}
+    mock_code = generate_mock_python_code(gateways, eeprom, model_name)
+
+    return {
+        "metadata": {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "probe_version": "1.1.0",
+            "port": getattr(conn, "raw_port_label", getattr(conn, "port_name", "UNKNOWN"))
+        },
+        "identity": identity,
+        "gateways": gateways,
+        "joe_ground_truth": joe_data or {},
+        "correlations": correlations,
+        "mock_python_snippet": mock_code,
+        "eeprom_words": {f"0x{addr:04X}": val for addr, val in sorted(eeprom.items())}
+    }
+
+
 def build_text_report(bundle: Dict[str, Any]) -> str:
     """Construct a clean diagnostic text report for human technician review."""
     meta = bundle["metadata"]
@@ -602,31 +665,6 @@ Examples:
         sys.exit(1)
 
     try:
-        # 4. Interrogate Hardware Gateways
-        print("[*] Interrogating hardware bus gateways (TY:, TL:, TY$:, TL$:, IC:, CS$:, HZ:, AS:)...")
-        gateways = query_gateways(conn)
-        for cmd, resp in gateways.items():
-            print(f"    {cmd:<6} -> {resp}")
-
-        # Determine geometry
-        max_words = args.words
-        if max_words <= 0:
-            tl = gateways.get("TL:", "").upper()
-            ty = gateways.get("TY:", "").upper()
-            # D4 or platforms with 64 blocks
-            if "EF529" in ty or "D4" in port_name.upper():
-                max_words = 1024
-            elif "RL78" in tl or "EF533" in ty or "EF535" in ty or "EF536" in ty:
-                # RL78 models: check if block 0x0200 responds with valid data
-                probe_200 = conn.query_ascii("RT:0200", timeout=1.0)
-                if probe_200 and probe_200.lower().startswith("rt:") and not probe_200[3:].startswith("0000" * 16):
-                    max_words = 1024
-                else:
-                    max_words = 512
-            else:
-                max_words = 512
-
-        print(f"\n[*] Sweeping EEPROM memory space ({max_words} words, {max_words // 16} blocks)...")
         bar_len = 30
         def on_prog(pct, blk):
             filled = int((pct / 100.0) * bar_len)
@@ -634,17 +672,21 @@ Examples:
             sys.stdout.write(f"\r    [{bar}] {pct:>3}% (Block 0x{blk:04X})")
             sys.stdout.flush()
 
-        eeprom = sweep_eeprom(conn, max_words=max_words, on_progress=on_prog)
+        print("[*] Interrogating hardware bus gateways & sweeping EEPROM memory...")
+        bundle = capture_machine_bundle(
+            conn,
+            joe_data=joe_data,
+            max_words=args.words,
+            on_progress=on_prog
+        )
         print()
-        print(f"[+] EEPROM dump completed successfully: {len(eeprom)} words captured.")
+        print(f"[+] Capture completed successfully: {len(bundle['eeprom_words'])} words captured.")
 
     finally:
         conn.close()
 
-    # 5. Decode Identity
-    identity = decode_machine_identity(eeprom, gateways)
-    model_name = joe_data.get("model_name") or identity.get("article_number") or "Jura_Appliance"
-    identity["model_name"] = model_name
+    identity = bundle["identity"]
+    model_name = identity["model_name"]
     print(f"\n[+] Machine Identity Decoded:")
     print(f"    Platform Family : {identity['platform_family']}")
     print(f"    Model Name      : {model_name}")
@@ -652,36 +694,14 @@ Examples:
     print(f"    Serial Number   : {identity['serial_number']}")
     print(f"    Production Date : {identity['production_date']}")
 
-    # 6. Correlate with J.O.E.
-    correlations = {}
-    if joe_data:
-        print("\n[*] Correlating ground-truth counts with EEPROM registers...")
-        correlations = correlate_with_joe(eeprom, joe_data)
-        summary = correlations["summary"]
+    if joe_data and bundle.get("correlations"):
+        summary = bundle["correlations"]["summary"]
+        print("\n[*] Ground-Truth Correlation Analysis:")
         print(f"    Products Matched    : {summary['matched_products']} / {summary['total_products_checked']}")
         print(f"    Maintenance Matched : {summary['matched_maint']} / {summary['total_maint_checked']}")
-
-    # 7. Generate Python mock seed
-    mock_code = generate_mock_python_code(gateways, eeprom, model_name)
-
-    # 8. Package Bundle
     timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_model = re.sub(r'[^A-Za-z0-9_]', '_', model_name).strip('_')
     prefix = args.out or f"spectra_capture_{clean_model}_{timestamp_str}"
-
-    bundle = {
-        "metadata": {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "probe_version": "1.0.0",
-            "port": port_name
-        },
-        "identity": identity,
-        "gateways": gateways,
-        "joe_ground_truth": joe_data,
-        "correlations": correlations,
-        "mock_python_snippet": mock_code,
-        "eeprom_words": {f"0x{addr:04X}": val for addr, val in sorted(eeprom.items())}
-    }
 
     # 9. Save JSON bundle & human text report
     json_filename = f"{prefix}.json"

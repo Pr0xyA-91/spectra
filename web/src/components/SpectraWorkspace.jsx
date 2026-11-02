@@ -136,6 +136,9 @@ export default function SpectraWorkspace() {
 
   // Export Modal Dialog State
   const [showExportModal, setShowExportModal] = useState(false);
+  const [joeCsvContent, setJoeCsvContent] = useState('');
+  const [joeFileName, setJoeFileName] = useState('');
+  const [isDumping, setIsDumping] = useState(false);
 
   // Beverage Filter
   const [bevSearch, setBevSearch] = useState('');
@@ -371,6 +374,55 @@ export default function SpectraWorkspace() {
     if (!selectedPort) return;
     window.location.href = `/api/export?port=${encodeURIComponent(selectedPort)}&format=${fmt}`;
     setShowExportModal(false);
+  };
+
+  const handleJoeFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setJoeCsvContent('');
+      setJoeFileName('');
+      return;
+    }
+    setJoeFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setJoeCsvContent(event.target?.result || '');
+    };
+    reader.readAsText(file);
+  };
+
+  const handleTriggerDumpCapture = async () => {
+    if (!selectedPort) return;
+    setIsDumping(true);
+    try {
+      const res = await fetch('/api/export_capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          port: selectedPort,
+          joe_csv: joeCsvContent
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.bundle) {
+        const blob = new Blob([JSON.stringify(data.bundle, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename || 'spectra_capture.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setShowExportModal(false);
+      } else {
+        alert(data.error || 'Failed to capture diagnostic dump.');
+      }
+    } catch (err) {
+      alert(`Diagnostic dump capture failed: ${err.message}`);
+    } finally {
+      setIsDumping(false);
+    }
   };
 
   // Derived Telemetry Values (EMPTY until machine is read)
@@ -1368,6 +1420,51 @@ export default function SpectraWorkspace() {
                 </div>
                 <Download className="w-4 h-4 text-gray-400" />
               </button>
+
+              <div className="pt-3 border-t border-gray-800">
+                <div className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  Remote Engineering &amp; Archetype Capture
+                </div>
+                <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded-lg space-y-2.5">
+                  <div>
+                    <div className="font-bold text-purple-300 flex items-center justify-between">
+                      <span>Full Hardware Diagnostic Dump (.json)</span>
+                      {isDumping && <span className="text-[10px] text-purple-400 animate-pulse font-mono">Sweeping EEPROM...</span>}
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">
+                      Sweeps raw EEPROM memory and bus gateways so engineers can reproduce and fix new machines offline.
+                    </div>
+                  </div>
+
+                  <div className="pt-1 border-t border-purple-900/30">
+                    <label className="block text-[11px] text-gray-300 font-medium mb-1">
+                      Attach J.O.E. App CSV Export (Optional):
+                    </label>
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={handleJoeFileUpload}
+                      className="w-full text-[11px] text-gray-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-medium file:bg-purple-900/50 file:text-purple-300 hover:file:bg-purple-800/60 cursor-pointer"
+                    />
+                    {joeFileName && (
+                      <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+                        <Check className="w-3 h-3 text-emerald-400" />
+                        <span>Attached: {joeFileName}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleTriggerDumpCapture}
+                    disabled={isDumping || !selectedPort}
+                    className="w-full mt-2 py-2.5 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{isDumping ? 'Sweeping & Correlating Dump...' : 'Download Diagnostic Capture Bundle'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
