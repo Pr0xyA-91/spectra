@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 __version__ = "0.6.0-alpha"
-__build__ = "20261030.1630"
+__build__ = "20261102.1203"
 __edition__ = "Windows Edition"
 
 
@@ -40,7 +40,7 @@ def update_build(new_build: str = None) -> str:
 
     updated = re.sub(
         r'__build__\s*=\s*"[^"]*"',
-        f'__build__ = "{new_build}"',
+        f'__build__ = "20261102.1203"',
         content
     )
     file_path.write_text(updated, encoding="utf-8")

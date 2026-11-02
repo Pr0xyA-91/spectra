@@ -607,3 +607,38 @@ conn.close()
 
 
 
+
+---
+
+### Phase 18: Jura WE8 / WE8 (EA) Telemetry Parity, Renesas RL78 EEPROM Mapping & Substring Fix (2026-11-02)
+* **Problem Statement**:
+  - Connected customer Jura machine (`/dev/ttyUSB0`) read out incorrectly in SPECTRA: beverages were mismatched/missing, maintenance counters were incomplete, and model resolved erroneously as generic E8.
+  - Official JURA Operating Experience (J.O.E.) export (`/home/a91/Downloads/WE8.csv`) demonstrated ground-truth statistics: Model WE8 (EA), Article 15420, 17 distinct beverages, 6 maintenance counters, and 3 cockpit percentage indicators.
+* **Root Cause Analyses**:
+  1. *Model Matching Collision*: In `profiles_db.py`, `if fam and fam.upper() in target:` matched `"E8"` inside `"WE8"`, causing WE8 machines to match the generic E8 profile.
+  2. *Hardware Platform Mapping*: The WE8 (EA) Renesas RL78 logic board (`EF533M V02.09` / `BL_RL78 V01.31`) stores beverage statistics across Block `0x0180` (`0x0180`..`0x018F`) and `0x017F`, and maintenance telemetry across `0x0007..0x0009` and `0x0020..0x0022`. Previous logic only interrogated Block `0x0000`, causing 390 Cappuccinos to show as "2 Espressi", 137 Ristrettos as "1 Espresso", and omitted 11 other beverages entirely.
+  3. *Cockpit Life Percentages*: WE8 stores maintenance life percentages in EEPROM words `0x0163` (Cleaning 30%), `0x0162` (Descaling 0%), and `0x01E1` (Filter Change 10%).
+  4. *Article Number Identification*: Factory article number is encoded across words `0x007E` and `0x007F` (high bytes `0x3C` + `0x3C` = `0x3C3C` -> decimal `15420`).
+* **Fix & Architecture**:
+  1. `profiles_db.py`: Fixed substring collision by enforcing exact matching first, followed by regex word-boundary matching `\bWE8\b`. Added direct lookup by Article Number in `get_model_spec()`.
+  2. `docs/models/EF535M_WE8.json` & `EF535M_WE8.md`: Documented full technical specification for WE8 (EA) / WE8 (Articles 15420, 15421, 15141, 15144), listing all 17 beverage registers, 6 maintenance registers, and cockpit registers.
+  3. `profiles_data.json`: Updated `EF535`, `EF535V2`, `EF535M`, `EF535D` with the complete 17-beverage suite and 6 maintenance counters.
+  4. `stats_collector.py`:
+     - Added WE8 detection via EF code (`EF535` / `EF533`) and model family.
+     - Added block reads for `0x70, 0xE0, 0x160, 0x170, 0x180, 0x1E0` and individual fallback registers (`0x20`, `0x21`, `0x22`, `0x17F`, `0x162`, `0x163`, `0x1E1`).
+     - Decoded consolidated Block `0x0180` / `0x017F` beverage table (17 beverages), maintenance counters (6 counters), and cockpit percentages (3 percentages).
+     - Expanded `ARTICLE_MODEL_MAP` to map 15420 / 15421 to `WE8 (EA)` and reload refined model profiles.
+  5. `serial_io.py`: Added `DEMO-WE8` offline simulated machine pre-seeded with exact `WE8.csv` EEPROM data and gateways (`TY:EF533M V02.09`, `TY$:EF533D V02.04`, `TL:BL_RL78 V01.31`, `IC:1389`).
+  6. `test_we8_mapping.py`: Created comprehensive unit test verifying 100% numerical parity against `WE8.csv`.
+  7. Mirrored all changes and ported platform-specific nuances across `spectra`, `spectra-mm`, and `spectra-win`.
+* **Validation**:
+  - Live customer machine interrogation on `/dev/ttyUSB0` matches `WE8.csv` with 100% precision:
+    - Model: WE8 (EA) (Article 15420)
+    - All 17 beverages: Ristretto (137), Espresso (1450), Coffee (7233), Cappuccino (390), Macchiato (31), Latte macchiato (50), Portion of milk (72), Hot water (183), Product with ground coffee (10), 2 x Ristretto (4), 2 x Espresso (176), 2 x Coffee (20), Hot water for green tea (75), Flat white (117), Special coffee (901), Espresso doppio (354), 2 x Special coffee (5).
+    - All 6 maintenance counters: Cleaning (74), Descaling (0), Coffee system rinsing (2268), Filter change (29), Milk system rinsing (775), Milk system cleaning (377).
+    - Cockpit percentages: Cleaning (30%), Descaling (0%), Filter change (10%).
+  - Full unit test suites passing across all 3 repositories:
+    - `spectra`: 38/38 tests passing (100%)
+    - `spectra-mm`: 46/46 tests passing (100%)
+    - `spectra-win`: 46/46 tests passing (100%)
+    - Total: 130/130 tests passing.

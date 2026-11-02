@@ -68,6 +68,7 @@ def list_serial_ports() -> List[str]:
     ports.append("DEMO / SIMULATION (Jura Impressa XJ5)")
     ports.append("DEMO / SIMULATION (Jura Z6)")
     ports.append("DEMO / SIMULATION (Jura S8)")
+    ports.append("DEMO / SIMULATION (Jura WE8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
     ports.append("DEMO / SIMULATION (Nivona NICR768)")
@@ -109,6 +110,8 @@ class JuraSerialConnection:
                 self.mock_machine = MockJuraMachine(model_ef="EF540M V01.22", model_name="Z6")
             elif "Z10" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF545 V01.20", model_name="Z10")
+            elif "WE8" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF533M V02.09", model_name="WE8")
             elif "E8" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF1092 V01.05", model_name="E8")
             elif "D4" in port_name.upper():
@@ -125,6 +128,42 @@ class JuraSerialConnection:
 
     def _init_mock_eeprom(self):
         """Initialize complete simulated EEPROM for offline demo & developer differential testing."""
+        if "WE8" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(1024)}
+            # Maintenance registers
+            self._mock_eeprom[0x0007] = 2268  # Coffee system rinsing
+            self._mock_eeprom[0x0008] = 74    # Cleaning
+            self._mock_eeprom[0x0009] = 0     # Descaling
+            self._mock_eeprom[0x0020] = 775   # Milk system rinsing
+            self._mock_eeprom[0x0021] = 377   # Milk system cleaning
+            self._mock_eeprom[0x0022] = 29    # Filter change
+            # Article number 15420 (0x3C3C)
+            self._mock_eeprom[0x007E] = 0x3C00
+            self._mock_eeprom[0x007F] = 0x3C00
+            # Cockpit percentages
+            self._mock_eeprom[0x0162] = 0x0000  # Descaling 0%
+            self._mock_eeprom[0x0163] = 0x1E1E  # Cleaning 30%
+            self._mock_eeprom[0x01E1] = 0x000A  # Filter 10%
+            # Beverage statistics
+            self._mock_eeprom[0x017F] = 75    # Hot water for green tea
+            self._mock_eeprom[0x0180] = 1450  # Espresso
+            self._mock_eeprom[0x0181] = 137   # Ristretto
+            self._mock_eeprom[0x0182] = 7233  # Coffee
+            self._mock_eeprom[0x0183] = 117   # Flat white
+            self._mock_eeprom[0x0184] = 390   # Cappuccino
+            self._mock_eeprom[0x0185] = 50    # Latte macchiato
+            self._mock_eeprom[0x0186] = 10    # Product with ground coffee
+            self._mock_eeprom[0x0187] = 72    # Portion of milk
+            self._mock_eeprom[0x0188] = 183   # Hot water
+            self._mock_eeprom[0x0189] = 176   # 2 x Espresso
+            self._mock_eeprom[0x018A] = 4     # 2 x Ristretto
+            self._mock_eeprom[0x018B] = 20    # 2 x Coffee
+            self._mock_eeprom[0x018C] = 5     # 2 x Special coffee
+            self._mock_eeprom[0x018D] = 901   # Special coffee
+            self._mock_eeprom[0x018E] = 31    # Macchiato
+            self._mock_eeprom[0x018F] = 354   # Espresso doppio
+            return
+
         if "A1" in self.port_name.upper():
             self._mock_eeprom = {i: 0x0000 for i in range(256)}
             self._mock_eeprom[0x0002] = 1954   # Single Coffee
@@ -401,12 +440,16 @@ class JuraSerialConnection:
             if cmd_clean == "TY:":
                 return f"ty:{self.mock_machine.model_ef}"
             elif cmd_clean == "TL:":
-                if "D4" in self.port_name.upper():
+                if "WE8" in self.port_name.upper():
+                    return "tl:BL_RL78 V01.31"
+                elif "D4" in self.port_name.upper():
                     return "tl:BL_RL78 V01.30"
                 elif "A1" in self.port_name.upper():
                     return "tl:R8C Loader V1.04"
                 return "tl:R8Cx Loader V01.00"
             elif cmd_clean == "TY$:":
+                if "WE8" in self.port_name.upper():
+                    return "ty$:EF533D V02.04"
                 if "D4" in self.port_name.upper() or "A1" in self.port_name.upper():
                     return None
                 return f"ty$:{self.mock_machine.model_ef.replace('M', 'D')}"
@@ -419,7 +462,9 @@ class JuraSerialConnection:
                     return None
                 return "cs$:1A2B"
             elif cmd_clean == "IC:":
-                if "D4" in self.port_name.upper():
+                if "WE8" in self.port_name.upper():
+                    return "ic:1389"
+                elif "D4" in self.port_name.upper():
                     return "ic:5700"
                 elif "A1" in self.port_name.upper():
                     return "ic:AC03"

@@ -12380,66 +12380,96 @@
         "active": true
       },
       {
+        "code": 6,
+        "name": "Macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
         "code": 7,
-        "name": "Latte Macchiato",
+        "name": "Latte macchiato",
         "is_double": false,
         "active": true
       },
       {
         "code": 10,
-        "name": "Milk Portion",
+        "name": "Portion of milk",
         "is_double": false,
         "active": true
       },
       {
         "code": 13,
-        "name": "Hotwater Portion(normal)",
-        "is_double": false,
-        "active": true
-      },
-      {
-        "code": 17,
-        "name": "2 Ristretti",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 18,
-        "name": "2 Espressi",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 19,
-        "name": "2 Coffee",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 46,
-        "name": "1 Flat White",
+        "name": "Hot water",
         "is_double": false,
         "active": true
       },
       {
         "code": 15,
-        "name": "Powderproduct",
+        "name": "Product with ground coffee",
         "is_double": false,
-        "active": false
+        "active": true
+      },
+      {
+        "code": 17,
+        "name": "2 x Ristretto",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 18,
+        "name": "2 x Espresso",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 19,
+        "name": "2 x Coffee",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 45,
+        "name": "Hot water for green tea",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 46,
+        "name": "Flat white",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 47,
+        "name": "Special coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 48,
+        "name": "Espresso doppio",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 63,
+        "name": "2 x Special coffee",
+        "is_double": true,
+        "active": true
       }
     ],
     "maintenance_counters": [
       "Cleaning",
-      "FilterChange",
-      "Decalc",
-      "CappuRinse",
-      "CoffeeRinse",
-      "CappuClean"
+      "Descaling",
+      "Coffee System Rinsing",
+      "Filter Change",
+      "Milk System Rinsing",
+      "Milk System Cleaning"
     ],
     "maintenance_percentages": [
       "Cleaning",
-      "FilterChange",
-      "Decalc"
+      "Descaling",
+      "FilterChange"
     ],
     "alerts": [
       {
@@ -12713,95 +12743,95 @@
       },
       {
         "code": 6,
-        "name": "Espresso Macchiato",
+        "name": "Macchiato",
         "is_double": false,
         "active": true
       },
       {
         "code": 7,
-        "name": "Latte Macchiato",
+        "name": "Latte macchiato",
         "is_double": false,
         "active": true
       },
       {
         "code": 10,
-        "name": "Milk Portion",
+        "name": "Portion of milk",
         "is_double": false,
         "active": true
       },
       {
         "code": 13,
-        "name": "Hotwater Portion(normal)",
+        "name": "Hot water",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 15,
+        "name": "Product with ground coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 17,
-        "name": "2 Ristretti",
+        "name": "2 x Ristretto",
         "is_double": true,
         "active": true
       },
       {
         "code": 18,
-        "name": "2 Espressi",
+        "name": "2 x Espresso",
         "is_double": true,
         "active": true
       },
       {
         "code": 19,
-        "name": "2 Coffee",
+        "name": "2 x Coffee",
         "is_double": true,
         "active": true
       },
       {
         "code": 45,
-        "name": "Hotwater Portion(Green tea)",
+        "name": "Hot water for green tea",
         "is_double": false,
         "active": true
       },
       {
         "code": 46,
-        "name": "1 Flat White",
+        "name": "Flat white",
         "is_double": false,
         "active": true
       },
       {
         "code": 47,
-        "name": "1 coffee special",
+        "name": "Special coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 48,
-        "name": "Espresso Doppio",
+        "name": "Espresso doppio",
         "is_double": false,
         "active": true
       },
       {
         "code": 63,
-        "name": "2 coffee special",
+        "name": "2 x Special coffee",
         "is_double": true,
         "active": true
-      },
-      {
-        "code": 15,
-        "name": "Powderproduct",
-        "is_double": false,
-        "active": false
       }
     ],
     "maintenance_counters": [
       "Cleaning",
-      "FilterChange",
-      "Decalc",
-      "CappuRinse",
-      "CoffeeRinse",
-      "CappuClean"
+      "Descaling",
+      "Coffee System Rinsing",
+      "Filter Change",
+      "Milk System Rinsing",
+      "Milk System Cleaning"
     ],
     "maintenance_percentages": [
       "Cleaning",
-      "FilterChange",
-      "Decalc"
+      "Descaling",
+      "FilterChange"
     ],
     "alerts": [
       {
@@ -30054,41 +30084,107 @@
     "model_family": "WE8 Aroma G3 RFID Smart Connect",
     "ef_code": "EF535M",
     "article_number": "15141",
-    "series": "Jura Consumer",
+    "series": "WE-Line",
     "products": [
       {
         "code": 1,
-        "name": "1 Espresso",
+        "name": "Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "Espresso",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "Coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 4,
-        "name": "2 Espressi",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 5,
-        "name": "2 Coffees",
-        "is_double": true,
+        "name": "Cappuccino",
+        "is_double": false,
         "active": true
       },
       {
         "code": 6,
-        "name": "2 Special Coffees",
+        "name": "Macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 7,
+        "name": "Latte macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 10,
+        "name": "Portion of milk",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "Hot water",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 15,
+        "name": "Product with ground coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 17,
+        "name": "2 x Ristretto",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 18,
+        "name": "2 x Espresso",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 19,
+        "name": "2 x Coffee",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 45,
+        "name": "Hot water for green tea",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 46,
+        "name": "Flat white",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 47,
+        "name": "Special coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 48,
+        "name": "Espresso doppio",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 63,
+        "name": "2 x Special coffee",
         "is_double": true,
         "active": true
       }
@@ -30096,13 +30192,15 @@
     "maintenance_counters": [
       "Cleaning",
       "Descaling",
-      "Rinsing",
-      "Filter"
+      "Coffee System Rinsing",
+      "Filter Change",
+      "Milk System Rinsing",
+      "Milk System Cleaning"
     ],
     "maintenance_percentages": [
       "Cleaning",
-      "FilterChange",
-      "Decalc"
+      "Descaling",
+      "FilterChange"
     ],
     "alerts": [
       {
@@ -30130,47 +30228,119 @@
         "blocking": false,
         "name": "Machine Ready"
       }
+    ],
+    "article_numbers": [
+      "15420",
+      "15421",
+      "15141",
+      "15144"
     ]
   },
   "EF535D": {
     "model_family": "WE8 Aroma G3 RFID Smart Connect",
     "ef_code": "EF535D",
     "article_number": "15141",
-    "series": "Jura Consumer",
+    "series": "WE-Line",
     "products": [
       {
         "code": 1,
-        "name": "1 Espresso",
+        "name": "Ristretto",
         "is_double": false,
         "active": true
       },
       {
         "code": 2,
-        "name": "1 Coffee",
+        "name": "Espresso",
         "is_double": false,
         "active": true
       },
       {
         "code": 3,
-        "name": "1 Special Coffee / Ristretto",
+        "name": "Coffee",
         "is_double": false,
         "active": true
       },
       {
         "code": 4,
-        "name": "2 Espressi",
-        "is_double": true,
-        "active": true
-      },
-      {
-        "code": 5,
-        "name": "2 Coffees",
-        "is_double": true,
+        "name": "Cappuccino",
+        "is_double": false,
         "active": true
       },
       {
         "code": 6,
-        "name": "2 Special Coffees",
+        "name": "Macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 7,
+        "name": "Latte macchiato",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 10,
+        "name": "Portion of milk",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "Hot water",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 15,
+        "name": "Product with ground coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 17,
+        "name": "2 x Ristretto",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 18,
+        "name": "2 x Espresso",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 19,
+        "name": "2 x Coffee",
+        "is_double": true,
+        "active": true
+      },
+      {
+        "code": 45,
+        "name": "Hot water for green tea",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 46,
+        "name": "Flat white",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 47,
+        "name": "Special coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 48,
+        "name": "Espresso doppio",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 63,
+        "name": "2 x Special coffee",
         "is_double": true,
         "active": true
       }
@@ -30178,13 +30348,15 @@
     "maintenance_counters": [
       "Cleaning",
       "Descaling",
-      "Rinsing",
-      "Filter"
+      "Coffee System Rinsing",
+      "Filter Change",
+      "Milk System Rinsing",
+      "Milk System Cleaning"
     ],
     "maintenance_percentages": [
       "Cleaning",
-      "FilterChange",
-      "Decalc"
+      "Descaling",
+      "FilterChange"
     ],
     "alerts": [
       {
@@ -30212,6 +30384,12 @@
         "blocking": false,
         "name": "Machine Ready"
       }
+    ],
+    "article_numbers": [
+      "15420",
+      "15421",
+      "15141",
+      "15144"
     ]
   },
   "EF534M": {

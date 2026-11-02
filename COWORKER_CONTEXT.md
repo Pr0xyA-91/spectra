@@ -431,6 +431,27 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### [2026-11-02 12:00] — Antigravity Assistant (Device 1)
+* **What Was Done**:
+  - Investigated customer Jura WE8 (EA) reading inaccuracy on `/dev/ttyUSB0` against ground-truth J.O.E. export (`WE8.csv`).
+  - Identified Renesas RL78 logic board (`EF533M V02.09` / `BL_RL78 V01.31`) architecture where beverage counters reside in Block `0x0180` and `0x017F`, maintenance counters in `0x0007..0x0009` and `0x0020..0x0022`, and cockpit life percentages in `0x0163` (Cleaning 30%), `0x0162` (Descaling 0%), and `0x01E1` (Filter 10%).
+  - Resolved model family collision in `profiles_db.py` where substring check matched `"E8"` inside `"WE8"`.
+  - Added full technical model specs in `docs/models/EF535M_WE8.json` and `EF535M_WE8.md`.
+  - Updated `profiles_data.json` and `stats_collector.py` with 17 beverages, 6 maintenance counters, and 3 cockpit percentages.
+  - Added simulated `DEMO-WE8` offline machine to `serial_io.py` and created `test_we8_mapping.py`.
+  - Verified 100% precision parity against live customer machine on `/dev/ttyUSB0`.
+  - Mirrored all improvements across `spectra-mm` and `spectra-win`.
+* **Test Status**:
+  - `spectra`: 38/38 passing (100%)
+  - `spectra-mm`: 46/46 passing (100%)
+  - `spectra-win`: 46/46 passing (100%)
+  - Total: 130/130 tests passing.
+* **Hardware Attached**: Customer Jura WE8 (EA) on `/dev/ttyUSB0`.
+* **Next Pending Steps for Coworker**:
+  - None; WE8 telemetry resolution complete and verified on customer hardware.
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
 ### [YYYY-MM-DD HH:MM] — Agent Workstation #1 (Device 1)

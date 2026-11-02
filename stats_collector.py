@@ -1295,6 +1295,8 @@ class JuraStatsSession:
                 is_z5 = "EF642" in self.ef_code.upper() or "Z5" in self.model_family.upper()
                 is_d4 = "EF529" in self.ef_code.upper() or "D4" in self.model_family.upper()
                 is_a1 = "EF509" in self.ef_code.upper() or "A1" in self.model_family.upper() or "ENA MICRO" in self.model_family.upper()
+                is_we8 = "EF535" in self.ef_code.upper() or "WE8" in self.model_family.upper()
+                is_e8 = "EF533" in self.ef_code.upper() or "E8" in self.model_family.upper()
 
                 # Query Display Sub-Bus Firmware Gateway (TY$:)
                 ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
@@ -1312,6 +1314,8 @@ class JuraStatsSession:
                     blocks.append(0xE0)
                 elif is_d4:
                     blocks.append(0x0330)
+                elif is_we8 or is_e8:
+                    blocks.extend([0x70, 0xE0, 0x160, 0x170, 0x180, 0x1E0])
 
                 update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
                 eeprom: Dict[int, int] = {}
@@ -1361,6 +1365,14 @@ class JuraStatsSession:
                     for a in range(0xE0, 0xE6):
                         id_addrs.append((a, f"Double Beverage 0x{a:02X}"))
                     id_addrs.append((0x22, "Filter Cycles"))
+                elif is_we8 or is_e8:
+                    id_addrs.append((0x20, "Milk Rinses"))
+                    id_addrs.append((0x21, "Milk Cleans"))
+                    id_addrs.append((0x22, "Filter Cycles"))
+                    id_addrs.append((0x17F, "Green Tea"))
+                    id_addrs.append((0x162, "Descaling Percentage"))
+                    id_addrs.append((0x163, "Cleaning Percentage"))
+                    id_addrs.append((0x1E1, "Filter Percentage"))
 
                 for addr_int, desc in id_addrs:
                     if addr_int not in eeprom or eeprom[addr_int] == 0:
@@ -1451,6 +1463,74 @@ class JuraStatsSession:
                     self.total_cups = self.total_preparations
 
                     filter_cycles = eeprom.get(20, 0)
+                elif is_we8 or is_e8:
+                    # Jura WE8 / E8 TFT platform (EF533 / EF535 / Renesas RL78)
+                    # Block 0x0180 (and 0x017F) holds consolidated beverage statistics
+                    if 0x0180 in eeprom and any(eeprom.get(0x0180 + i, 0) > 0 for i in range(16)):
+                        esp = eeprom.get(0x0180, 0)
+                        rist = eeprom.get(0x0181, 0)
+                        cof = eeprom.get(0x0182, 0)
+                        flat_white = eeprom.get(0x0183, 0)
+                        capp = eeprom.get(0x0184, 0)
+                        latte = eeprom.get(0x0185, 0)
+                        ground = eeprom.get(0x0186, 0)
+                        milk = eeprom.get(0x0187, 0)
+                        water = eeprom.get(0x0188, 0)
+                        esp2 = eeprom.get(0x0189, 0)
+                        rist2 = eeprom.get(0x018A, 0)
+                        cof2 = eeprom.get(0x018B, 0)
+                        spec2 = eeprom.get(0x018C, 0)
+                        spec = eeprom.get(0x018D, 0)
+                        macchiato = eeprom.get(0x018E, 0)
+                        doppio = eeprom.get(0x018F, 0)
+                        green_tea = eeprom.get(0x017F, 0)
+                    else:
+                        # Fallback to lower block registers if 0x0180 is not returned
+                        esp = eeprom.get(0x0000, eeprom.get(1, 0))
+                        rist = eeprom.get(0x0001, 0)
+                        cof = eeprom.get(0x0002, eeprom.get(2, 0))
+                        flat_white = eeprom.get(0x0003, 0)
+                        capp = eeprom.get(0x0004, 0)
+                        latte = eeprom.get(0x0005, 0)
+                        ground = eeprom.get(0x0006, 0)
+                        milk = eeprom.get(0x0013, 0)
+                        water = eeprom.get(0x0014, 0)
+                        esp2 = eeprom.get(0x00E0, eeprom.get(4, 0))
+                        rist2 = eeprom.get(0x00E1, 0)
+                        cof2 = eeprom.get(0x00E2, eeprom.get(5, 0))
+                        spec2 = eeprom.get(0x00E3, eeprom.get(6, 0))
+                        spec = eeprom.get(0x018D, eeprom.get(3, 0))
+                        macchiato = eeprom.get(0x018E, 0)
+                        doppio = eeprom.get(0x018F, 0)
+                        green_tea = eeprom.get(0x017F, 0)
+
+                    self.counters[1] = rist
+                    self.counters[2] = esp
+                    self.counters[3] = cof
+                    self.counters[4] = capp
+                    self.counters[6] = macchiato
+                    self.counters[7] = latte
+                    self.counters[10] = milk
+                    self.counters[13] = water
+                    if ground > 0:
+                        self.counters[15] = ground
+                    self.counters[17] = rist2
+                    self.counters[18] = esp2
+                    self.counters[19] = cof2
+                    self.counters[45] = green_tea
+                    self.counters[46] = flat_white
+                    self.counters[47] = spec
+                    self.counters[48] = doppio
+                    self.counters[63] = spec2
+
+                    single_preps = rist + esp + cof + flat_white + capp + latte + milk + water + spec + macchiato + doppio + green_tea + ground
+                    double_preps = rist2 + esp2 + cof2 + spec2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
+                    milk_rinses = eeprom.get(0x0020, 0)
+                    milk_cleanings = eeprom.get(0x0021, 0)
                 else:
                     # Map standard Jura EEPROM statistics addresses
                     esp1 = eeprom.get(1, 0)
@@ -1565,6 +1645,12 @@ class JuraStatsSession:
                     "13735": ("ENA Micro 1", "13735 ENA Micro 1", "ENA Micro"),
                     "15221": ("D4", "15221 D4 Piano Black", "D-Line"),
                     "13356": ("IMPRESSA Z5", "13356 IMPRESSA Z5 230V CH", "Z-Line"),
+                    "15420": ("WE8 (EA)", "15420 WE8 (EA)", "WE-Line"),
+                    "15421": ("WE8 (EA)", "15421 WE8 (EA)", "WE-Line"),
+                    "15141": ("WE8", "15141 WE8", "WE-Line"),
+                    "15144": ("WE8", "15144 WE8", "WE-Line"),
+                    "15109": ("E8", "15109 E8 Piano Black", "E-Line"),
+                    "15084": ("E8", "15084 E8 Chrome", "E-Line"),
                 }
 
                 if hw_article:
@@ -1573,6 +1659,10 @@ class JuraStatsSession:
                         fam, app_desc, _ = ARTICLE_MODEL_MAP[hw_article]
                         self.model_family = fam
                         app_type = app_desc
+                        # If hardware article specifies a refined model (e.g. WE8 vs E8), switch to its profile
+                        art_profile = profiles_db.get_model_spec(hw_article) or profiles_db.find_profile(fam)
+                        if art_profile and art_profile != profiles_db.DEFAULT_PROFILE:
+                            self.profile = art_profile
                     else:
                         app_type = f"{hw_article} {self.model_family}"
                 else:
@@ -1588,8 +1678,15 @@ class JuraStatsSession:
                     except Exception:
                         pass
 
-                self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
-                self.maint_pcts = [None, None, None, None]
+                if is_we8 or is_e8:
+                    clean_pct = eeprom.get(0x0163, 0) & 0xFF if 0x0163 in eeprom else None
+                    decalc_pct = eeprom.get(0x0162, 0) & 0xFF if 0x0162 in eeprom else None
+                    filter_pct = eeprom.get(0x01E1, 0) & 0xFF if 0x01E1 in eeprom else None
+                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles, milk_rinses, milk_cleanings]
+                    self.maint_pcts = [clean_pct, decalc_pct, None, filter_pct, None, None]
+                else:
+                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
+                    self.maint_pcts = [None, None, None, None]
 
                 gh = grinder_sec // 3600
                 gm = (grinder_sec % 3600) // 60
@@ -1793,9 +1890,11 @@ class JuraStatsSession:
                 })
 
         # Build maintenance list
-        # In ASCII EEPROM mode, self.maint_counts is always [cleanings, descalings, rinses, filter_cycles]
         if self.is_legacy_cleartext:
-            mc_labels = ["Cleaning", "Descaling", "Rinsing", "Filter Change"]
+            if len(self.maint_counts) == 6:
+                mc_labels = ["Cleaning", "Descaling", "Coffee System Rinsing", "Filter Change", "Milk System Rinsing", "Milk System Cleaning"]
+            else:
+                mc_labels = ["Cleaning", "Descaling", "Rinsing", "Filter Change"]
         else:
             mc_labels = self.profile.get("maintenance_counters", [
                 "Cleaning", "FilterChange", "Decalc", "CappuRinse", "CoffeeRinse", "CappuClean"
