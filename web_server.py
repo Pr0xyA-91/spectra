@@ -13,7 +13,7 @@ import json
 import socket
 import threading
 import mimetypes
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Any, Optional, Tuple, List
 
@@ -1224,7 +1224,7 @@ def find_free_port(start_port: int = 8080) -> int:
 def main(auto_open: bool = False):
     port = find_free_port(8080)
     server_address = ("127.0.0.1", port)
-    httpd = HTTPServer(server_address, SpectraApiHandler)
+    httpd = ThreadingHTTPServer(server_address, SpectraApiHandler)
 
     print("=" * 78)
     print(f"  SPECTRA (Build {__build__}) Hardware Telemetry API & Web Server")
