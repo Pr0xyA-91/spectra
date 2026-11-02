@@ -12,7 +12,7 @@
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Build 20261102.1605 (Linux Multi-Manufacturer & Rust Hybrid Suite)** — Unified Diagnostic Platform.
+> **Project Status: Build 20261102.1738 (Linux Multi-Manufacturer & Rust Hybrid Suite)** — Unified Diagnostic Platform.
 > **SPECTRA** is an extensible appliance hardware telemetry and logic board diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)**. Features a 3-layer Rust hybrid workspace (`spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`), 5-paradigm web workstation, GTK 3 desktop GUI, headless CLI, dynamic model profiling, EEPROM differential mapping, and automated field capture tools.
 
 ---
