@@ -142,7 +142,7 @@ Modern Jura machines equipped with the Smart Connect Bluetooth interface (or dir
 On the wire, plain data is transformed using 4:1 wire carrier modulation:
 * Each 8-bit plain data byte is expanded into **four wire bytes**.
 * Each wire byte carries 2 bits of actual payload plus timing, parity, and clock framing bits.
-* Implemented in [jura_protocol.py](file:///home/a91/Projects/spectra/jura_protocol.py) via `encode_wire()` and `decode_wire()`.
+* Implemented in [jura_protocol.py](../../jura_protocol.py) via `encode_wire()` and `decode_wire()`.
 
 ### Cryptographic Scrambling & Framing
 Frames are encapsulated with start markers, XOR bit manipulation with dynamic session keys (e.g. `0x20` or `0x5F`), and byte rotation:

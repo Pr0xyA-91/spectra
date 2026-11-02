@@ -33,7 +33,7 @@ spectra/
 
 ## 2. Detailed Module Explanations
 
-### A. Low-Level Transport: [serial_io.py](file:///home/a91/Projects/spectra/serial_io.py)
+### A. Low-Level Transport: [serial_io.py](../../serial_io.py)
 * **Primary Responsibility**:
   Manages physical serial communication across Linux POSIX termios and PySerial on Windows. Provides automatic port discovery, safe connection timeouts, optical inter-frame delays, and offline simulation fallback.
 * **Key Classes & Functions**:
@@ -47,7 +47,7 @@ spectra/
 
 ---
 
-### B. Wire Protocols & Encryption: [jura_protocol.py](file:///home/a91/Projects/spectra/jura_protocol.py)
+### B. Wire Protocols & Encryption: [jura_protocol.py](../../jura_protocol.py)
 * **Primary Responsibility**:
   Implements the proprietary Smart Connect 4:1 wire carrier modulation and session key decryption algorithms used by modern Jura BLE dongles and modern logic boards.
 * **Key Classes & Functions**:
@@ -61,7 +61,7 @@ spectra/
 
 ---
 
-### C. Profiles Database: [profiles_db.py](file:///home/a91/Projects/spectra/profiles_db.py) & [profiles_data.json](file:///home/a91/Projects/spectra/profiles_data.json)
+### C. Profiles Database: [profiles_db.py](../../profiles_db.py) & [profiles_data.json](../../profiles_data.json)
 * **Primary Responsibility**:
   Maintains the relational database of 170+ Jura machine profiles. Defines machine family names, series, article numbers, product codes (single vs. double espresso, ristretto, cappuccino, latte macchiato, flat white), maintenance labels, hardware alert masks, address width (2-digit vs 4-digit), and maximum EEPROM size.
 * **Key Classes & Functions**:
@@ -73,7 +73,7 @@ spectra/
 
 ---
 
-### D. Interrogation & Telemetry Engine: [stats_collector.py](file:///home/a91/Projects/spectra/stats_collector.py)
+### D. Interrogation & Telemetry Engine: [stats_collector.py](../../stats_collector.py)
 * **Primary Responsibility**:
   The core analytical and interrogation engine of SPECTRA. Orchestrates connection establishment, dual-mode protocol probing, EEPROM block sweeps, direct register reads, GS1 serial and EAN generation, live sensor parsing, and export generation.
 * **Key Classes & Functions**:
@@ -98,7 +98,7 @@ spectra/
 
 ---
 
-### E. Developer Memory Mapper & Scope: [memory_mapper.py](file:///home/a91/Projects/spectra/memory_mapper.py)
+### E. Developer Memory Mapper & Scope: [memory_mapper.py](../../memory_mapper.py)
 * **Primary Responsibility**:
   An interactive reverse-engineering and EEPROM differential inspection environment. Enables technicians to observe real-time bit flips during appliance operation, map unknown registers, and commit them to golden model specifications.
 * **Key Classes & Functions**:
@@ -121,17 +121,17 @@ spectra/
 
 ---
 
-### F. Desktop GUI & Digital Twin: [gui.py](file:///home/a91/Projects/spectra/gui.py) & [gui_widgets.py](file:///home/a91/Projects/spectra/gui_widgets.py)
+### F. Desktop GUI & Digital Twin: [gui.py](../../gui.py) & [gui_widgets.py](../../gui_widgets.py)
 * **Primary Responsibility**:
   Provides a modern, high-framerate GTK3 desktop interface featuring a Cairo-drawn vector digital twin of the coffee machine's internal hydraulic circuit, a real-time thermal/flow oscilloscope strip chart, and detailed telemetry dashboards.
 * **Key Components**:
-  - `DigitalTwinWidget` ([gui_widgets.py](file:///home/a91/Projects/spectra/gui_widgets.py)):
+  - `DigitalTwinWidget` ([gui_widgets.py](../../gui_widgets.py)):
     - Custom GTK widget rendering an interactive hydraulic schematic using vector Cairo primitives.
     - Renders the Water Tank, Turbine Flowmeter, Vibration Pump, Dual Thermoblocks, Ceramic Valve, Brew Unit, Bean Hopper, and Drip Tray.
     - Visually updates component colors based on live telemetry (e.g. flashing red when water is low or bean hopper is empty; pulsing blue when flowmeter registers water flow; heating gradient from cold blue to brewing red on thermoblocks).
-  - `StripChartWidget` ([gui_widgets.py](file:///home/a91/Projects/spectra/gui_widgets.py)):
+  - `StripChartWidget` ([gui_widgets.py](../../gui_widgets.py)):
     - Real-time oscilloscope strip chart graphing Coffee Thermoblock temperature, Steam Thermoblock temperature, and water flow rate over a 60-second sliding window.
-  - `JuraDiagApp` ([gui.py](file:///home/a91/Projects/spectra/gui.py)):
+  - `JuraDiagApp` ([gui.py](../../gui.py)):
     - Main application window managing tabs: Overview, Statistics & Preparations, Maintenance & Hygiene, Live Digital Twin, and Developer Tools.
     - Handles asynchronous interrogation worker threads to keep the UI fluid at 60 FPS.
     - Includes the development branch optical bean sensor calibration slider.
@@ -140,7 +140,7 @@ spectra/
 
 ---
 
-### G. Command-Line Interface: [cli.py](file:///home/a91/Projects/spectra/cli.py)
+### G. Command-Line Interface: [cli.py](../../cli.py)
 * **Primary Responsibility**:
   Headless CLI interface for running diagnostic interrogations, generating text/JSON/CSV reports, and adjusting calibration parameters in automated test environments or remote terminals.
 * **Supported Commands**:
@@ -153,10 +153,10 @@ spectra/
 
 ---
 
-### H. Archival & Restoration Utilities: [contrib/](file:///home/a91/Projects/spectra/contrib/)
-* **[dump_machine_spec.py](file:///home/a91/Projects/spectra/contrib/dump_machine_spec.py)**:
+### H. Archival & Restoration Utilities: [contrib/](../../contrib/)
+* **[dump_machine_spec.py](../../contrib/dump_machine_spec.py)**:
   Extracts an exhaustive golden machine specification from a connected physical appliance, saving register maps, raw hex dumps, and Markdown documentation into `docs/models/`.
-* **[restore_eeprom.py](file:///home/a91/Projects/spectra/contrib/restore_eeprom.py)**:
+* **[restore_eeprom.py](../../contrib/restore_eeprom.py)**:
   A non-destructive EEPROM restoration tool designed to recover corrupted logic boards:
   - Reads a verified golden specification (`docs/models/<EF>_*.json`).
   - Verifies machine type compatibility via `TY:`.

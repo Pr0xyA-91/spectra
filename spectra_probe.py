@@ -29,6 +29,11 @@ import datetime
 import argparse
 from typing import Dict, Any, Optional, Tuple, List
 
+try:
+    from version import BUILD_NUMBER
+except ImportError:
+    BUILD_NUMBER = "20261102.1435"
+
 # Ensure repository root is on sys.path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
@@ -444,6 +449,7 @@ def capture_machine_bundle(
     return {
         "metadata": {
             "timestamp": datetime.datetime.now().isoformat(),
+            "spectra_build": BUILD_NUMBER,
             "probe_version": "1.1.0",
             "port": getattr(conn, "raw_port_label", getattr(conn, "port_name", "UNKNOWN"))
         },
@@ -472,6 +478,7 @@ def build_text_report(bundle: Dict[str, Any]) -> str:
         "  SPECTRA ARCHETYPE PROBE & HARDWARE TELEMETRY CAPTURE REPORT",
         sep,
         f"  Capture Timestamp : {meta['timestamp']}",
+        f"  SPECTRA Build     : {meta.get('spectra_build', BUILD_NUMBER)}",
         f"  Probe Version     : {meta['probe_version']}",
         f"  Target Port       : {meta['port']}",
         f"  Platform Family   : {ident['platform_family']}",
@@ -564,10 +571,10 @@ Examples:
   python3 spectra_probe.py
 
   # Direct automated capture from customer machine:
-  python3 spectra_probe.py --port /dev/ttyUSB0 --joe /home/a91/Downloads/WE8.csv
+  python3 spectra_probe.py --port /dev/ttyUSB0 --joe ~/Downloads/WE8.csv
 
   # Offline simulation capture test:
-  python3 spectra_probe.py --demo WE8 --joe /home/a91/Downloads/WE8.csv
+  python3 spectra_probe.py --demo WE8 --joe ~/Downloads/WE8.csv
 """
     )
     parser.add_argument("--port", "-p", help="Serial port (e.g. /dev/ttyUSB0 or COM3)")

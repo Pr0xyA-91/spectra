@@ -42,7 +42,7 @@ The probe will:
 
 ```bash
 # With a ground-truth J.O.E. CSV export:
-python3 spectra_probe.py --port /dev/ttyUSB0 --joe /home/a91/Downloads/WE8.csv
+python3 spectra_probe.py --port /dev/ttyUSB0 --joe ~/Downloads/WE8.csv
 
 # On Windows:
 python spectra_probe.py --port COM3 --joe C:\Users\Tech\Downloads\WE8.csv

@@ -4,7 +4,7 @@
 
 ## 1. The Interrogation State Machine
 
-The interrogation process in [stats_collector.py](file:///home/a91/Projects/spectra/stats_collector.py) automatically identifies the machine, determines its addressing width, queries its memory, and extracts its operational metrics:
+The interrogation process in [stats_collector.py](../../stats_collector.py) automatically identifies the machine, determines its addressing width, queries its memory, and extracts its operational metrics:
 
 ```mermaid
 stateDiagram-v2
