@@ -23,9 +23,9 @@ ENV/
 # Build artifacts & native binaries
 target/
 *.so
-build/
-dist/
-dist_package/
+/build/
+/dist/
+/dist_package/
 *.zip
 bin/spectra_build*.exe
 

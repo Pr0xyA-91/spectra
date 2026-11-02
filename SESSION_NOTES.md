@@ -715,3 +715,27 @@ conn.close()
   - `python3 -m unittest discover -s .` (`spectra`): 38/38 unit tests pass (100%).
   - `python3 -m unittest discover -s .` (`spectra-win`): 46/46 unit tests pass (100%).
   - Total: 64 Rust tests + 84 Python tests = 148 tests passing (100%).
+
+---
+
+### Phase 21: Multi-Manufacturer Consolidation into `main` & 2-Branch Topology (2026-11-02 15:40)
+* **Problem Statement / Objective**:
+  - Merge the `multi-manufacturer` branch into `main` (`spectra`) and delete the `multi-manufacturer` branch so there are only 2 branches in `origin` (`spectra_dev.git`): `main` (Linux) and `windows` (Windows).
+* **Implementation Details**:
+  1. *Multi-Manufacturer Integration*:
+     - Ported `drivers/` (`base.py`, `jura/`, `nivona/`, `lamanti_kl/`, `lamanti_jn/`), `spectra_engine.py`, `wrat_engine.py`, `gui_web.py`, and `test_multi_manufacturer.py` to `main`.
+     - Updated `stats_collector.py` `query_live_sensors` to accept `manufacturer` keyword argument and route multi-vendor live telemetry requests through `SpectraSession`.
+     - Updated `gui.py` with multi-brand protocol dispatch and brand selector dropdown (`self.mfr_combo`).
+  2. *2-Branch Topology Transition*:
+     - Updated `GEMINI.md`, `COWORKER_CONTEXT.md`, and `SESSION_NOTES.md` to establish the 2-branch architecture (`main` and `windows`).
+     - Deleted remote `origin/multi-manufacturer` branch and pruned remote refs; removed local `/home/michael/Projects/spectra-mm` checkout.
+  3. *Branding & Build Updates*:
+     - Bumped build numbers to `Build 20261102.1540` / `BUILD 20261102.1540` across `version.py`, CLI, GUI, and Web UI.
+     - Recompiled `web/dist/` production assets via `npm run build`.
+     - Recompiled native Windows installer suite: `bin/spectra.exe` (22 MB), `dist/spectra_setup_build20261102.1540.exe` (44 MB), and `dist/spectra_update_build20261102.1540.exe` (812 KB).
+* **Validation**:
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra`): 32/32 tests pass (0 errors, 0 warnings).
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra-win`): 32/32 tests pass (0 errors, 0 warnings).
+  - `python3 -m unittest discover -s .` (`spectra`): 46/46 tests pass (100%).
+  - `python3 -m unittest discover -s .` (`spectra-win`): 46/46 tests pass (100%).
+  - Total: 64 Rust tests + 92 Python tests = 156 tests passing.

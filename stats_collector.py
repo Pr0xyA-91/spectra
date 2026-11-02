@@ -39,8 +39,8 @@ from serial_io import JuraSerialConnection
 try:
     from version import __version__, __build__
 except ImportError:
-    __version__ = "0.5.1"
-    __build__ = "20261029.1130"
+    __build__ = "20261102.1435"
+    __version__ = f"Build {__build__}"
 
 # ---------------------------------------------------------------------------
 # Optical Bean Sensor Calibration Settings (Dev-configurable)
@@ -297,13 +297,25 @@ def query_live_sensors(
     conn: Optional[JuraSerialConnection] = None,
     profile: Optional[Dict[str, Any]] = None,
     is_legacy: bool = True,
-    fast_poll: bool = False
+    fast_poll: bool = False,
+    manufacturer: str = "auto",
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Query live physical microswitches, hardware sensor statuses,
-    temperature ADC readings, and component fault registers from the connected Jura machine.
-    Works for both ASCII and Smart Connect modes.
+    temperature ADC readings, and component fault registers from the connected appliance.
+    Supports Jura (ASCII / Smart Connect) and multi-manufacturer protocols (Nivona, Kalerm, Jetinno).
     """
+    mfr_clean = (manufacturer or "auto").strip().lower()
+    demo_vendor = getattr(conn, "demo_vendor", "jura") if conn else "jura"
+
+    if mfr_clean not in ("jura", "auto") or demo_vendor not in ("jura", "hardware"):
+        try:
+            from spectra_engine import SpectraSession
+            sess = SpectraSession(port_name=port_name, baudrate=baudrate, conn=conn, manufacturer=mfr_clean)
+            return sess.query_live_sensors(fast_poll=fast_poll)
+        except Exception:
+            pass
     close_when_done = False
     if conn is None or not conn.is_open:
         conn = JuraSerialConnection(port_name, baudrate=baudrate)
@@ -1914,7 +1926,7 @@ class JuraStatsSession:
             })
 
         return {
-            "spectra_version": __version__,
+            "spectra_version": f"Build {__build__}",
             "spectra_build": __build__,
             "timestamp": datetime.now().isoformat(),
             "port": self.port_name,
@@ -1952,7 +1964,7 @@ class JuraStatsSession:
         out = []
         out.append("=" * 78)
         out.append("JURA COFFEE MACHINE DIAGNOSTICS & TELEMETRY REPORT")
-        out.append(f"SPECTRA Diagnostics Suite v{__version__} (build {__build__}) (Hardware Telemetry - Jura Module)")
+        out.append(f"SPECTRA Diagnostics Suite (Build {__build__}) (Hardware Telemetry - Jura Module)")
         out.append("=" * 78)
         out.append("")
         out.append(f"Date of diagnosis: {now_str}")

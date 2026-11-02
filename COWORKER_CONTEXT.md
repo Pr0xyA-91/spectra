@@ -113,15 +113,16 @@ flowchart TD
 
 ---
 
-## 5. Repository Topology & Branch Architecture
+## 5. Repository Topology & Branch Architecture (2-Branch Topology)
 
-The private repository hosts three parallel active branches, checked out into three local sibling directories:
+The private repository hosts two parallel active branches:
 
 | Directory | Git Branch | Version Tag | Description & Scope |
 | :--- | :--- | :--- | :--- |
-| **`spectra/`** | `main` | `0.5.1` | **Linux Jura-Only Core Edition**. Primary reference codebase for GTK3 GUI, CLI, and Top-Tronic / Smart Connect diagnostic engines. |
-| **`spectra-mm/`** | `multi-manufacturer` | `0.5.1_mm` | **Linux Multi-Manufacturer Suite**. Extends Jura core with support for Nivona, Lamanti-KL (Kalerm), Lamanti-JN (Jetinno), plus Web UI (`gui_web.py`). |
-| **`spectra-win/`** | `windows` | `0.5.1_win` | **Windows Multi-Manufacturer Suite**. Windows packaging with `.bat` scripts, `install_windows.ps1`, `COM*` auto-discovery, and zero-dependency Web UI fallback. |
+| **`spectra/`** | `main` | `Build <BUILD>` | **Linux Unified Multi-Manufacturer & 3-Layer Rust Hybrid Suite**. Complete diagnostic engine for Jura, Nivona, Lamanti-KL (Kalerm), Lamanti-JN (Jetinno), GTK3 GUI, Web UI (`gui_web.py`), CLI, and 3-Layer Rust Workspace (`crates/spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`). |
+| **`spectra-win/`** | `windows` | `Build <BUILD>` | **Windows Cross-Platform Multi-Manufacturer Suite**. Windows packaging with native Win32 C PE32+ offline installer (`dist/spectra_setup_build*.exe`), fast updater (`dist/spectra_update_build*.exe`), standalone launcher (`bin/spectra.exe`), and 3-layer Rust hybrid workspace. |
+
+*Note*: The former `multi-manufacturer` branch has been merged into `main` and deleted from `origin`.
 
 ---
 
@@ -526,6 +527,34 @@ The private repository hosts three parallel active branches, checked out into th
 * **Next Pending Steps for Coworker**:
   - Test `dist/spectra_setup_build20261102.1520.exe` and `dist/spectra_update_build20261102.1520.exe` on physical Windows hardware.
   - Follow Rule 0 (`git fetch origin`) and push strictly to private `origin` (`spectra_dev.git`).
+
+---
+
+### Phase 21: Multi-Manufacturer Consolidation into `main` & 2-Branch Topology (2026-11-02 15:40) — Agent Workstation #2
+* **What Was Done**:
+  1. **Consolidation of `multi-manufacturer` into `main` (`spectra`)**:
+     - Merged multi-manufacturer driver architecture (`drivers/base.py`, `jura/`, `nivona/`, `lamanti_kl/`, `lamanti_jn/`), `spectra_engine.py`, `wrat_engine.py`, and `gui_web.py` into `main`.
+     - Integrated `test_multi_manufacturer.py` bringing the Linux Python unit test suite to 46/46 tests (100% pass rate).
+     - Enhanced `stats_collector.py` `query_live_sensors` to support multi-vendor routing via `SpectraSession` while preserving non-blocking POSIX `fcntl.flock` serial port locking and zero-overhead fast polling.
+     - Updated GTK3 `gui.py` with multi-brand protocol dispatch and brand selector dropdown (`self.mfr_combo`).
+  2. **Transition to 2-Branch Topology**:
+     - Consolidated private repository topology from 3 branches down to 2:
+       * `main` (`spectra/`): Unified Linux Multi-Manufacturer + 3-Layer Rust Hybrid Workspace.
+       * `windows` (`spectra-win/`): Windows Multi-Manufacturer + 3-Layer Rust Hybrid Workspace + Native Win32 Setup/Update Installers.
+     - Deleted remote `origin/multi-manufacturer` branch and pruned tracking refs; removed stale `spectra-mm/` directory.
+  3. **Branding & Web Recompilation**:
+     - Bumped build numbers to `Build 20261102.1540` / `BUILD 20261102.1540` across `version.py`, CLI, GUI, and Web UI.
+     - Recompiled production web interface into `web/dist/` via `npm run build`.
+     - Rebuilt native Windows PE32+ installer suite (`dist/spectra_setup_build20261102.1540.exe` and `dist/spectra_update_build20261102.1540.exe`).
+* **Test Status**:
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra`): 32/32 tests pass (0 errors, 0 warnings).
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra-win`): 32/32 tests pass (0 errors, 0 warnings).
+  - `python3 -m unittest discover -s .` (`spectra`): 46/46 tests pass (100%).
+  - `python3 -m unittest discover -s .` (`spectra-win`): 46/46 tests pass (100%).
+  - Total: 64 Rust tests + 92 Python tests = 156 tests passing.
+* **Next Pending Steps for Coworker**:
+  - All future Linux multi-manufacturer development occurs directly on `main`.
+  - Maintain the 2-branch topology (`main` and `windows`).
 
 ---
 

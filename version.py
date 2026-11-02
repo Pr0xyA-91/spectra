@@ -14,11 +14,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__build__ = "20261102.1520"
+__build__ = "20261102.1540"
 __version__ = f"Build {__build__}"
 BUILD_NUMBER = __build__
 VERSION = __version__
-__edition__ = "Windows Standalone Multi-Manufacturer"
+__edition__ = "Windows Multi-Manufacturer"
 
 
 def get_version_string(with_build: bool = True) -> str:

@@ -16,13 +16,12 @@
   - Use **build numbers only** (`Build YYYYMMDD.HHMM` / `BUILD YYYYMMDD.HHMM`, managed via `__build__` in `version.py`). Whenever `web/src/` branding or components change, recompile `web/dist/` via `npm run build`.
 - **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/spectra/` on primary workstation).
 
-## 2. Repository & Branch Topology (3-Branch Architecture)
-The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
-1. **`main` (`spectra/`)** — Linux Jura Edition & 3-Layer Rust/Tauri/PyO3 Hybrid Workspace (Build-number versioned via `version.py`).
+## 2. Repository & Branch Topology (2-Branch Architecture)
+The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts two active branches, each checked out in its own dedicated directory on the primary workstation:
+1. **`main` (`spectra/`)** — Unified Linux Multi-Manufacturer Suite (Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno) & 3-Layer Rust/Tauri/PyO3 Hybrid Workspace (Build-number versioned via `version.py`).
    - Remotes: `origin` (`spectra_dev.git` — private) and `public` (`spectra.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
-2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
-   - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
-3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (includes PyInstaller standalone compiler `spectra.spec`, `build_windows_exe.bat`, `COM*` auto-discovery, zero-dependency Web UI fallback).
+   - *Note*: Former `multi-manufacturer` branch has been consolidated into `main` and deleted.
+2. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite & 3-Layer Rust/Tauri/PyO3 Hybrid Workspace (includes native Win32 C PE32+ offline installer `dist/spectra_setup_build*.exe` and fast updater `dist/spectra_update_build*.exe` compiled via Zig + LLVM-RC, standalone launcher `bin/spectra.exe`, `COM*` auto-discovery, zero-dependency Web UI fallback).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules
