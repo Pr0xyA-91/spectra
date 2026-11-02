@@ -68,6 +68,7 @@ def list_serial_ports() -> List[str]:
     ports.append("DEMO / SIMULATION (Jura Impressa XJ5)")
     ports.append("DEMO / SIMULATION (Jura Z6)")
     ports.append("DEMO / SIMULATION (Jura S8)")
+    ports.append("DEMO / SIMULATION (Jura S8 Smart Connect)")
     ports.append("DEMO / SIMULATION (Jura WE8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
@@ -87,6 +88,7 @@ class JuraSerialConnection:
         self.raw_port_label = port_name
         self.baudrate = baudrate
         self.timeout = timeout
+        self._applied_timeout: Optional[float] = timeout
         self.is_demo = "DEMO" in port_name.upper() or port_name.lower() in ("mock", "demo")
         self.mock_machine: Optional[MockJuraMachine] = None
         self.fd: Optional[int] = None
@@ -319,6 +321,7 @@ class JuraSerialConnection:
                     stopbits=serial.STOPBITS_ONE,
                     timeout=self.timeout
                 )
+                self._applied_timeout = self.timeout
                 self.is_open = True
             except Exception as e:
                 raise IOError(f"Failed to open {self.port_name} via pyserial: {e}")
@@ -391,8 +394,12 @@ class JuraSerialConnection:
             return b""
 
         if self.py_serial:
-            if t_out != self.timeout:
+            cur_to = getattr(self, "_applied_timeout", None)
+            if cur_to is None:
+                cur_to = getattr(self.py_serial, "timeout", None)
+            if t_out != cur_to:
                 self.py_serial.timeout = t_out
+                self._applied_timeout = t_out
             return self.py_serial.read(max_bytes)
 
         return b""
@@ -551,6 +558,7 @@ class JuraSerialConnection:
             except Exception:
                 pass
             self.py_serial = None
+        self._applied_timeout = None
         self.is_open = False
 
     def __enter__(self):

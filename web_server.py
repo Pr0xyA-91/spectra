@@ -57,6 +57,8 @@ _active_session: Optional[sc.JuraStatsSession] = None
 _current_port: str = ""
 _last_stats_cache: Optional[Dict[str, Any]] = None
 _mapper_engine: Optional[memory_mapper.MemoryMapperEngine] = None
+_consecutive_sensor_errors: int = 0
+_last_sensor_payload: Optional[Dict[str, Any]] = None
 
 def get_dist_dir() -> str:
     if hasattr(sys, "_MEIPASS"):
@@ -744,6 +746,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 return
 
             with _session_lock:
+                global _active_session, _current_port, _consecutive_sensor_errors, _last_sensor_payload
                 try:
                     if _active_session is None or _current_port != port:
                         if _active_session is not None:
@@ -753,6 +756,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                                 pass
                         _active_session = sc.JuraStatsSession(port_name=port)
                         _current_port = port
+                        _consecutive_sensor_errors = 0
+                        _last_sensor_payload = None
 
                     if _active_session.conn is not None and not _active_session.conn.is_open:
                         try:
@@ -771,21 +776,42 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         is_legacy=_active_session.is_legacy_cleartext,
                         fast_poll=fast_poll,
                     )
+
+                    if data.get("error"):
+                        raise IOError(str(data["error"]))
+
+                    _consecutive_sensor_errors = 0
+                    _last_sensor_payload = data
                 except Exception as e:
-                    # In case of disconnect or error, reset session
-                    if _active_session is not None:
-                        try:
-                            _active_session.close()
-                        except Exception:
-                            pass
-                        _active_session = None
-                    data = {
-                        "error": str(e),
-                        "timestamp": time.strftime("%H:%M:%S"),
-                        "switches": [],
-                        "sensors": [],
-                        "telemetry": {},
-                    }
+                    _consecutive_sensor_errors += 1
+                    err_msg = str(e)
+                    is_fatal_disconnect = (
+                        isinstance(e, (FileNotFoundError, PermissionError))
+                        or "SerialException" in type(e).__name__
+                        or "denied" in err_msg.lower()
+                        or "does not exist" in err_msg.lower()
+                    )
+
+                    if is_fatal_disconnect or _consecutive_sensor_errors >= 3 or _last_sensor_payload is None:
+                        # Full tear-down on fatal disconnect or sustained errors (>= 3)
+                        if _active_session is not None:
+                            try:
+                                _active_session.close()
+                            except Exception:
+                                pass
+                            _active_session = None
+                        data = {
+                            "error": err_msg,
+                            "timestamp": time.strftime("%H:%M:%S"),
+                            "switches": [],
+                            "sensors": [],
+                            "telemetry": {},
+                        }
+                    else:
+                        # Debounce transient jitter / timeout: keep session alive and return last valid telemetry
+                        data = copy.deepcopy(_last_sensor_payload)
+                        data["timestamp"] = time.strftime("%H:%M:%S")
+                        data["transient_retry"] = _consecutive_sensor_errors
 
             self._send_json(data)
             return
@@ -840,7 +866,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(b"<html><body style='background:#121218;color:#eee;font-family:monospace;padding:40px;'><h2>Data Not Read Yet</h2><p>Please interrogate the machine first before generating a service certificate.</p></body></html>")
+                try:
+                    self.wfile.write(b"<html><body style='background:#121218;color:#eee;font-family:monospace;padding:40px;'><h2>Data Not Read Yet</h2><p>Please interrogate the machine first before generating a service certificate.</p></body></html>")
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                    pass
                 return
 
             score, _ = compute_advisor_health(summary, {})
@@ -856,7 +885,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(html_content.encode("utf-8"))
+            try:
+                self.wfile.write(html_content.encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                pass
             return
 
         # 6. API: Export Data (JSON, CSV, Plain Text Report, Diagnostic Capture Bundle)
@@ -918,7 +950,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(content.encode("utf-8") if isinstance(content, str) else content)
+            try:
+                self.wfile.write(content.encode("utf-8") if isinstance(content, str) else content)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                pass
             return
 
         # 7. API: Developer Memory Mapper Info [DEV ONLY]
@@ -1172,7 +1207,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(b"<h1>SPECTRA Backend Online</h1><p>Please build the web UI with <code>npm run build</code> inside the <code>web/</code> directory.</p>")
+            try:
+                self.wfile.write(b"<h1>SPECTRA Backend Online</h1><p>Please build the web UI with <code>npm run build</code> inside the <code>web/</code> directory.</p>")
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                pass
             return
 
         clean_path = req_path.lstrip("/")
@@ -1195,8 +1233,11 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "public, max-age=3600")
             self._send_security_headers()
             self.end_headers()
-            with open(file_path, "rb") as f:
-                self.wfile.write(f.read())
+            try:
+                with open(file_path, "rb") as f:
+                    self.wfile.write(f.read())
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                pass
         else:
             self.send_error(404, "File Not Found")
 
@@ -1209,7 +1250,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self._send_security_headers()
             self.end_headers()
             self.wfile.write(payload)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
             pass
 
 

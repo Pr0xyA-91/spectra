@@ -632,7 +632,10 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self._send_security_headers()
             self.end_headers()
             html = HTML_TEMPLATE.replace("__VERSION__", f"Build {__build__}")
-            self.wfile.write(html.encode("utf-8"))
+            try:
+                self.wfile.write(html.encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                pass
 
         elif url.path == "/favicon.ico":
             ico_path = get_resource_path("icon.ico")
@@ -642,8 +645,11 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "public, max-age=86400")
                 self._send_security_headers()
                 self.end_headers()
-                with open(ico_path, "rb") as f:
-                    self.wfile.write(f.read())
+                try:
+                    with open(ico_path, "rb") as f:
+                        self.wfile.write(f.read())
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                    pass
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -656,8 +662,11 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "public, max-age=86400")
                 self._send_security_headers()
                 self.end_headers()
-                with open(logo_path, "rb") as f:
-                    self.wfile.write(f.read())
+                try:
+                    with open(logo_path, "rb") as f:
+                        self.wfile.write(f.read())
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+                    pass
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -730,13 +739,16 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def _send_json(self, data: Any):
-        payload = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self._send_security_headers()
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            payload = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self._send_security_headers()
+            self.end_headers()
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
+            pass
 
 
 WRATWebHandler = SpectraWebHandler

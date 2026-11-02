@@ -143,23 +143,37 @@ export default function SpectraWorkspace() {
   // Beverage Filter
   const [bevSearch, setBevSearch] = useState('');
 
+  // In-flight guard and failure debounce for non-blocking auto-poll
+  const inFlightPollRef = useRef(false);
+  const pollFailCountRef = useRef(0);
+
   // --------------------------------------------------------------------------
   // 1. Query Live Sensors (Hardware or Demo)
   // --------------------------------------------------------------------------
-  const querySensors = useCallback(async (isFast = true, portOverride = null) => {
+  const querySensors = useCallback(async (isFast = true, portOverride = null, silent = false) => {
     const port = portOverride || selectedPort;
     if (!port) return;
+
+    if (silent && inFlightPollRef.current) {
+      return;
+    }
+    inFlightPollRef.current = true;
+
     try {
       const res = await fetch(`/api/sensors?port=${encodeURIComponent(port)}&fast=${isFast ? '1' : '0'}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
       if (data.error) {
-        setConnectionStatusText(`Hardware Warning: ${data.error}`);
-        setHardwareError(data.error);
+        pollFailCountRef.current += 1;
+        if (!silent || pollFailCountRef.current >= 3) {
+          setConnectionStatusText(`Hardware Warning: ${data.error}`);
+          setHardwareError(data.error);
+        }
         return;
       }
 
+      pollFailCountRef.current = 0;
       setHardwareError(null);
       setLiveData(data);
       setIsConnected(true);
@@ -174,8 +188,13 @@ export default function SpectraWorkspace() {
       }
 
     } catch (err) {
-      setConnectionStatusText(`Connection Error: ${err.message}`);
-      setHardwareError(err.message);
+      pollFailCountRef.current += 1;
+      if (!silent || pollFailCountRef.current >= 3) {
+        setConnectionStatusText(`Connection Error: ${err.message}`);
+        setHardwareError(err.message);
+      }
+    } finally {
+      inFlightPollRef.current = false;
     }
   }, [selectedPort, isStreamPaused]);
 
@@ -222,7 +241,7 @@ export default function SpectraWorkspace() {
   useEffect(() => {
     if (!isPolling || !selectedPort || isInterrogating) return;
     const interval = setInterval(() => {
-      querySensors(true);
+      querySensors(true, null, true);
     }, 1100);
     return () => clearInterval(interval);
   }, [isPolling, selectedPort, isInterrogating, querySensors]);
@@ -472,7 +491,7 @@ export default function SpectraWorkspace() {
             </span>
           </div>
           <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            BUILD 20261102.1605
+            BUILD 20261102.1710
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
             UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS
@@ -621,8 +640,9 @@ export default function SpectraWorkspace() {
           </div>
           <button
             onClick={() => {
+              pollFailCountRef.current = 0;
               setHardwareError(null);
-              querySensors(true);
+              querySensors(true, null, false);
             }}
             className="px-2.5 py-0.5 bg-rose-800 hover:bg-rose-700 text-white font-bold rounded text-[11px] transition-colors"
           >
