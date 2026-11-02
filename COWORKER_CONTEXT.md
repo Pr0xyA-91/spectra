@@ -431,24 +431,42 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
-### [2026-11-02 12:00] — Antigravity Assistant (Device 1)
+### [2026-11-02 13:00] — Antigravity Assistant (Device 1)
 * **What Was Done**:
-  - Investigated customer Jura WE8 (EA) reading inaccuracy on `/dev/ttyUSB0` against ground-truth J.O.E. export (`WE8.csv`).
-  - Identified Renesas RL78 logic board (`EF533M V02.09` / `BL_RL78 V01.31`) architecture where beverage counters reside in Block `0x0180` and `0x017F`, maintenance counters in `0x0007..0x0009` and `0x0020..0x0022`, and cockpit life percentages in `0x0163` (Cleaning 30%), `0x0162` (Descaling 0%), and `0x01E1` (Filter 10%).
-  - Resolved model family collision in `profiles_db.py` where substring check matched `"E8"` inside `"WE8"`.
-  - Added full technical model specs in `docs/models/EF535M_WE8.json` and `EF535M_WE8.md`.
-  - Updated `profiles_data.json` and `stats_collector.py` with 17 beverages, 6 maintenance counters, and 3 cockpit percentages.
-  - Added simulated `DEMO-WE8` offline machine to `serial_io.py` and created `test_we8_mapping.py`.
-  - Verified 100% precision parity against live customer machine on `/dev/ttyUSB0`.
-  - Mirrored all improvements across `spectra-mm` and `spectra-win`.
+  1. **Customer Jura WE8 (EA) Telemetry Parity & EEPROM Mapping**:
+     - Resolved customer machine (`/dev/ttyUSB0`) readout mismatch against ground-truth J.O.E. export (`WE8.csv`).
+     - Decoded Renesas RL78 logic board (`EF533M V02.09` / `BL_RL78 V01.31`) architecture where beverage counters reside in Block `0x0180` and `0x017F`, maintenance counters in `0x0007..0x0009` and `0x0020..0x0022`, and cockpit life percentages in `0x0163` (Cleaning 30%), `0x0162` (Descaling 0%), and `0x01E1` (Filter 10%).
+     - Fixed model family collision in `profiles_db.py` where substring check matched `"E8"` inside `"WE8"` (now enforces exact match first, then word boundaries `\bWE8\b`, plus direct article lookup).
+     - Added full technical model specs in `docs/models/EF535M_WE8.json` and `EF535M_WE8.md`.
+     - Updated `profiles_data.json` and `stats_collector.py` with 17 beverages, 6 maintenance counters, and 3 cockpit percentages.
+     - Added simulated `DEMO-WE8` offline machine to `serial_io.py` and created `test_we8_mapping.py`.
+     - Verified 100% precision parity against live customer machine on `/dev/ttyUSB0`.
+  2. **Field Telemetry Capture Probe (`spectra_probe.py` & `docs/FIELD_CAPTURE_GUIDE.md`)**:
+     - Created standalone CLI tool for remote colleagues to sweep raw EEPROM (512 or 1024 words) and all hardware bus gateways (`TY:`, `TL:`, `TY$:`, `TL$:`, `IC:`, `CS$:`, `HZ:`, `AS:`).
+     - Ingests optional J.O.E. CSV exports and automatically correlates beverage and maintenance counts against raw EEPROM words, auto-generating a ready-to-use Python mock seed snippet and model template.
+  3. **Web UI In-Browser Diagnostic Dump & J.O.E. File Attachment**:
+     - Added `POST /api/export_capture` and `GET /api/export?format=capture` to `web_server.py`.
+     - Updated `SpectraWorkspace.jsx` Export dialog with a dedicated "Full Hardware Diagnostic Dump (.json)" button and optional in-browser J.O.E. CSV file picker.
+     - Recompiled production web interface (`web/dist`) via `npm run build`.
+  4. **Multi-Repository Mirroring**:
+     - Mirrored all changes cleanly across `spectra` (`main`), `spectra-mm` (`multi-manufacturer`), and `spectra-win` (`windows`).
+     - Bumped build versions and pushed all branches to private `origin` (`spectra_dev.git`).
 * **Test Status**:
   - `spectra`: 38/38 passing (100%)
   - `spectra-mm`: 46/46 passing (100%)
   - `spectra-win`: 46/46 passing (100%)
   - Total: 130/130 tests passing.
 * **Hardware Attached**: Customer Jura WE8 (EA) on `/dev/ttyUSB0`.
-* **Next Pending Steps for Coworker**:
-  - None; WE8 telemetry resolution complete and verified on customer hardware.
+* **Instructions for Other Agent When Receiving a Field Capture Bundle**:
+  - Remote colleagues will send a `spectra_capture_<MODEL>_<TIMESTAMP>.json` file generated from either `spectra_probe.py` or the Web UI Export dialog.
+  - Inspect the JSON file:
+    1. Read `bundle["gateways"]` (`TY:`, `TL:`, `IC:`) to identify the firmware and architecture.
+    2. Read `bundle["identity"]` to check article number, production date, and serial number.
+    3. Read `bundle["correlations"]` to see which EEPROM addresses matched the ground-truth counts.
+    4. Copy `bundle["mock_python_snippet"]` directly into `_init_mock_eeprom()` in `serial_io.py` under `DEMO / SIMULATION (Jura <MODEL>)`.
+    5. Create a model specification in `docs/models/` and add the model to `profiles_data.json` and `stats_collector.py`.
+    6. Write a unit test `test_<model>_mapping.py` following the pattern in `test_we8_mapping.py` or `test_d4_mapping.py`.
+    7. Run `python3 -m unittest discover -s .` across all three repos (`spectra`, `spectra-mm`, `spectra-win`) and verify 100% pass rate before committing.
 
 ---
 

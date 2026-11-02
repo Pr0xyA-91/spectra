@@ -631,6 +631,14 @@ conn.close()
   5. `serial_io.py`: Added `DEMO-WE8` offline simulated machine pre-seeded with exact `WE8.csv` EEPROM data and gateways (`TY:EF533M V02.09`, `TY$:EF533D V02.04`, `TL:BL_RL78 V01.31`, `IC:1389`).
   6. `test_we8_mapping.py`: Created comprehensive unit test verifying 100% numerical parity against `WE8.csv`.
   7. Mirrored all changes and ported platform-specific nuances across `spectra`, `spectra-mm`, and `spectra-win`.
+  8. *Field Archetype Diagnostic Probe (`spectra_probe.py` & `docs/FIELD_CAPTURE_GUIDE.md`)*:
+     - Implemented standalone CLI probe for remote technicians to sweep raw EEPROM (512 or 1024 words) and bus gateways (`TY:`, `TL:`, `TY$:`, `TL$:`, `IC:`, `CS$:`, `HZ:`, `AS:`).
+     - Ingests optional J.O.E. CSV exports and automatically correlates ground-truth counts with EEPROM words.
+     - Auto-generates ready-to-use Python mock seed code and model spec templates.
+  9. *Web UI In-Browser Diagnostic Dump & J.O.E. File Attachment*:
+     - Added `POST /api/export_capture` and `GET /api/export?format=capture` to `web_server.py`.
+     - Added "Full Hardware Diagnostic Dump (.json)" and J.O.E. CSV file picker to `SpectraWorkspace.jsx` Export dialog.
+     - Recompiled production web interface (`web/dist`) with `npm run build`.
 * **Validation**:
   - Live customer machine interrogation on `/dev/ttyUSB0` matches `WE8.csv` with 100% precision:
     - Model: WE8 (EA) (Article 15420)
