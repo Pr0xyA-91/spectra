@@ -1,0 +1,32 @@
+1 ICON "../icon.ico"
+101 RCDATA "/tmp/bundle.zip"
+
+1 VERSIONINFO
+FILEVERSION     2026,11,2,1520
+PRODUCTVERSION  2026,11,2,1520
+FILEFLAGSMASK   0X3FL
+FILEFLAGS       0X0L
+FILEOS          0X40004L
+FILETYPE        0X1L
+FILESUBTYPE     0X0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "SPECTRA Diagnostic Suite"
+            VALUE "FileDescription",  "SPECTRA Hardware Telemetry Offline Installer"
+            VALUE "FileVersion",      "Build 20261102.1520"
+            VALUE "InternalName",     "spectra_setup"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 SPECTRA Contributors (MIT License)"
+            VALUE "OriginalFilename", "spectra_setup_build20261102.1520.exe"
+            VALUE "ProductName",      "SPECTRA Universal Diagnostics"
+            VALUE "ProductVersion",   "Build 20261102.1520"
+            VALUE "BuildNumber",      "20261102.1520"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

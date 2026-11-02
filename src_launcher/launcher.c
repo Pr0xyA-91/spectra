@@ -13,13 +13,13 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_VERSION      "0.6.0-alpha"
-#define SPECTRA_BUILD        "20261030.1630"
-#define SPECTRA_EDITION      "Windows Standalone Edition"
+#define SPECTRA_BUILD        "20261102.1520"
+#define SPECTRA_VERSION      "Build 20261102.1520"
+#define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
     wprintf(L"==============================================================================\n");
-    wprintf(L"  SPECTRA (v%hs, build %hs) [%hs]\n", SPECTRA_VERSION, SPECTRA_BUILD, SPECTRA_EDITION);
+    wprintf(L"  SPECTRA (%hs) [%hs]\n", SPECTRA_VERSION, SPECTRA_EDITION);
     wprintf(L"  Universal Hardware Telemetry & Logic Board Diagnostics\n");
     wprintf(L"==============================================================================\n");
 }
@@ -192,7 +192,7 @@ int wmain(int argc, wchar_t *argv[]) {
     // Quick CLI flags
     for (int i = 1; i < argc; i++) {
         if (wcscmp(argv[i], L"-v") == 0 || wcscmp(argv[i], L"--version") == 0) {
-            wprintf(L"SPECTRA v%hs (build %hs) [%hs]\n", SPECTRA_VERSION, SPECTRA_BUILD, SPECTRA_EDITION);
+            wprintf(L"SPECTRA %hs [%hs]\n", SPECTRA_VERSION, SPECTRA_EDITION);
             return 0;
         }
         if (wcscmp(argv[i], L"-h") == 0 || wcscmp(argv[i], L"--help") == 0) {

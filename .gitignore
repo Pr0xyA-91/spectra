@@ -20,11 +20,14 @@ env/
 venv/
 ENV/
 
-# PyInstaller build artifacts
+# Build artifacts & native binaries
+target/
+*.so
 build/
 dist/
 dist_package/
 *.zip
+bin/spectra_build*.exe
 
 # Editor directories and files
 .idea/

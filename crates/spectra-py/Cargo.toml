@@ -1,0 +1,20 @@
+[package]
+name = "spectra-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "spectra_py"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["serial"]
+extension-module = ["pyo3/extension-module"]
+serial = ["spectra-hal/serial"]
+
+[dependencies]
+spectra-hal = { path = "../spectra-hal", features = ["serial"] }
+spectra-core = { path = "../spectra-core" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }

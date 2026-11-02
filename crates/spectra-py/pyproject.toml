@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spectra-py"
+version = "0.1.0"
+description = "Interactive PyO3 bridge for SPECTRA Jura UART & Android ADB hardware diagnostics"
+requires-python = ">=3.9"
+
+[tool.maturin]
+features = ["extension-module"]
+module-name = "spectra_py"

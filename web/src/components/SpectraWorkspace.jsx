@@ -472,7 +472,7 @@ export default function SpectraWorkspace() {
             </span>
           </div>
           <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            v0.6.0-alpha
+            BUILD 20261102.1520
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
             UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS

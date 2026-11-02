@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/v2/config.json",
+  "productName": "SPECTRA",
+  "version": "0.1.0",
+  "identifier": "com.spectra.diagnostics",
+  "build": {
+    "frontendDist": "../web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeBuildCommand": "npm --prefix ../web run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SPECTRA — Universal Hardware Diagnostics (Build 20261102.1435)",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "../icon.png"
+    ]
+  }
+}

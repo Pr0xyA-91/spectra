@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-SPECTRA Diagnostics Suite — Centralized Version and Build Metadata (Windows Edition)
-Provides:
-- __version__: Base semantic version (e.g. "0.6.0-alpha")
-- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261030.1515")
+SPECTRA Diagnostics Suite — Centralized Build Metadata (Windows Edition)
+Provides build-number-only branding (dropping semantic versions):
+- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261102.1520")
+- __version__: Build number representation (e.g. "Build 20261102.1520")
+- BUILD_NUMBER / VERSION: Exported aliases for full cross-module compatibility
 - __edition__: Branch / target platform designation
 - Helper formatters and CLI bump utility
 """
@@ -13,21 +14,26 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "0.6.0-alpha"
-__build__ = "20261102.1203"
-__edition__ = "Windows Edition"
+__build__ = "20261102.1520"
+__version__ = f"Build {__build__}"
+BUILD_NUMBER = __build__
+VERSION = __version__
+__edition__ = "Windows Standalone Multi-Manufacturer"
 
 
 def get_version_string(with_build: bool = True) -> str:
-    """Return formatted version string: 'v0.6.0-alpha' or 'v0.6.0-alpha (build 20261030.1515)'."""
-    if with_build and __build__:
-        return f"v{__version__} (build {__build__})"
-    return f"v{__version__}"
+    """Return formatted version string using build number only: 'Build 20261102.1520'."""
+    return f"Build {__build__}"
 
 
 def get_full_title(app_name: str = "SPECTRA") -> str:
-    """Return full application title including edition and build number."""
+    """Return full application title including build number."""
     return f"{app_name} — {get_version_string(with_build=True)}"
+
+
+def get_full_version() -> str:
+    """Return full version string using build number only."""
+    return f"Build {__build__}"
 
 
 def update_build(new_build: str = None) -> str:
@@ -40,7 +46,7 @@ def update_build(new_build: str = None) -> str:
 
     updated = re.sub(
         r'__build__\s*=\s*"[^"]*"',
-        f'__build__ = "20261102.1203"',
+        f'__build__ = "{new_build}"',
         content
     )
     file_path.write_text(updated, encoding="utf-8")

@@ -2,8 +2,8 @@
 101 RCDATA "/tmp/bundle.zip"
 
 1 VERSIONINFO
-FILEVERSION     0,6,0,1515
-PRODUCTVERSION  0,6,0,0
+FILEVERSION     2026,11,2,1520
+PRODUCTVERSION  2026,11,2,1520
 FILEFLAGSMASK   0X3FL
 FILEFLAGS       0X0L
 FILEOS          0X40004L
@@ -16,13 +16,13 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "SPECTRA Diagnostic Suite"
             VALUE "FileDescription",  "SPECTRA Hardware Telemetry & Logic Board Diagnostics"
-            VALUE "FileVersion",      "0.6.0.20261030"
+            VALUE "FileVersion",      "Build 20261102.1520"
             VALUE "InternalName",     "spectra"
             VALUE "LegalCopyright",   "Copyright (c) 2026 SPECTRA Contributors (MIT License)"
             VALUE "OriginalFilename", "spectra.exe"
             VALUE "ProductName",      "SPECTRA Universal Diagnostics"
-            VALUE "ProductVersion",   "v0.6.0-alpha (build 20261030.1630)"
-            VALUE "BuildNumber",      "20261030.1630"
+            VALUE "ProductVersion",   "Build 20261102.1520"
+            VALUE "BuildNumber",      "20261102.1520"
         END
     END
     BLOCK "VarFileInfo"

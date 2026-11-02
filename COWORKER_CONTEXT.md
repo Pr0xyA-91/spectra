@@ -470,6 +470,65 @@ The private repository hosts three parallel active branches, checked out into th
 
 ---
 
+### Phase 19: 3-Layer Rust/Tauri/PyO3 Hybrid Architecture & Build-Number-Only Branding (2026-11-02 14:35) — Agent Workstation #2
+* **What Was Done**:
+  1. **3-Layer Rust Workspace Architecture**:
+     - `crates/spectra-hal`: Dyn-compatible async `Transport` trait (`BoxFuture`), `SerialTransport` with hardware pacing calibration (`inter_byte_delay`) and port enumeration, and `AdbSerialBridge` for Android coffee machine SBCs (featuring galvanic isolation documentation, STTY configuration builder, and Unix/TCP socket bridge).
+     - `crates/spectra-core`: Complete Jura protocol state-machine framing (`JuraProtocol`), stateful async `JuraClient<T: Transport>` with optical loopback echo cancellation (`strip_echo`), wire quad pacing, and `diff_eeprom_blocks` differential memory mapper with WE8 RL78 beverage decoding unit tests.
+     - `crates/spectra-agent`: IPC command handlers (`list_serial_ports`, `connect_serial`, `connect_adb`, `disconnect_session`, `poll_telemetry`, `send_jura_command`, `read_eeprom_block`, `diff_eeprom_snapshots`, `get_ui_paradigms`, `export_diagnostic_capture`) and Tauri v2 configuration pointing `frontendDist` to `../web/dist`. Native Tauri is gated behind `tauri-native` to allow compilation and testing without system `webkit2gtk-4.1`.
+     - `crates/spectra-py`: PyO3 native Python extension (`spectra_py.so`) providing `JuraSession`, `list_serial_ports()`, `diff_eeprom_blocks()`, and telemetry codec bindings.
+  2. **Branding Modernization (Drop Semantic Versions, Use Build Numbers Only)**:
+     - Shifted branding policy across all interfaces from semantic versioning (e.g. `v0.5.1`, `v0.6.0-alpha`) to date-time build identifiers (`BUILD 20261102.1435` / `Build 20261102.1435`).
+     - Updated `version.py` preserving exported symbols (`__build__`, `__version__`, `BUILD_NUMBER`, `VERSION`, `get_version_string()`, `get_full_title()`, `get_full_version()`), and fixed regex replacement in `update_build()`.
+     - Updated `cli.py`, `gui.py`, `gui_widgets.py`, `memory_mapper.py`, `stats_collector.py`, `web_server.py`, `spectra_probe.py`, `publish_release.sh`, `README.md`, and `crates/spectra-agent/tauri.conf.json`.
+     - Updated Web UI brand badge in `web/src/components/SpectraWorkspace.jsx` to `BUILD 20261102.1435` and recompiled production assets into `web/dist/` via `npm run build`.
+* **Test Status**:
+  - `cargo check --workspace`: 0 errors, 0 warnings.
+  - `cargo test --workspace`: 20/20 tests passing (spectra-agent, spectra-core, spectra-hal, spectra-py).
+  - `python3 -m unittest discover -s .`: 38/38 unit tests passing (100%).
+  - `python3 spectra_probe.py --demo WE8 --non-interactive`: Verified successful capture generation.
+  - Direct PyO3 integration verified: `python3 -c "import spectra_py; print(spectra_py.list_serial_ports())"`.
+* **Next Pending Steps**:
+  - Port 3-layer Rust hybrid crates and build-number branding to `spectra-mm` and `spectra-win` if desired.
+
+---
+
+### Phase 20: Jura SW Reverse-Engineering, Multi-Manufacturer Core, & Native Windows Installer Suite (2026-11-02 15:20) — Agent Workstation #2
+* **What Was Done**:
+  1. **Legacy Jura SW Reverse-Engineering & Hidden Protocol Extraction**:
+     - Decompiled and inspected legacy Jura SW archives in `reveng/jura/Service/`: `geraete.txt` memory geometry flags (`$7F` = 128 words, `$FF` = 256 words, `$3FF` = 1024 words), `codes.TXT` official action codes (`A01`..`A54`) and fault codes (`F01`..`F88`), `STATTEXT.txt` error flags, and `P518.ini` / `P518Ani` logic.
+     - Enhanced `crates/spectra-core/src/jura.rs`:
+       * Optical IR bean hopper sensor (`AS:`) parsing with net delta $\Delta = \text{ON} - \text{OFF}$ and nominal calibration hysteresis ($110 < \Delta < 120$ counts, returning `BeansState::Present`, `Hysteresis`, `Empty`).
+       * Checksum queries (`CS:\r\n` CodeChecksum, `CS$:\r\n` DisplayCodeChecksum) and sub-bus commands (`TL:`, `TL$:`, `TY$:`, `IC:`).
+       * Smart Connect `@`-protocol frame builders (`@TR:xx,yy`, `@TF:`, `@TM:`).
+       * Board-family layout resolver (`BoardFamily`: `TopTronic8Bit`, `ModernDomestic`, `RenesasRL78`, `CommercialDualTb`) with 32-bit big-endian double-word counter decoding (`(high << 16) | low`).
+       * Operational readiness evaluator (`HzTelemetryFrame::is_machine_ready()`) strictly evaluating 5 real-time physical inputs (tray, water, grounds, TB1 >= 80°C, idle) while explicitly ignoring 1 Hz heartbeat tick.
+  2. **Multi-Manufacturer Rust Core Expansion (`crates/spectra-core`)**:
+     - `crates/spectra-core/src/probe.rs`: differential EEPROM scope and J.O.E. ground-truth auto-correlator with 16-bit and 32-bit counter candidate resolution.
+     - `crates/spectra-core/src/nivona.rs`: Eugster/Frismag AG ASCII protocol, CafeRomatica / NIVO model matching, and fault lookup (1..21).
+     - `crates/spectra-core/src/kalerm.rs`: Lamanti-KL / Kalerm Modbus RTU protocol, CRC-16 polynomial `0xA001`, packet builders (Func 03/04), and fault lookup (E01..E15).
+     - `crates/spectra-core/src/jetinno.rs`: Lamanti-JN / Jetinno protocol, CRC-16 CCITT polynomial `0x1021`, 0xFE packet builders, and fault lookup.
+  3. **`spectra-win` 3-Layer Rust Workspace & Native Installer/Updater Suite**:
+     - Merged `origin/windows` fast-forward into `spectra-win` (5 commits).
+     - Integrated 3-layer Rust hybrid workspace into `spectra-win` (`crates/spectra-hal`, `crates/spectra-core`, `crates/spectra-agent`, `crates/spectra-py`).
+     - Modernized branding to Build-Number-Only (`Build 20261102.1520` / `BUILD 20261102.1520`, dropping `0.5.1_win` and `0.6.0-alpha`).
+     - Rebuilt web frontend (`web/dist/`) via `npm run build` in `web/`.
+     - Implemented native Win32 C PE32+ toolchain in `src_launcher/` using `zig cc -target x86_64-windows` and `llvm-rc`:
+       * Standalone Launcher (`bin/spectra.exe`, 22 MB).
+       * Offline Standalone Installer (`dist/spectra_setup_build20261102.1520.exe`, 44 MB) installing to `%LOCALAPPDATA%\Programs\SPECTRA`, creating Start Menu & Desktop shortcuts, and registering in Add/Remove Programs.
+       * Fast In-Place Updater (`dist/spectra_update_build20261102.1520.exe`, 812 KB) for lightweight instant updates without re-transferring the heavy Python runtime.
+* **Test Status**:
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra`): 32/32 tests pass (0 errors, 0 warnings).
+  - `cargo check --workspace` & `cargo test --workspace` (`spectra-win`): 32/32 tests pass (0 errors, 0 warnings).
+  - `python3 -m unittest discover -s .` (`spectra`): 38/38 unit tests pass (100%).
+  - `python3 -m unittest discover -s .` (`spectra-win`): 46/46 unit tests pass (100%).
+  - Total: 64 Rust tests + 84 Python tests = 148 tests passing (100%).
+* **Next Pending Steps for Coworker**:
+  - Test `dist/spectra_setup_build20261102.1520.exe` and `dist/spectra_update_build20261102.1520.exe` on physical Windows hardware.
+  - Follow Rule 0 (`git fetch origin`) and push strictly to private `origin` (`spectra_dev.git`).
+
+---
+
 ### [Template for Next Entry]:
 ```markdown
 ### [YYYY-MM-DD HH:MM] — Agent Workstation #1 (Device 1)

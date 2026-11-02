@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/spectra-hal",
+    "crates/spectra-core",
+    "crates/spectra-agent",
+    "crates/spectra-py",
+]
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+tokio-serial = "5.4"
+rusb = "0.9"
+thiserror = "2.0"
+nom = "7.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pyo3 = { version = "0.22", features = ["abi3-py39"] }

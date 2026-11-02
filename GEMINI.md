@@ -5,17 +5,24 @@
 > `COWORKER_CONTEXT.md`, `GEMINI.md` and `SESSION_NOTES.md` are **strictly private** (`origin`: `spectra_dev.git` only) and must **NEVER** be pushed to the public repository (`spectra.git`).
 
 ## 1. Quick Reference & Entry Points
-- **Entry Point**: Run via `./run.sh` (GTK3 GUI) or `python3 cli.py` (CLI), or via `SPECTRA.desktop`.
-- **Unit Tests**: Run `python3 -m unittest discover -s .` (all tests must pass).
+- **Entry Points**:
+  - Desktop / CLI / Web: `./run.sh` (GTK3 GUI), `./run_ui.sh` (5-Paradigm Web UI + API server), `python3 cli.py` (CLI), `python3 spectra_probe.py` (Field Capture & J.O.E. Auto-Correlator).
+  - 3-Layer Rust Hybrid Workspace: `crates/spectra-hal` (UART & Android ADB `/dev/ttyS*` HAL), `crates/spectra-core` (Jura protocol state machine, `@`-cipher, differential EEPROM mapper), `crates/spectra-agent` (Tauri v2 async IPC backend), and `crates/spectra-py` (PyO3 native `spectra_py.so` bridge).
+- **Verification Gates (Both Must Pass Before Committing)**:
+  - Python Test Suite: `python3 -m unittest discover -s .` (38/38 tests).
+  - Rust Workspace: `cargo check --workspace` and `cargo test --workspace` (0 errors, 0 warnings).
+- **Branding Invariant (Build Numbers Only)**:
+  - Semantic version strings (`v0.5.1`, `v0.6.0-alpha`, etc.) are **deprecated and forbidden** across all UI badges, window titles, CLI banners, Tauri configs, and export headers.
+  - Use **build numbers only** (`Build YYYYMMDD.HHMM` / `BUILD YYYYMMDD.HHMM`, managed via `__build__` in `version.py`). Whenever `web/src/` branding or components change, recompile `web/dist/` via `npm run build`.
 - **Self-Contained**: All scripts, database files (`profiles_data.json`), and tools for the main Linux Jura edition reside inside this directory (`/home/a91/Projects/spectra/` on primary workstation).
 
 ## 2. Repository & Branch Topology (3-Branch Architecture)
 The private repository (`https://github.com/Pr0xyA-91/spectra_dev.git`) hosts three active branches, each checked out in its own dedicated directory on the primary workstation:
-1. **`main` (`spectra/`)** — Linux Jura-only Edition (`v0.5.1`).
+1. **`main` (`spectra/`)** — Linux Jura Edition & 3-Layer Rust/Tauri/PyO3 Hybrid Workspace (Build-number versioned via `version.py`).
    - Remotes: `origin` (`spectra_dev.git` — private) and `public` (`spectra.git` — public distribution via sanitized `public-main` branch using `./publish_release.sh`).
-2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (`v0.5.1_mm`: Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
+2. **`multi-manufacturer` (`spectra-mm/`)** — Linux Multi-Manufacturer Suite (Jura, Nivona, Lamanti-KL/Kalerm, Lamanti-JN/Jetinno, plus Web UI `gui_web.py`).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
-3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (`v0.5.1_win`: includes PyInstaller standalone compiler `spectra.spec`, `build_windows_exe.bat`, `COM*` auto-discovery, zero-dependency Web UI fallback).
+3. **`windows` (`spectra-win/`)** — Windows Cross-Platform Multi-Manufacturer Suite (includes PyInstaller standalone compiler `spectra.spec`, `build_windows_exe.bat`, `COM*` auto-discovery, zero-dependency Web UI fallback).
    - Remote: `origin` (`spectra_dev.git` ONLY — **NEVER** push to `public`).
 
 ## 3. Core Technical & Protocol Rules
