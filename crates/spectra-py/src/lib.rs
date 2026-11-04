@@ -53,14 +53,16 @@ pub struct PyHzTelemetry {
     pub valve_busy: bool,
     #[pyo3(get)]
     pub puck_thickness_ticks: u16,
+    #[pyo3(get)]
+    pub beans_charged: bool,
 }
 
 #[pymethods]
 impl PyHzTelemetry {
     fn __repr__(&self) -> String {
         format!(
-            "PyHzTelemetry(coffee_temp_c={:.1}, steam_temp_c={:?}, flow_rate_ml_s={:.2}, busy={}, heater_ready={})",
-            self.coffee_temp_c, self.steam_temp_c, self.flow_rate_ml_s, self.is_busy, self.heater_ready
+            "PyHzTelemetry(coffee_temp_c={:.1}, steam_temp_c={:?}, flow_rate_ml_s={:.2}, busy={}, heater_ready={}, beans_charged={})",
+            self.coffee_temp_c, self.steam_temp_c, self.flow_rate_ml_s, self.is_busy, self.heater_ready, self.beans_charged
         )
     }
 
@@ -83,6 +85,7 @@ impl PyHzTelemetry {
         dict.set_item("bu_initialized", self.bu_initialized)?;
         dict.set_item("valve_busy", self.valve_busy)?;
         dict.set_item("puck_thickness_ticks", self.puck_thickness_ticks)?;
+        dict.set_item("beans_charged", self.beans_charged)?;
         Ok(dict.unbind())
     }
 }
@@ -106,6 +109,7 @@ impl From<HzTelemetryFrame> for PyHzTelemetry {
             bu_initialized: f.bu_initialized,
             valve_busy: f.valve_busy,
             puck_thickness_ticks: f.puck_thickness_ticks,
+            beans_charged: f.beans_charged,
         }
     }
 }

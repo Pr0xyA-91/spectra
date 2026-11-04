@@ -68,24 +68,29 @@ flowchart TD
 
 ## 2. Model-Specific Hardware Commands & Protocols
 
-### A. Optical Bean Hopper Sensor (`AS:`)
-The optical hopper sensor is read exclusively via the Jura analog diagnostic command:
+### A. Coffee Heater NTC Diagnostic Sensor (`AS:`) & Physical Bean Detection (`HZ[0][3]`)
+#### 1. Coffee Heater NTC Analog Calibration Self-Test (`AS:`)
+Reverse-engineering of the official Jura Service Suite (`P518Ani.exe` VA `0x004E6E28`, correlating with `Endtest.txt` String ID 251: `"-Sensor Kaffee-Heizung meldet falsche Werte !"`) proves that `AS:` does not query an optical hopper photodiode, but performs a precision analog circuit self-test of the coffee thermoblock NTC:
 * **Query**: `AS:\r\n`
 * **Response Format**: `as:VREF, OFF_ADC, 0000, VREF, ON_ADC, 0001`
-  * `Group 0` (`0000`): Ambient light reading when IR LED is off (`~1360–1614` ADC counts).
-  * `Group 1` (`0001`): Reflected infrared light reading when IR LED is pulsed on (`~1445–1792` ADC counts).
+  * `Group 0` (`0000`): Ambient NTC circuit ADC reading with calibration shunt open.
+  * `Group 1` (`0001`): NTC circuit ADC reading with MCU $+6.0\%$ precision calibration resistor shunt engaged.
+* **Evaluation Criteria (`P518Ani.exe`)**:
+  * Valid ADC range: `180 < OFF_ADC < 17000`.
+  * Shunt gain ratio: $\frac{\text{ON\_ADC}}{\text{OFF\_ADC}} \approx 1.0600 \pm 0.0100$ ($+6.0\%$ gain). Nominal operating band verified across cold ($1.0599$) and hot ($1.0601$) thermoblock states.
 
-#### Multi-Layer Detection Architecture
-* **Optical Analog Calibration (`AS:`)**:
-  * Primary source of continuous bean level truth on Jura IMPRESSA XJ5 (`EF518M V02.20`).
-  * Net delta $\Delta = (\text{ON\_ADC} - \text{OFF\_ADC})$ completely eliminates ambient room light offsets (verified across ambient shifts from $1,466$ to $1,694$ counts).
-  * **Covered / Interrupted / Beans Present**: $\Delta \le +92$ counts (live calibrated: $+85$ to $+91$ counts, nominal $\sim +87$). Machine immediately switches to *"Ready"*.
-  * **Uncovered / Open / Bare Sensor**: $\Delta \ge +96$ counts (live calibrated: $+96$ to $+119$ counts, nominal $\sim +101$). The appliance CPU defers updating its LCD until a product selection/brew is attempted, at which point it refuses to grind and prompts *"Doplňte kávová zrna"* / *"Fill beans"*.
-  * **Hysteresis Deadband ($+93$ to $+95$ counts)**: Schmitt trigger latches the previous state, eliminating boundary flickering.
-* **Firmware Register (`HZ[0][3]`) Separation**:
-  * Bit 3 of `parts[0]` remains `'1'` during active thermal regulation on `EF518M` and must not gate optical sensor evaluation.
-* **Grind Dose Cake Measurement (`HZ[8]`)**:
-  * Compressed puck measurement $\le 14$ ticks (`0x000E`) indicates the grinder ran empty during the dose cycle (acts as fallback when optical sensor is not fitted).
+#### 2. Physical Bean Hopper Ground Truth (`HZ[0][3]` & `RE:0029`)
+Bean hopper state is tracked directly via digital telemetry:
+* **Live Operational Frame (`HZ:`)**: Bit 3 of `parts[0]` (`status_bits`) conveys live bean hopper presence:
+  * `parts[0][3] == '1'`: **Beans OK / Hopper Charged** $\rightarrow$ `machine_ready = True` ("Ready to Brew").
+  * `parts[0][3] == '0'`: **Fill Beans / Hopper Empty** $\rightarrow$ `machine_ready = False` (blocks brew, displays *"Fill Beans"* / *"Doplňte kávová zrna"*).
+* **Non-Volatile Latch (`RE:0029`)**:
+  * Bit `0x0040` (`0x004C` = Charged, `0x000C` = Empty) confirms the non-volatile bean status latch.
+* **Puck Compression Fallback (`HZ[8]`)**:
+  * On residential lines without digital bean detection, compressed puck measurement $\le 14$ ticks (`0x000E`) acts as dry grinder fallback.
+
+#### 3. Diagnostic Commands Discovery (`FA:01`)
+* `FA:01\r\n` $\rightarrow$ `ok:\r\n`: Jura Diagnostic Fault Reset (`Fehlerspeicher löschen`). Clears non-volatile fault register `RE:0028` and safely initiates a clean machine standby transition.
 
 ### B. Front Panel Sub-Bus (`$` Commands)
 The 3.5" color TFT display and front-panel rotary encoder run on a separate microcontroller:

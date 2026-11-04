@@ -216,7 +216,7 @@ class JuraSerialConnection:
         seeds = {
             0x0000: "000010A747450000025F15F500000E1900A600266DFB00000000000000000000",
             0x0010: "B0940000018700000001703A00000000000000000000000000000000000001FB",
-            0x0020: "00000640000100040414780A1E04A0280139004C0C0E1E020A0607082D64141E",
+            0x0020: "00520640000100040414780A1E04A0280B39000C0C0E1E020A0607082D64141E",
             0x0030: "466000332EBE2996000000000000000000001E6F046E5028180F001401040276",
             0x0040: "050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
         }
@@ -358,15 +358,23 @@ class JuraSerialConnection:
             return len(data)
 
         if self.fd is not None and HAS_TERMIOS:
-            written = os.write(self.fd, data)
-            # Drain output buffer
-            termios.tcdrain(self.fd)
-            return written
+            try:
+                written = os.write(self.fd, data)
+                # Drain output buffer
+                termios.tcdrain(self.fd)
+                return written
+            except OSError:
+                self.close()
+                return 0
 
         if self.py_serial:
-            written = self.py_serial.write(data)
-            self.py_serial.flush()
-            return written
+            try:
+                written = self.py_serial.write(data)
+                self.py_serial.flush()
+                return written
+            except Exception:
+                self.close()
+                return 0
 
         return 0
 
@@ -385,12 +393,18 @@ class JuraSerialConnection:
             return buf
 
         if self.fd is not None:
-            rlist, _, _ = select.select([self.fd], [], [], t_out)
-            if rlist:
-                try:
-                    return os.read(self.fd, max_bytes)
-                except BlockingIOError:
-                    return b""
+            try:
+                rlist, _, _ = select.select([self.fd], [], [], t_out)
+                if rlist:
+                    chunk = os.read(self.fd, max_bytes)
+                    if not chunk:
+                        # Physical EOF / USB device disconnected
+                        self.close()
+                        return b""
+                    return chunk
+            except (OSError, BlockingIOError):
+                self.close()
+                return b""
             return b""
 
         if self.py_serial:
@@ -468,6 +482,9 @@ class JuraSerialConnection:
                 if "D4" in self.port_name.upper() or "A1" in self.port_name.upper():
                     return None
                 return "cs$:1A2B"
+            elif cmd_clean == "CS:":
+                # Checksum / Telemetry Vector: nominal covered / beans present (slice [39:43] == 0000)
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_clean == "IC:":
                 if "WE8" in self.port_name.upper():
                     return "ic:1389"
@@ -479,16 +496,16 @@ class JuraSerialConnection:
             elif cmd_clean == "HZ:":
                 if "Z10" in self.port_name.upper():
                     # Dual heater demo model (Coffee: 94.2°C, Steam: 135.0°C)
-                    return "hz:010001100000,027E,00E2,0000,03AE,0546,4,000000,0000,00"
+                    return "hz:010101100000,027E,00E2,0000,03AE,0546,4,000000,0000,00"
                 elif "XJ5" in self.port_name.upper() or "Z6" in self.port_name.upper():
                     # Dual heater demo model (Coffee: 92.4°C [0x039C], Steam: 135.0°C [0x0546])
-                    return "hz:010001100000,027E,00E2,0000,039C,0546,4,000000,0000,00"
+                    return "hz:010101100000,027E,00E2,0000,039C,0546,4,000000,0000,00"
                 else:
                     # Single heater demo model (Coffee: 95.0°C, Steam: Not Installed)
-                    return "hz:010001100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
+                    return "hz:010101100000,027E,00E2,0000,03B6,0802,3,000000,0000,00"
             elif cmd_clean == "AS:":
-                # Optical Bean Hopper Sensor (Ambient ADC: 0x0645 = 1605, Reflected IR ADC: 0x061C = 1564 -> Beans OK)
-                return "as:077206450000,0772061C0001"
+                # Coffee Heater NTC Diagnostic Sensor Test (Ambient OFF ADC: 0x0645 = 1605, Shunt ON ADC: 0x06A5 = 1701 -> Ratio 1.0598 ~ +6.0% OK)
+                return "as:077206450000,077206A50001"
             elif cmd_clean.startswith("RT:"):
                 try:
                     blk = int(cmd_clean[3:], 16)
@@ -515,7 +532,11 @@ class JuraSerialConnection:
         sent_raw = cmd_clean
 
         while time.time() - start < timeout:
+            if not self.is_open:
+                return None
             chunk = self.read(max_bytes=256, timeout_sec=0.05)
+            if not self.is_open:
+                return None
             if chunk:
                 rx.extend(chunk)
                 if len(rx) > 4096:

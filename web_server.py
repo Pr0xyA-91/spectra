@@ -1053,7 +1053,11 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 return
 
             # Safety: Filter allowed diagnostic commands
-            SAFE_ASCII = ("TY:", "IC:", "HZ:", "CS:", "AS:", "RT:", "RE:", "TL:", "TY$:")
+            SAFE_ASCII = (
+                "TY:", "IC:", "HZ:", "CS:", "AS:", "RT:", "RE:", "TL:",
+                "TY$:", "TL$:", "TP$:", "T1$:", "T2$:", "T3$:", "TX$:", "TZ$:",
+                "EX$:", "CS$:", "HZ$:", "RE$:", "RT$:", "DS$:", "GS$:", "SS$:", "ST$:", "IC$:", "RR$:", "AS$:"
+            )
             cmd_upper = cmd.upper()
             if not any(cmd_upper.startswith(prefix) for prefix in SAFE_ASCII):
                 self._send_json({

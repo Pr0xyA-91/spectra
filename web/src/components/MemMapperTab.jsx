@@ -951,7 +951,7 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
               {[
                 { label: 'HZ: (Operational State)', val: rawSensorData.frames?.HZ || '---' },
-                { label: 'AS: (Optical Bean Sensor)', val: rawSensorData.frames?.AS || '---' },
+                { label: 'AS: (Coffee Heater NTC Diagnostic)', val: rawSensorData.frames?.AS || '---' },
                 { label: 'CS: (Component Triacs)', val: rawSensorData.frames?.CS || '---' },
                 { label: 'RE:0028 (Fault Latch)', val: rawSensorData.frames?.RE_0028 || '---' },
               ].map((f) => (

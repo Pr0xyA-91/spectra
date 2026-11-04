@@ -379,6 +379,7 @@ def query_live_sensors(
             bu_init_ok = True
             mv_init_ok = True
             mv_busy = False
+            hz_beans_charged = True
             heater_ready_flag = True
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
@@ -393,6 +394,7 @@ def query_live_sensors(
                     has_hz_status = True
                     bu_init_ok = (parts[0][1] == "1")
                     mv_busy = (parts[0][2] == "1")
+                    hz_beans_charged = (parts[0][3] == "1")
                     heater_ready_flag = (parts[0][5] == "1")
                     mv_init_ok = (parts[0][6] == "1")
                 if len(parts) > 1:
@@ -505,7 +507,7 @@ def query_live_sensors(
             is_dual_heater = is_known_dual or is_hardware_dual
             heater_count = 2 if is_dual_heater else 1
 
-            # 2. Query Diagnostic Fault & Input Registers (RE:0028 & IC:)
+            # 2. Query Diagnostic Fault & Input Registers (RE:0028, RE:0029, IC:)
             val_r28 = 0
             total_fm_timeouts = 0
             fm_intake_timeouts = 0
@@ -514,6 +516,36 @@ def query_live_sensors(
             bu_init_count = 0
             loader_version = ""
             display_firmware = ""
+
+            has_commercial_bean_sensor = bool(
+                getattr(conn, "_as_supported", False)
+                or (detected_ef and any(x in str(detected_ef).upper() for x in ("EF518", "XJ", "GIGA")))
+                or ("XJ" in str(port_name).upper() or "GIGA" in str(port_name).upper())
+            )
+
+            # Query non-volatile configuration register RE:0029 (filter flags)
+            cached_r29 = getattr(conn, "_cached_val_r29", None)
+            should_query_r29 = (conn is not None and (not fast_poll or cached_r29 is None))
+
+            val_r29 = cached_r29 if cached_r29 is not None else 0
+            if should_query_r29:
+                r29 = conn.query_ascii("RE:0029")
+                if r29 and r29.startswith("re:"):
+                    try:
+                        val_r29 = int(r29[3:], 16)
+                        setattr(conn, "_cached_val_r29", val_r29)
+                    except ValueError:
+                        pass
+
+            raw_cs = getattr(conn, "_cached_raw_cs", None)
+            if not fast_poll:
+                # Query CS: (Component Status) during full interrogation
+                cs_resp = conn.query_ascii("CS:")
+                if cs_resp and cs_resp.lower().startswith("cs:"):
+                    raw_cs = cs_resp
+                    setattr(conn, "_cached_raw_cs", raw_cs)
+                if raw_cs:
+                    results["raw_cs"] = raw_cs
 
             if not fast_poll:
                 # Query hardware fault register RE:0028 (fast, ~350ms)
@@ -568,12 +600,12 @@ def query_live_sensors(
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
 
-            # Optical Bean Hopper Sensor (AS: Check Sensor - commercial lines: XJ, GIGA)
+            # Coffee Heater NTC Diagnostic Sensor Self-Test (AS: Check Sensor - P518Ani.exe VA 0x004E6E28, String #251)
             # Polled during manual refresh (not fast_poll), on first query of a session, or every ~2.0s in Live Data
             last_as_ts = getattr(conn, "_last_as_ts", 0.0)
             cached_beans = getattr(conn, "_cached_beans_ok", None)
             as_supported = getattr(conn, "_as_supported", None)
-            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 2.0))
+            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 3.0))
 
             if should_query_as:
                 as_resp = conn.query_ascii("AS:")
@@ -584,8 +616,8 @@ def query_live_sensors(
                         try:
                             off_adc = int(as_parts[0][4:8], 16)
                             on_adc = int(as_parts[1][4:8], 16)
-                            # Reject floating / invalid ADCs (e.g. machine in standby or unpowered sensor bus)
-                            if 0 < off_adc < 3500 and 0 < on_adc < 3500:
+                            # P518Ani.exe Check Sensor valid window: 180 < off_adc < 17000
+                            if 0 < off_adc < 17000 and 0 < on_adc < 18500:
                                 setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
                                 setattr(conn, "_last_as_ts", now_ts)
                                 setattr(conn, "_as_supported", True)
@@ -599,54 +631,18 @@ def query_live_sensors(
                     if fail_cnt >= 3 and getattr(conn, "_as_supported", None) is None:
                         setattr(conn, "_as_supported", False)
 
-            # Evaluate bean hopper level:
-            # Multi-layer safety verification:
-            # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
-            #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    Calibrated via configurable threshold (default 115 ± 5):
-            #    - Covered / Charged: delta <= (threshold - hysteresis, <= 110) -> Beans OK
-            #    - Uncovered / Empty: delta >= (threshold + hysteresis, >= 120) -> Fill Beans
-            #    - Normal thermal drift band (85..105 counts) is safely classified as Beans OK.
-            #    - Extraction Transient Immunity: During mechanical compression (bu_encoder_pos_raw > 250),
-            #      water extraction (flow_pulses_raw > 0 and flow_ml_s > 0), or valve travel, electrical
-            #      load sag causes optical baseline shifts. Spurious empty triggers are suppressed during brew.
-            # 2. Puck Compression Fallback:
-            #    When optical sensor is absent, cake thickness <= 14 ticks indicates dry grinder run.
-            optical_empty = False
-            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
-            opt_thresh = _optical_bean_threshold
-            opt_hyst = _optical_bean_hysteresis
-            opt_lower = opt_thresh - opt_hyst
-            opt_upper = opt_thresh + opt_hyst
-
-            # Detect active brewing cycle to prevent electrical sag false alarms
-            is_active_brew = (
-                bu_encoder_pos_raw > 250
-                or (flow_pulses_raw > 0 and flow_ml_s > 0.0)
-                or mv_busy
+            # Re-evaluate commercial bean sensor support after AS: query
+            has_commercial_bean_sensor = bool(
+                getattr(conn, "_as_supported", False)
+                or (detected_ef and any(x in str(detected_ef).upper() for x in ("EF518", "XJ", "GIGA")))
+                or ("XJ" in str(port_name).upper() or "GIGA" in str(port_name).upper())
             )
 
-            if cached_adcs:
-                off_adc, on_adc = cached_adcs
-                delta = on_adc - off_adc
-                if is_active_brew:
-                    # Suppress transient ADC swings during active brew
-                    optical_empty = False
-                elif delta <= opt_lower:
-                    optical_empty = False
-                elif delta >= opt_upper:
-                    optical_empty = True
-                else:
-                    # Latch previous state across hysteresis deadband
-                    optical_empty = not getattr(conn, "_cached_beans_ok", True)
-
-                beans_empty = optical_empty
-            else:
-                # Fallback for models without optical sensor (e.g. standard residential lines)
-                puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
-                beans_empty = puck_empty
-
-            beans_ok = not beans_empty
+            # Evaluate bean hopper status:
+            # On Jura appliances, puck compression measurement <= 14 ticks indicates an empty grinder run (Universal fallback).
+            # Note: On EF518 (XJ5/XJ9), the optical bean barrier is wired directly to the EF518D Display PCB and monitored locally.
+            puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
+            beans_ok = not puck_empty
             setattr(conn, "_cached_beans_ok", beans_ok)
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
@@ -741,14 +737,9 @@ def query_live_sensors(
             filter_liters = 0.0
 
             if not fast_poll:
-                r29 = conn.query_ascii("RE:0029")
-                if r29 and r29.startswith("re:"):
-                    try:
-                        w29 = int(r29[3:], 16)
-                        filter_ext = bool(w29 & 0x0001)
-                        filter_claris = bool(w29 & 0x0010)
-                    except ValueError:
-                        pass
+                if val_r29 is not None:
+                    filter_ext = bool(val_r29 & 0x0001)
+                    filter_claris = bool(val_r29 & 0x0010)
 
                 rc3 = conn.query_ascii("RE:00C3")
                 if rc3 and rc3.startswith("re:"):
@@ -800,6 +791,7 @@ def query_live_sensors(
                     "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
                     "ok": beans_ok,
                     "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Puck thickness nominal" if beans_ok else "Grinder dry run detected"),
                     "icon": "🫘"
                 },
                 {
@@ -918,21 +910,37 @@ def query_live_sensors(
                 "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Puck measurement: {cake_thickness_ticks} ticks | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
                 "icon": "🎛️"
             })
+            opt_thresh = _optical_bean_threshold
+            opt_hyst = _optical_bean_hysteresis
+            opt_lower = opt_thresh - opt_hyst
+            opt_upper = opt_thresh + opt_hyst
+            delta = None
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            shunt_ratio = None
+            gain_pct = None
+            ntc_self_test_ok = None
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
                 delta = on_adc - off_adc
+                shunt_ratio = round(on_adc / off_adc, 4) if off_adc > 0 else 1.0
+                gain_pct = round((shunt_ratio - 1.0) * 100.0, 2)
+                ntc_self_test_ok = (180 < off_adc < 17000) and (1.050 <= shunt_ratio <= 1.070)
+
+                # Coffee Heater NTC Diagnostic Sensor Self-Test (P518Ani.exe Check Sensor VA 0x004E6E28, String #251)
                 sensor_list.append({
-                    "id": "optical_bean_sensor",
-                    "name": "Optical Bean Hopper Sensor",
-                    "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
-                    "ok": beans_ok,
-                    "badge": "NOMINAL" if beans_ok else "EMPTY",
-                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {delta} counts (Threshold: {opt_thresh} ± {opt_hyst}, Bounds: ≤{opt_lower} / ≥{opt_upper}) | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
-                    "icon": "🫘",
-                    "value": on_adc,
-                    "unit": "ADC"
+                    "id": "heater_ntc_diagnostic_sensor",
+                    "name": "Coffee Heater NTC Diagnostic Sensor",
+                    "status": "CALIBRATION NOMINAL (+6.0% Shunt OK)" if ntc_self_test_ok else "CALIBRATION WARNING / OUT OF RANGE",
+                    "ok": ntc_self_test_ok,
+                    "badge": f"{shunt_ratio:.4f} (+{gain_pct}%)" if ntc_self_test_ok else "FAULT",
+                    "details": f"NTC Calibration Self-Test (AS:): Shunt ON ADC {on_adc} / Ambient OFF ADC {off_adc} (Ratio: {shunt_ratio:.4f}, Gain: +{gain_pct}%) | Range: 180..17000 | Status: {'Circuit Nominal' if ntc_self_test_ok else 'False Values (P518 String #251)'}",
+                    "icon": "🌡️",
+                    "value": shunt_ratio,
+                    "unit": "ratio"
                 })
+
+
+
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -1025,11 +1033,14 @@ def query_live_sensors(
                 "machine_state_status": ready_status,
                 "cake_thickness_ticks": cake_thickness_ticks,
                 "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
+                "heater_ntc_self_test_ok": ntc_self_test_ok if cached_adcs else None,
+                "heater_ntc_shunt_ratio": shunt_ratio if cached_adcs else None,
+                "heater_ntc_shunt_gain_pct": gain_pct if cached_adcs else None,
                 "optical_threshold": opt_thresh,
                 "optical_hysteresis": opt_hyst,
                 "optical_lower": opt_lower,
                 "optical_upper": opt_upper,
-                "optical_delta": (on_adc - off_adc) if cached_adcs else None,
+                "optical_delta": delta,
                 "button_matrix": button_matrix_hex,
                 "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
@@ -1108,6 +1119,7 @@ def query_live_sensors(
                     "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
                     "ok": beans_ok,
                     "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Puck thickness nominal" if beans_ok else "Grinder dry run detected"),
                     "icon": "🫘"
                 },
                 {

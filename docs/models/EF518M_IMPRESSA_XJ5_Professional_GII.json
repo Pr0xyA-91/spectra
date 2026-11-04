@@ -28,12 +28,19 @@
         "prebrew_2": "0044"
       }
     },
-    "optical_hopper": {
+    "ntc_sensor_check": {
       "command": "AS:",
-      "empty_adc_threshold": 1710,
-      "nominal_adc_threshold": 1907,
-      "nominal_delta_max": 85,
-      "empty_delta_min": 95
+      "description": "Coffee Heater NTC Diagnostic Sensor Self-Test (P518Ani.exe String #251)",
+      "valid_adc_min": 180,
+      "valid_adc_max": 17000,
+      "nominal_shunt_ratio": 1.0600
+    },
+    "bean_hopper": {
+      "live_status_source": "HZ[0][3]",
+      "charged_bit": "1",
+      "empty_bit": "0",
+      "non_volatile_register": "RE:0029",
+      "non_volatile_mask": "0x0040"
     }
   },
   "custom_registers": {

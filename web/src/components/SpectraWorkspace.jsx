@@ -455,9 +455,10 @@ export default function SpectraWorkspace() {
   const opticalDelta = hasTelem && telem.optical_delta != null ? telem.optical_delta : null;
 
   // Find switch statuses (only when read)
-  const tankSw = hasTelem ? liveData.switches.find((s) => s.id === 'water_tank') : null;
-  const traySw = hasTelem ? liveData.switches.find((s) => s.id === 'drip_tray') : null;
-  const filterSw = hasTelem ? liveData.switches.find((s) => s.id === 'claris_filter') : null;
+  const tankSw = hasTelem ? (liveData?.switches || []).find((s) => s.id === 'water_tank') : null;
+  const traySw = hasTelem ? (liveData?.switches || []).find((s) => s.id === 'drip_tray') : null;
+  const filterSw = hasTelem ? (liveData?.switches || []).find((s) => s.id === 'claris_filter') : null;
+  const beansSw = hasTelem ? (liveData?.switches || []).find((s) => s.id === 'bean_hopper') : null;
 
   // Interrogation Metrics (EMPTY until machine is read)
   const totalPreps = statsData?.total_preparations ?? null;
@@ -491,7 +492,7 @@ export default function SpectraWorkspace() {
             </span>
           </div>
           <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            BUILD 20261102.1738
+            BUILD 20261104.1418
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
             UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS
@@ -731,15 +732,17 @@ export default function SpectraWorkspace() {
           </div>
 
           {/* 7. Bean Hopper */}
-          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
+          <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`} title={beansSw?.details || beansSw?.status || ''}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
               🫘 BEAN HOPPER
             </div>
-            <div className={`text-xs font-bold font-mono my-1 ${beansOk != null ? (beansOk ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
-              {beansOk != null ? (beansOk ? 'BEANS OK' : 'FILL BEANS') : '---'}
+            <div className={`text-xs font-bold font-mono my-1 ${beansSw ? (beansSw.ok ? 'text-emerald-400' : 'text-rose-400') : (beansOk != null ? (beansOk ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500')}`}>
+              {beansSw?.details?.includes('Monitored Locally')
+                ? 'LOCAL (EF518D)'
+                : (beansSw ? (beansSw.ok ? 'BEANS OK' : 'FILL BEANS') : (beansOk != null ? (beansOk ? 'BEANS OK' : 'FILL BEANS') : '---'))}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">
-              {opticalDelta != null ? `Delta: ${opticalDelta} cnt` : 'Standby'}
+            <div className="text-[10px] text-gray-500 truncate" title={beansSw?.details || beansSw?.status || ''}>
+              {beansSw?.details || (beansOk != null ? (beansOk ? 'Hopper Charged' : 'Fill Beans') : 'Standby')}
             </div>
           </div>
 
@@ -830,38 +833,26 @@ export default function SpectraWorkspace() {
                   statsData={statsData}
                 />
 
-                {/* Developer Optical Bean Calibration Card */}
+                {/* Coffee Heater NTC Diagnostic Sensor Card (AS: Check Sensor) */}
                 <div className={`p-3.5 border rounded ${theme.surfaceClass}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 mb-2">
                     <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
                       <SlidersHorizontal className="w-3.5 h-3.5" />
-                      <span>DEVELOPER OPTICAL BEAN SENSOR THRESHOLD</span>
+                      <span>COFFEE HEATER NTC DIAGNOSTIC SENSOR (AS:)</span>
                     </span>
                     <span className="text-[11px] font-mono text-gray-400">
-                      DELTA: <strong className="text-amber-400">{opticalDelta} counts</strong>
+                      SHUNT: <strong className="text-amber-400">{telem.heater_ntc_shunt_ratio ? `${telem.heater_ntc_shunt_ratio} (+${telem.heater_ntc_shunt_gain_pct}%)` : (opticalDelta != null ? `Delta: ${opticalDelta}` : 'Standby')}</strong>
                     </span>
                   </div>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between font-mono text-[11px]">
-                      <span className="text-gray-400">Threshold: <strong>{beanThreshold} counts</strong> (±{beanHysteresis})</span>
-                      <span className="text-amber-400">Bounds: ≤{beanThreshold - beanHysteresis} / ≥{beanThreshold + beanHysteresis}</span>
+                      <span className="text-gray-400">Self-Test: <strong className={telem.heater_ntc_self_test_ok ? "text-emerald-400" : "text-amber-400"}>{telem.heater_ntc_self_test_ok ? "NOMINAL (+6.0% OK)" : (telem.heater_ntc_self_test_ok === false ? "OUT OF RANGE" : "Standby")}</strong></span>
+                      <span className="text-amber-400">P518 String #251 Valid: 180..17000</span>
                     </div>
-                    <input
-                      type="range"
-                      min="50"
-                      max="250"
-                      value={beanThreshold}
-                      onChange={(e) => handleSaveThreshold(Number(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer"
-                    />
                     <div className="flex items-center justify-between pt-1">
-                      <button
-                        onClick={handleResetThreshold}
-                        disabled={isSavingCalib}
-                        className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 font-bold rounded text-[11px] font-mono"
-                      >
-                        RESET TO FACTORY (115)
-                      </button>
+                      <span className="text-[11px] font-mono text-gray-400">
+                        Ambient OFF: {telem.bean_adcs?.[0] ?? '--'} | Shunt ON: {telem.bean_adcs?.[1] ?? '--'}
+                      </span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${beansOk ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
                         {beansOk ? 'BEANS OK' : 'FILL BEANS'}
                       </span>

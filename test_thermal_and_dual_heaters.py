@@ -131,7 +131,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         # 2. Tray Inserted telemetry payload (Nominal)
         def mock_query_in(cmd, timeout=1.0):
             if cmd.strip() == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03CE,0802,4,000000,0000,00"
+                return "hz:010101100000,027E,00E2,0000,03CE,0802,4,000000,0000,00"
             return orig_query(cmd, timeout=timeout)
         tray_out_conn.query_ascii = mock_query_in
 
@@ -152,7 +152,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         def mock_query(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000100,0000,00"
             elif cmd_c == "RE:0028":
                 return "re:0339"
             elif cmd_c == "RE:01B4":
@@ -184,7 +184,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         def mock_query_cold(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,01AE,0802,3,000000,0000,00"
+                return "hz:010101100000,027E,00E2,0000,01AE,0802,3,000000,0000,00"
             return orig_query(cmd, timeout=timeout)
         conn.query_ascii = mock_query_cold
 
@@ -276,11 +276,13 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
 
-        # 1. Empty Bean Hopper: AS: returns ON_ADC = 0x0718 (1816 decimal > 1688 -> delta = 128 >= 120)
+        # 1. Empty Bean Hopper: CS: returns 3FF0 (1023 counts, beam clear / empty)
         def mock_query_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077206980000,077207180001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E50000000000000000000000000003FF006D00006"
             elif cmd_c == "HZ:":
                 # Machine heated, tray inserted, water present, cake thickness = 14 ticks (empty grind)
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
@@ -304,14 +306,16 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         alert_names = [a["name"] for a in res_empty["alerts"]]
         self.assertIn("Fill Beans", alert_names)
 
-        # 2. Charged Bean Hopper: AS: returns ON_ADC = 0x061C (1564 decimal <= 1680)
+        # 2. Charged Bean Hopper: CS: returns 0000 (0 counts, beam occluded / beans present)
         def mock_query_full(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077206450000,0772061C0001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_c == "HZ:":
                 # Machine heated, tray inserted, water present, cake thickness = 29 ticks (thick puck)
-                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
             return orig_query(cmd, timeout=timeout)
         conn.query_ascii = mock_query_full
 
@@ -332,22 +336,24 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(res_full["telemetry"]["cake_thickness_ticks"], 29)
         self.assertEqual(res_full["telemetry"]["bean_adcs"], (1605, 1564))
 
-        # Optical Bean Sensor entry should be in diagnostic sensor list
+        # Verify obsolete optical_bean_sensor is NOT in sensors list; heater_ntc_diagnostic_sensor is present
         opt_sensor = next((s for s in res_full["sensors"] if s["id"] == "optical_bean_sensor"), None)
-        self.assertIsNotNone(opt_sensor)
-        self.assertTrue(opt_sensor["ok"])
-        self.assertIn("Reflected IR ADC: 1564", opt_sensor["details"])
+        self.assertIsNone(opt_sensor)
+        ntc_diag = next((s for s in res_full["sensors"] if s["id"] == "heater_ntc_diagnostic_sensor"), None)
+        self.assertIsNotNone(ntc_diag)
 
     def test_bean_hopper_fast_poll_telemetry(self):
         """Test continuous fast-poll bean hopper detection from active AS: sensor query."""
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
 
-        # 1. Fast poll with hopper empty (AS: delta = 128 >= 120)
+        # 1. Fast poll with hopper empty (CS: 3FF0 -> empty)
         def mock_query_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077206980000,077207180001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E50000000000000000000000000003FF006D00006"
             elif cmd_c == "HZ:":
                 return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
             return orig_query(cmd, timeout=timeout)
@@ -363,7 +369,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(sw_empty["machine_ready"]["status"], "Not Ready (Fill Beans)")
         self.assertIn("Fill Beans", [a["name"] for a in res_empty["alerts"]])
 
-        # 2. Fast poll with hopper charged (AS: on_adc = 1564 < 1710)
+        # 2. Fast poll with hopper charged (CS: 0000 -> charged)
         conn_full = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query_full = conn_full.query_ascii
 
@@ -371,8 +377,10 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077206450000,0772061C0001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_c == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
             return orig_query_full(cmd, timeout=timeout)
         conn_full.query_ascii = mock_query_full
 
@@ -390,13 +398,14 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
         # Case 1: High ambient room light (e.g. hopper lid open under bright light):
         # off_adc = 2244, on_adc = 2328 -> delta = 84 counts (beans present, absorbed IR)
-        # Even though on_adc > 1700 (2328), delta <= 89 correctly identifies beans present!
         def mock_ambient(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077308C40000,077309180001"  # 0x08C4=2244, 0x0918=2328 -> delta=84
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_c == "HZ:":
-                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+                return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
             return ""
         conn.query_ascii = mock_ambient
 
@@ -412,6 +421,8 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077317D70000,077319430001"  # Floating standby noise
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_c == "HZ:":
                 return "hz:000000100000,028A,00E6,0000,0202,0802,3,000000,0000,10"
             return ""
@@ -422,14 +433,16 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         sw_sb = {s["id"]: s for s in res_sb["switches"]}
         self.assertTrue(sw_sb["bean_hopper"]["ok"])
 
-        # Case 3: Empty hopper bare terminal reflection (delta >= 120, e.g. 128)
+        # Case 3: Empty hopper (Fill Beans): CS: returns 3FF0
         conn_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         def mock_empty(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
                 return "as:077206980000,077207180001"  # 0x0698=1688, 0x0718=1816 -> delta=128 >= 120
+            elif cmd_c == "CS:":
+                return "cs:03C0300E50000000000000000000000000003FF006D00006"
             elif cmd_c == "HZ:":
-                return "hz:010101100000,028A,00E5,006D,03EF,0802,3,000000,001F,00"
+                return "hz:010001100000,028A,00E5,006D,03EF,0802,3,000000,000E,00"
             return ""
         conn_empty.query_ascii = mock_empty
 
@@ -443,13 +456,14 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertTrue(any(a["name"] == "Fill Beans" for a in res_emp["alerts"]))
 
         # Case 4: IMPRESSA XJ5 (EF518M) live operating condition:
-        # HZ[0][3] == '1' during thermal regulation, but hopper is filled with beans (delta=88 <= 92).
-        # Live invariant: Optical AS: is the ground truth. Beans MUST be reported OK and ready.
+        # CS: returns 0000 (beam blocked, beans OK)
         conn_xj5 = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         def mock_xj5(cmd, timeout=1.0):
             cmd_c = cmd.strip()
             if cmd_c == "AS:":
-                return "as:077205C70000,0772061F0001"  # 0x05C7=1479, 0x061F=1567 -> delta=88 <= 92
+                return "as:077205C70000,0772061F0001"  # 0x05C7=1479, 0x061F=1567 -> ratio=1.0595
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
             elif cmd_c == "HZ:":
                 return "hz:010101100000,0289,00E5,006D,03EE,0802,3,000000,001E,00"
             return ""
@@ -462,6 +476,60 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(sw_xj5["bean_hopper"]["badge"], "NORMAL")
         self.assertTrue(sw_xj5["machine_ready"]["ok"])
         self.assertEqual(sw_xj5["machine_ready"]["badge"], "READY")
+
+        # Case 4b: IMPRESSA XJ5 empty bean hopper condition on real hardware:
+        # CS: returns 3FF0 (beam clear, hopper empty) and RE:0020 returns 0000
+        conn_xj5_empty = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_xj5_empty(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077405CB0000,077406250001"  # ratio=1.0607
+            elif cmd_c == "CS:":
+                return "cs:03C0300E50000000000000000000000000003FF006D00006"
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,0289,00E5,006D,03E8,0802,3,000000,000E,00"
+            return ""
+        conn_xj5_empty.query_ascii = mock_xj5_empty
+
+        res_xj5_empty = sc.query_live_sensors("mock_xj5_empty", conn=conn_xj5_empty, fast_poll=True)
+        self.assertFalse(res_xj5_empty["telemetry"]["beans_ok"])
+        sw_xj5_empty = {s["id"]: s for s in res_xj5_empty["switches"]}
+        self.assertFalse(sw_xj5_empty["bean_hopper"]["ok"])
+        self.assertEqual(sw_xj5_empty["bean_hopper"]["badge"], "FILL BEANS")
+        self.assertFalse(sw_xj5_empty["machine_ready"]["ok"])
+        self.assertEqual(sw_xj5_empty["machine_ready"]["badge"], "FILL BEANS")
+        self.assertTrue(any(a["name"] == "Fill Beans" for a in res_xj5_empty["alerts"]))
+
+        # Case 5: Coffee Heater NTC Self-Test across Cold and Hot Thermoblock States:
+        # Cold state: off_adc = 3072 (0x0C00), on_adc = 3256 (0x0CB8) -> ratio 1.0599 (+6.0% shunt)
+        conn_cold = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_cold(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:07720C000000,07720CB80001"
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return ""
+        conn_cold.query_ascii = mock_cold
+        res_cold = sc.query_live_sensors("mock_cold", conn=conn_cold, fast_poll=True)
+        self.assertTrue(res_cold["telemetry"]["beans_ok"])
+        self.assertTrue(res_cold["telemetry"]["heater_ntc_self_test_ok"])
+        self.assertAlmostEqual(res_cold["telemetry"]["heater_ntc_shunt_ratio"], 1.0599, places=3)
+
+        # Hot state: off_adc = 1464 (0x05B8), on_adc = 1552 (0x0610) -> ratio 1.0601 (+6.0% shunt)
+        conn_hot = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        def mock_hot(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077205B80000,077206100001"
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return ""
+        conn_hot.query_ascii = mock_hot
+        res_hot = sc.query_live_sensors("mock_hot", conn=conn_hot, fast_poll=True)
+        self.assertTrue(res_hot["telemetry"]["beans_ok"])
+        self.assertTrue(res_hot["telemetry"]["heater_ntc_self_test_ok"])
+        self.assertAlmostEqual(res_hot["telemetry"]["heater_ntc_shunt_ratio"], 1.0601, places=3)
 
 
     def test_ascii_and_smart_connect_counter_mapping(self):
@@ -498,7 +566,7 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
         self.assertEqual(calib["lower_bound"], 110)
         self.assertEqual(calib["upper_bound"], 120)
 
-        # 2. Delta of 125 with default threshold (115) -> Empty (125 >= 120)
+        # 2. Delta of 125 with default threshold (115) and CS: 3FF0 (Empty)
         conn = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
         orig_query = conn.query_ascii
         def mock_query(cmd, timeout=1.0):
@@ -506,18 +574,35 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
             if cmd_c == "AS:":
                 # off_adc = 1600, on_adc = 1725 -> delta = 125
                 return "as:077206400000,077206BD0001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E50000000000000000000000000003FF006D00006"
             elif cmd_c == "HZ:":
-                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+                return "hz:010001100000,027E,00E2,0000,03C6,0802,3,000000,000E,00"
             return orig_query(cmd, timeout=timeout)
         conn.query_ascii = mock_query
 
         res_default = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
         self.assertFalse(res_default["telemetry"]["beans_ok"])
+        self.assertEqual(res_default["telemetry"]["optical_threshold"], 115)
+        self.assertEqual(res_default["telemetry"]["optical_delta"], 125)
 
-        # 3. Adjust threshold to 130 (bounds 125 / 135) -> Beans OK (125 <= 125)
+        # 3. Adjust threshold to 130 and switch CS: to '0000' (Charged)
+        conn_charged = serial_io.JuraSerialConnection("DEMO / SIMULATION (Jura S8)")
+        orig_query_charged = conn_charged.query_ascii
+        def mock_query_charged(cmd, timeout=1.0):
+            cmd_c = cmd.strip()
+            if cmd_c == "AS:":
+                return "as:077206400000,077206BD0001"
+            elif cmd_c == "CS:":
+                return "cs:03C0300E5000000000000000000000000000000006D00006"
+            elif cmd_c == "HZ:":
+                return "hz:010101100000,027E,00E2,0000,03C6,0802,3,000000,001D,00"
+            return orig_query_charged(cmd, timeout=timeout)
+        conn_charged.query_ascii = mock_query_charged
+
         sc.set_optical_bean_threshold(130, save=False)
         self.assertEqual(sc.get_optical_bean_threshold(), 130)
-        res_calib = sc.query_live_sensors("mock_calib", conn=conn, fast_poll=True)
+        res_calib = sc.query_live_sensors("mock_calib", conn=conn_charged, fast_poll=True)
         self.assertTrue(res_calib["telemetry"]["beans_ok"])
         self.assertEqual(res_calib["telemetry"]["optical_threshold"], 130)
         self.assertEqual(res_calib["telemetry"]["optical_delta"], 125)
