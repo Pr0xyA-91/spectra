@@ -1,7 +1,13 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title SPECTRA Web Dashboard
+title SPECTRA Standalone App
+
+where pythonw >nul 2>nul
+if %errorlevel% equ 0 (
+    start "" pythonw spectra_app.py %*
+    exit /b 0
+)
 
 where python >nul 2>nul
 if %errorlevel% neq 0 (
@@ -10,5 +16,5 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [*] Launching SPECTRA Universal Web Dashboard on http://127.0.0.1:8080 ...
-python gui_web.py %*
+echo [*] Launching SPECTRA Standalone Desktop Application...
+python spectra_app.py %*

@@ -13,8 +13,8 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_BUILD        "20261102.1738"
-#define SPECTRA_VERSION      "Build 20261102.1738"
+#define SPECTRA_BUILD        "20261114.0020"
+#define SPECTRA_VERSION      "Build 20261114.0020"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
@@ -52,11 +52,17 @@ static void kill_running_spectra(void) {
     si.wShowWindow = SW_HIDE;
     ZeroMemory(&pi, sizeof(pi));
 
-    wchar_t cmd[] = L"taskkill.exe /F /IM spectra.exe /T";
-    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 5000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
+    wchar_t cmds[2][64] = {
+        L"taskkill.exe /F /IM spectra-shell.exe /T",
+        L"taskkill.exe /F /IM spectra.exe /T"
+    };
+    for (int i = 0; i < 2; i++) {
+        ZeroMemory(&pi, sizeof(pi));
+        if (CreateProcessW(NULL, cmds[i], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 5000);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
     }
 }
 
@@ -187,6 +193,7 @@ static void write_uninstaller_batch(const wchar_t *target_dir) {
     if (f) {
         fwprintf(f, L"@echo off\r\n");
         fwprintf(f, L"echo [*] Uninstalling SPECTRA Hardware Diagnostics...\r\n");
+        fwprintf(f, L"taskkill /F /IM spectra-shell.exe 2>nul\r\n");
         fwprintf(f, L"taskkill /F /IM spectra.exe 2>nul\r\n");
         fwprintf(f, L"reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SPECTRA\" /f 2>nul\r\n");
         fwprintf(f, L"powershell -NoProfile -Command \"Remove-Item -Path '$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\SPECTRA' -Recurse -Force -ErrorAction SilentlyContinue\"\r\n");

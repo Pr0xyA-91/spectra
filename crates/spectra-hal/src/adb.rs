@@ -83,6 +83,7 @@ impl Default for AdbBridgeConfig {
 #[derive(Debug)]
 pub enum AdbStream {
     Tcp(tokio::net::TcpStream),
+    #[cfg(unix)]
     Unix(tokio::net::UnixStream),
 }
 
@@ -91,6 +92,7 @@ impl AdbStream {
     pub async fn read_buf(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::Tcp(s) => s.read(buf).await,
+            #[cfg(unix)]
             Self::Unix(s) => s.read(buf).await,
         }
     }
@@ -99,6 +101,7 @@ impl AdbStream {
     pub async fn write_all_buf(&mut self, buf: &[u8]) -> std::io::Result<()> {
         match self {
             Self::Tcp(s) => s.write_all(buf).await,
+            #[cfg(unix)]
             Self::Unix(s) => s.write_all(buf).await,
         }
     }
@@ -107,6 +110,7 @@ impl AdbStream {
     pub async fn flush_buf(&mut self) -> std::io::Result<()> {
         match self {
             Self::Tcp(s) => s.flush().await,
+            #[cfg(unix)]
             Self::Unix(s) => s.flush().await,
         }
     }
@@ -229,12 +233,20 @@ impl AdbSerialBridge {
                     .map_err(HalError::Io)?;
                 AdbStream::Tcp(s)
             }
+            #[cfg(unix)]
             AdbSocketEndpoint::Unix(path) => {
                 let s = tokio::time::timeout(config.connect_timeout, tokio::net::UnixStream::connect(path))
                     .await
                     .map_err(|_| HalError::Timeout(config.connect_timeout))?
                     .map_err(HalError::Io)?;
                 AdbStream::Unix(s)
+            }
+            #[cfg(not(unix))]
+            AdbSocketEndpoint::Unix(path) => {
+                return Err(HalError::HardwareFault(format!(
+                    "Unix domain socket endpoint {} is only supported on Unix hosts",
+                    path.display()
+                )));
             }
         };
 
@@ -333,6 +345,7 @@ mod tests {
         assert!(AdbSerialBridge::validate_tty_path("").is_err());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_build_stty_command() {
         let config = AdbBridgeConfig {
@@ -354,6 +367,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_build_adb_forward_args() {
         // With device serial and TCP endpoint
@@ -405,6 +419,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_adb_stream_transport_read_write_timeout_eof() {
         let (client, mut server) = tokio::net::UnixStream::pair().expect("unix stream pair");

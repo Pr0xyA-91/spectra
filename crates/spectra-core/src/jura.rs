@@ -39,6 +39,44 @@ pub enum JuraCommand {
 }
 
 /// Real-time subsystem telemetry decoded from `HZ:` CSV frames (all metric units: °C, ml/s)
+/// Converts a Jura NTC integer reading into Celsius (0.1 °C precision).
+pub fn decode_jura_temperature_word(num: i64) -> Option<f64> {
+    if num <= 0 || num >= 1900 {
+        return None;
+    }
+    if (150..=1850).contains(&num) {
+        return Some((num as f64) / 10.0);
+    }
+    if (15..150).contains(&num) {
+        return Some(num as f64);
+    }
+    None
+}
+
+/// Decodes a packed 16-bit Jura EEPROM production/service date word into `(year, month, day)`.
+pub fn decode_jura_date_word(val: u16) -> Option<(u16, u8, u8)> {
+    if val == 0 || val == 0xFFFF {
+        return None;
+    }
+    let day = (val & 0x1F) as u8;
+    let month = ((val >> 5) & 0x0F) as u8;
+    let year = 1990u16 + ((val >> 9) & 0x7F);
+    if !(1..=12).contains(&month) || day < 1 {
+        return None;
+    }
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap { 29 } else { 28 },
+        _ => return None,
+    };
+    if day > max_day {
+        return None;
+    }
+    Some((year, month, day))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HzTelemetryFrame {
     pub coffee_temp_c: f32,
@@ -57,15 +95,17 @@ pub struct HzTelemetryFrame {
     pub bu_initialized: bool,
     pub valve_busy: bool,
     pub puck_thickness_ticks: u16,
+    pub beans_charged: bool,
 }
 
 impl HzTelemetryFrame {
-    /// Evaluates live operational readiness strictly from the 5 physical real-time inputs:
+    /// Evaluates live operational readiness strictly from physical real-time inputs:
     /// 1. Drip Tray inserted (!drip_tray_missing)
     /// 2. Water Tank full (!water_tank_empty)
     /// 3. Grounds Container not full (!grounds_full)
     /// 4. Coffee Thermoblock >= 80.0 °C (coffee_temp_c >= 80.0)
     /// 5. Appliance idle (!is_busy)
+    /// 6. Puck compression thickness not indicating dry grinder run (!(puck_thickness_ticks > 0 && <= 14))
     ///
     /// Heartbeat clock tick (mcu_heartbeat_tick) is 1 Hz, NOT an alarm bit.
     pub fn is_machine_ready(&self) -> bool {
@@ -74,7 +114,18 @@ impl HzTelemetryFrame {
             && !self.grounds_full
             && self.coffee_temp_c >= 80.0
             && !self.is_busy
+            && !(self.puck_thickness_ticks > 0 && self.puck_thickness_ticks <= 14)
     }
+}
+
+/// Evaluates commercial optical hopper status from HZ charged flag and CS optical beam latch.
+///
+/// On commercial appliances (IMPRESSA XJ5, GIGA):
+/// - Morning boot before any coffee brew: HZ[0][3] == '0' -> uncharged (returns false).
+/// - Empty hopper run during coffee brew: CS[39..43] == 0x3FF0 (>= 0x1000) -> empty (returns false).
+/// - Nominal charged hopper after coffee brew: HZ[0][3] == '1' && CS[39..43] < 0x1000 -> charged (returns true).
+pub fn evaluate_commercial_hopper_state(hz_charged_flag: bool, cs_bean_word: u16) -> bool {
+    hz_charged_flag && cs_bean_word < 0x1000
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,11 +135,13 @@ pub enum BeansState {
     Empty,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpticalSensorReading {
     pub ambient_adc: u16,
     pub reflected_adc: u16,
     pub delta: u16,
+    pub shunt_ratio: f32,
+    pub is_ntc_self_test_valid: bool,
     pub state: BeansState,
 }
 
@@ -112,6 +165,16 @@ impl OpticalSensorReading {
         hysteresis: u16,
     ) -> Self {
         let delta = reflected_adc.saturating_sub(ambient_adc);
+        let shunt_ratio = if ambient_adc > 0 {
+            (reflected_adc as f32) / (ambient_adc as f32)
+        } else {
+            1.0
+        };
+        // P518Ani.exe Check Sensor VA 0x004E6E28 (Coffee Heater NTC Self-Test):
+        // Valid range 180 < off_adc < 17000 and nominal +6.0% calibration shunt (1.050 .. 1.070)
+        let is_ntc_self_test_valid = (180 < ambient_adc && ambient_adc < 17000)
+            && (1.050..=1.070).contains(&shunt_ratio);
+
         let lower = threshold.saturating_sub(hysteresis);
         let upper = threshold.saturating_add(hysteresis);
         let state = if delta <= lower {
@@ -125,9 +188,24 @@ impl OpticalSensorReading {
             ambient_adc,
             reflected_adc,
             delta,
+            shunt_ratio,
+            is_ntc_self_test_valid,
             state,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CsTelemetryFrame {
+    pub raw: String,
+    pub coffee_temp_raw: u16,
+    pub rotary_pos: u8,
+    pub bu_pos_raw: u16,
+    pub bean_photodiode_raw: u16,
+    pub bean_photodiode_adc: u16,
+    pub beans_ok: bool,
+    pub flowmeter_pulses: u16,
+    pub model_tag: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,11 +330,35 @@ impl JuraProtocol {
 
     /// Encodes a full ASCII command string into 4:1 Jura wire bytes (`4 * N` bytes)
     pub fn encode_wire_frame(ascii_cmd: &str) -> Vec<u8> {
-        let mut wire = Vec::with_capacity(ascii_cmd.len() * 4);
-        for b in ascii_cmd.as_bytes() {
-            wire.extend_from_slice(&jura_codec::encode_byte(*b));
+        Self::encode_wire_bytes(ascii_cmd.as_bytes())
+    }
+
+    /// Encodes raw payload bytes into 4:1 Jura wire carrier bytes (`4 * N` bytes)
+    pub fn encode_wire_bytes(data: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(data.len() * 4);
+        for &b in data {
+            wire.extend_from_slice(&jura_codec::encode_byte(b));
         }
         wire
+    }
+
+    /// Decodes complete 4-byte 4:1 Jura carrier groups into raw payload bytes,
+    /// returning `(decoded_bytes, remaining_tail_bytes)`.
+    pub fn decode_wire_bytes(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let complete_groups = raw.len() / 4;
+        let mut decoded = Vec::with_capacity(complete_groups);
+        for chunk in raw[..complete_groups * 4].chunks_exact(4) {
+            let mut b = 0u8;
+            for (i, &r) in chunk.iter().enumerate() {
+                let bit0 = (r >> 2) & 1;
+                let bit1 = (r >> 5) & 1;
+                let nibble = bit0 | (bit1 << 1);
+                b |= nibble << (2 * i);
+            }
+            decoded.push(b);
+        }
+        let remainder = raw[complete_groups * 4..].to_vec();
+        (decoded, remainder)
     }
 
     /// Decodes a 4:1 Jura wire buffer (`4 * N` bytes) back into an ASCII string
@@ -345,6 +447,7 @@ impl JuraProtocol {
         let is_busy = status.chars().next() == Some('1');
         let bu_initialized = status.chars().nth(1) == Some('1');
         let valve_busy = status.chars().nth(2) == Some('1');
+        let beans_charged = status.chars().nth(3) == Some('1');
         let heater_ready = status.chars().nth(5) == Some('1');
 
         let bu_upper_encoder = Self::parse_hex_u16("HZ[1] bu_upper_encoder", parts[1])?;
@@ -396,6 +499,7 @@ impl JuraProtocol {
             bu_initialized,
             valve_busy,
             puck_thickness_ticks,
+            beans_charged,
         })
     }
 
@@ -453,6 +557,79 @@ impl JuraProtocol {
         };
 
         Ok(OpticalSensorReading::evaluate(off_adc, on_adc))
+    }
+
+    /// Parses volatile component status and live IR bean sensor photodiode ADC from `CS:` response frame
+    /// Format: `cs:TTTTRPPPP...BBBBFFFFMMMM` where:
+    /// - TTTT (s[3..7]): Coffee Thermoblock NTC raw temperature ADC
+    /// - R (s[7..8]): Rotary dial position
+    /// - PPPP (s[8..12]): Current Brew Unit encoder position ticks
+    /// - BBBB (s[39..43], or payload[36..40]): 10-bit IR bean photodiode ADC (< 0x1000 = Beans OK, >= 0x1000 = Fill Beans)
+    /// - FFFF (s[43..47]): Dispense volume flowmeter impulses
+    /// - MMMM (s[47..51]): Model hardware line tag
+    pub fn parse_cs_response(raw: &str) -> Result<CsTelemetryFrame, CoreError> {
+        let trimmed = raw.trim();
+        let payload = trimmed
+            .strip_prefix("cs:")
+            .or_else(|| trimmed.strip_prefix("CS:"))
+            .ok_or_else(|| CoreError::ResponseFraming {
+                expected: "cs:".into(),
+                actual: raw.into(),
+            })?;
+
+        if payload.len() < 40 {
+            return Err(CoreError::ParseError {
+                field: "CS frame length (<40 chars)".into(),
+                raw: raw.into(),
+            });
+        }
+
+        let coffee_temp_raw = u16::from_str_radix(&payload[0..4], 16)
+            .map_err(|_| CoreError::ParseError {
+                field: "CS coffee temp".into(),
+                raw: payload[0..4].into(),
+            })?;
+
+        let rotary_pos = payload.chars().nth(4).and_then(|c| c.to_digit(16)).unwrap_or(0) as u8;
+
+        let bu_pos_raw = u16::from_str_radix(&payload[5..9], 16)
+            .map_err(|_| CoreError::ParseError {
+                field: "CS BU pos".into(),
+                raw: payload[5..9].into(),
+            })?;
+
+        let bean_photodiode_raw = u16::from_str_radix(&payload[36..40], 16)
+            .map_err(|_| CoreError::ParseError {
+                field: "CS bean sensor photodiode".into(),
+                raw: payload[36..40].into(),
+            })?;
+
+        let bean_photodiode_adc = bean_photodiode_raw >> 4;
+        let beans_ok = bean_photodiode_raw < 0x1000;
+
+        let flowmeter_pulses = if payload.len() >= 44 {
+            u16::from_str_radix(&payload[40..44], 16).unwrap_or(0)
+        } else {
+            0
+        };
+
+        let model_tag = if payload.len() >= 48 {
+            u16::from_str_radix(&payload[44..48], 16).unwrap_or(0)
+        } else {
+            0
+        };
+
+        Ok(CsTelemetryFrame {
+            raw: trimmed.to_string(),
+            coffee_temp_raw,
+            rotary_pos,
+            bu_pos_raw,
+            bean_photodiode_raw,
+            bean_photodiode_adc,
+            beans_ok,
+            flowmeter_pulses,
+            model_tag,
+        })
     }
 }
 
@@ -925,6 +1102,16 @@ mod tests {
         // Test hysteresis: off = 50, on = 165 -> delta = 115 (Hysteresis)
         let eval_hyst = OpticalSensorReading::evaluate(50, 165);
         assert_eq!(eval_hyst.state, BeansState::Hysteresis);
+
+        // Test NTC Diagnostic Sensor Self-Test (P518Ani.exe string 251, nominal +6.0% shunt ratio ~1.060):
+        // Nominal operating thermoblock: off = 1605, on = 1701 -> ratio = 1.0598
+        let eval_ntc = OpticalSensorReading::evaluate(1605, 1701);
+        assert!(eval_ntc.is_ntc_self_test_valid);
+        assert!((eval_ntc.shunt_ratio - 1.0598).abs() < 0.001);
+
+        // Out of bounds off_adc (< 180)
+        let eval_oob = OpticalSensorReading::evaluate(150, 159);
+        assert!(!eval_oob.is_ntc_self_test_valid);
     }
 
     #[test]
@@ -946,6 +1133,7 @@ mod tests {
             bu_initialized: true,
             valve_busy: false,
             puck_thickness_ticks: 0,
+            beans_charged: true,
         };
         assert!(frame.is_machine_ready());
 
@@ -958,6 +1146,13 @@ mod tests {
         frame.drip_tray_missing = true;
         assert!(!frame.is_machine_ready());
         frame.drip_tray_missing = false;
+
+        // Puck compression empty grinder run (ticks > 0 && <= 14)
+        frame.puck_thickness_ticks = 10;
+        assert!(!frame.is_machine_ready());
+        frame.puck_thickness_ticks = 25;
+        assert!(frame.is_machine_ready());
+        frame.puck_thickness_ticks = 0;
 
         // Heartbeat tick flip does NOT alter readiness
         frame.mcu_heartbeat_tick = false;
@@ -995,5 +1190,57 @@ mod tests {
         assert_eq!(cmd, "CS:\r\n");
         let cmd_disp = JuraProtocol::format_command(&JuraCommand::ReadDisplayCodeChecksum).unwrap();
         assert_eq!(cmd_disp, "CS$:\r\n");
+    }
+
+    #[test]
+    fn test_parse_cs_response_optical_bean_sensor() {
+        // Covered / beans present: slice [39:43] == 0000 -> 0 counts, beans_ok = true
+        let cs_full = "cs:03C0300E5000000000000000000000000000000006D00006";
+        let frame_full = JuraProtocol::parse_cs_response(cs_full).unwrap();
+        assert_eq!(frame_full.coffee_temp_raw, 0x03C0);
+        assert_eq!(frame_full.rotary_pos, 3);
+        assert_eq!(frame_full.bu_pos_raw, 0x00E5);
+        assert_eq!(frame_full.bean_photodiode_raw, 0x0000);
+        assert_eq!(frame_full.bean_photodiode_adc, 0);
+        assert!(frame_full.beans_ok);
+        assert_eq!(frame_full.flowmeter_pulses, 0x06D0);
+        assert_eq!(frame_full.model_tag, 0x0006);
+
+        // Uncovered / empty hopper: slice [39:43] == 3FF0 -> 1023 counts, beans_ok = false
+        let cs_empty = "cs:03C0300E50000000000000000000000000003FF006D00006";
+        let frame_empty = JuraProtocol::parse_cs_response(cs_empty).unwrap();
+        assert_eq!(frame_empty.bean_photodiode_raw, 0x3FF0);
+        assert_eq!(frame_empty.bean_photodiode_adc, 1023);
+        assert!(!frame_empty.beans_ok);
+    }
+
+    #[test]
+    fn test_commercial_hopper_state_evaluation() {
+        assert!(!evaluate_commercial_hopper_state(false, 0x0000));
+        assert!(!evaluate_commercial_hopper_state(true, 0x3FF0));
+        assert!(evaluate_commercial_hopper_state(true, 0x0000));
+    }
+
+    #[test]
+    fn test_wire_bytes_and_scalar_decoders() {
+        let payload = b"\x26TY:\r\n";
+        let encoded = JuraProtocol::encode_wire_bytes(payload);
+        assert_eq!(encoded.len(), payload.len() * 4);
+        let mut with_tail = encoded.clone();
+        with_tail.extend_from_slice(&[0xDB, 0xDF]);
+        let (decoded, rem) = JuraProtocol::decode_wire_bytes(&with_tail);
+        assert_eq!(decoded, payload);
+        assert_eq!(rem, vec![0xDB, 0xDF]);
+
+        assert_eq!(decode_jura_temperature_word(0x03C4), Some(96.4));
+        assert_eq!(decode_jura_temperature_word(0x0802), None);
+        assert_eq!(decode_jura_temperature_word(92), Some(92.0));
+
+        // 2024-02-29 => ((34 << 9) | (2 << 5) | 29)
+        let leap_word = ((2024u16 - 1990) << 9) | (2 << 5) | 29;
+        assert_eq!(decode_jura_date_word(leap_word), Some((2024, 2, 29)));
+        let bad_date = ((2023u16 - 1990) << 9) | (2 << 5) | 29;
+        assert_eq!(decode_jura_date_word(bad_date), None);
+        assert_eq!(decode_jura_date_word(0xFFFF), None);
     }
 }

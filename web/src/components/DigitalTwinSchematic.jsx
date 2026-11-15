@@ -34,6 +34,7 @@ export default function DigitalTwinSchematic({
   const tankSw = hasTelem ? switches.find((s) => s.id === 'water_tank') : null;
   const traySw = hasTelem ? switches.find((s) => s.id === 'drip_tray') : null;
   const filterSw = hasTelem ? switches.find((s) => s.id === 'claris_filter') : null;
+  const beansSw = hasTelem ? switches.find((s) => s.id === 'bean_hopper') : null;
 
   const tb1Temp = hasTelem && telem.heater_coffee_c != null ? telem.heater_coffee_c : null;
   const tb2Temp = hasTelem && telem.heater_steam_c != null ? telem.heater_steam_c : null;
@@ -92,12 +93,20 @@ export default function DigitalTwinSchematic({
       id: 'tb1',
       label: 'COFFEE THERMOBLOCK',
       icon: '☕',
-      status: tb1Temp != null ? (tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING') : 'STANDBY',
+      status: tb1Temp != null
+        ? (tb1Temp >= 80 && tb1Temp <= 115
+            ? 'READY'
+            : (tb1Temp > 115 ? 'OVERHEAT' : 'HEATING'))
+        : 'STANDBY',
       primary: tb1Temp != null ? `${tb1Temp.toFixed(1)} °C` : '--- °C',
-      details: tb1Temp != null ? `Primary coffee thermoblock PID controlled temperature. Target brew zone: 90°C–95°C.` : 'Thermoblock temperature awaiting sensor read.',
+      details: tb1Temp != null ? `Primary coffee thermoblock PID controlled temperature. Target brew zone: 80°C–115°C.` : 'Thermoblock temperature awaiting sensor read.',
       hardware: 'Aluminum cast heater 1400W @ 230V | NTC Resistance: ~10kΩ @ 25°C (NTC raw: 970)',
-      badge: tb1Temp != null ? (tb1Temp >= 90 && tb1Temp <= 100 ? 'READY' : 'HEATING') : 'STANDBY',
-      ok: true,
+      badge: tb1Temp != null
+        ? (tb1Temp >= 80 && tb1Temp <= 115
+            ? 'READY'
+            : (tb1Temp > 115 ? 'OVERHEAT' : 'HEATING'))
+        : 'STANDBY',
+      ok: tb1Temp != null ? tb1Temp <= 115 : true,
       x: 430,
       y: 70,
     },
@@ -131,12 +140,20 @@ export default function DigitalTwinSchematic({
       id: 'beans',
       label: 'BEAN HOPPER SENSOR',
       icon: '🫘',
-      status: beansOk != null ? (beansOk ? 'BEANS OK' : 'EMPTY') : 'STANDBY',
-      primary: opticalDelta != null ? `Delta: ${opticalDelta} counts` : '--- counts',
-      details: `Optical IR reflection sensor. Ambient ADC: ${telem.bean_adcs?.[0] ?? '--'}, Reflected: ${telem.bean_adcs?.[1] ?? '--'}.`,
-      hardware: 'IR LED emitter & phototransistor receiver pair | Threshold: 115 ± 5 counts',
-      badge: beansOk != null ? (beansOk ? 'CHARGED' : 'EMPTY') : 'STANDBY',
-      ok: beansOk !== false,
+      status: beansSw?.details?.includes('Monitored Locally')
+        ? 'Monitored Locally by Display MCU (EF518D)'
+        : (beansSw?.status || (beansOk != null ? (beansOk ? 'BEANS OK' : 'FILL BEANS') : 'STANDBY')),
+      primary: beansSw?.details?.includes('Monitored Locally')
+        ? 'LOCAL (EF518D)'
+        : (beansOk != null ? (beansOk ? 'CHARGED' : 'EMPTY') : '---'),
+      details: beansSw?.details || 'Live bean presence via HZ[0][3] status bit, local display MCU, or optical sensor.',
+      hardware: beansSw?.details?.includes('Monitored Locally')
+        ? 'Front Display MCU (EF518D / Renesas R8C) Local Phototransistor'
+        : 'Renesas MCU digital bean charge detector | Bit 3 of HZ telemetry frame',
+      badge: beansSw?.details?.includes('Monitored Locally')
+        ? 'LOCAL (EF518D)'
+        : (beansSw?.badge || (beansOk != null ? (beansOk ? 'CHARGED' : 'EMPTY') : 'STANDBY')),
+      ok: beansSw ? beansSw.ok : (beansOk !== false),
       x: 300,
       y: 190,
     },

@@ -21,15 +21,39 @@ ZIG_CMD="$(command -v "$ZIG_BIN" 2>/dev/null || command -v zig)"
 BUILD_NUMBER="$(python3 -c "import sys; sys.path.insert(0, '$ROOT_DIR'); from version import __build__; print(__build__)")"
 echo "[*] Building SPECTRA Windows Suite for Build: $BUILD_NUMBER"
 
-# Check or download python embeddable package
+# Check or download python embeddable package and win_amd64 wheels
+WHEELS_CACHE="$ROOT_DIR/vendor/wheels_win_amd64"
+mkdir -p "$WHEELS_CACHE"
+
 if [ ! -d /tmp/pyembed ] || [ ! -f /tmp/pyembed/python.exe ]; then
     echo "[*] Downloading Python 3.12 64-bit embeddable runtime..."
     mkdir -p /tmp/pyembed
     curl -sSL https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip -o /tmp/pyembed/pyembed.zip
     unzip -q -o /tmp/pyembed/pyembed.zip -d /tmp/pyembed/
-    curl -sSL https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl -o /tmp/pyembed/pyserial.whl
-    unzip -q -o /tmp/pyembed/pyserial.whl -d /tmp/pyembed/
+    curl -sSL https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl -o "$WHEELS_CACHE/pyserial-3.5-py2.py3-none-any.whl"
 fi
+
+echo "[*] Unpacking Windows native PySerial and PyWebView runtime wheels..."
+python3 -c "
+import zipfile, tarfile, os
+
+wheels_dir = '$WHEELS_CACHE'
+target_dir = '/tmp/pyembed'
+
+for f in sorted(os.listdir(wheels_dir)):
+    p = os.path.join(wheels_dir, f)
+    if f.endswith('.whl'):
+        with zipfile.ZipFile(p, 'r') as z:
+            z.extractall(target_dir)
+    elif f.endswith('.tar.gz'):
+        with tarfile.open(p, 'r:gz') as t:
+            for m in t.getmembers():
+                if 'proxy_tools/' in m.name and m.name.endswith('__init__.py'):
+                    f_obj = t.extractfile(m)
+                    os.makedirs(os.path.join(target_dir, 'proxy_tools'), exist_ok=True)
+                    with open(os.path.join(target_dir, 'proxy_tools', '__init__.py'), 'wb') as out_f:
+                        out_f.write(f_obj.read())
+"
 
 # 1. Assemble Application-Only Payload (for fast updater)
 echo "[*] Assembling lightweight update bundle in /tmp/update_bundle..."
@@ -39,6 +63,8 @@ mkdir -p /tmp/update_bundle
 cp "$ROOT_DIR"/*.py /tmp/update_bundle/
 cp "$ROOT_DIR"/profiles_data.json /tmp/update_bundle/
 cp "$ROOT_DIR"/icon.ico /tmp/update_bundle/
+cp "$ROOT_DIR"/icon.png /tmp/update_bundle/ 2>/dev/null || true
+cp "$ROOT_DIR"/spectra_logo.svg /tmp/update_bundle/ 2>/dev/null || true
 mkdir -p /tmp/update_bundle/docs
 cp -r "$ROOT_DIR"/docs/models /tmp/update_bundle/docs/
 mkdir -p /tmp/update_bundle/web
@@ -47,15 +73,37 @@ if [ -d "$ROOT_DIR"/drivers ]; then
     cp -r "$ROOT_DIR"/drivers /tmp/update_bundle/
 fi
 
+# Bundle serial and certifi CA bundle into update bundle (spectra-shell.exe handles native WebView2 UI without .NET/pywebview)
+for pkg in serial certifi; do
+    if [ -d "/tmp/pyembed/$pkg" ]; then
+        cp -r "/tmp/pyembed/$pkg" /tmp/update_bundle/
+    fi
+done
+
+# Include native Rust desktop shell + Rust/PyO3 core accelerator module
+if [ -f "$ROOT_DIR/bin/spectra-shell.exe" ]; then
+    cp "$ROOT_DIR/bin/spectra-shell.exe" /tmp/update_bundle/
+fi
+if [ -f "$ROOT_DIR/bin/WebView2Loader.dll" ]; then
+    cp "$ROOT_DIR/bin/WebView2Loader.dll" /tmp/update_bundle/
+fi
+if [ -f "$ROOT_DIR/bin/spectra_py.pyd" ]; then
+    cp "$ROOT_DIR/bin/spectra_py.pyd" /tmp/update_bundle/
+fi
+
 (cd /tmp/update_bundle && zip -q -r /tmp/update_bundle.zip .)
 
-# 2. Assemble Full Standalone Bundle (Runtime + PySerial + App)
+# 2. Assemble Full Standalone Bundle (Runtime + PySerial + Certifi + Native Rust Core/Shell + App)
 echo "[*] Assembling full standalone bundle in /tmp/spectra_bundle..."
 rm -rf /tmp/spectra_bundle /tmp/bundle.zip
 mkdir -p /tmp/spectra_bundle
 
-cp -r /tmp/pyembed/*.dll /tmp/pyembed/*.pyd /tmp/pyembed/*.zip /tmp/pyembed/python.exe /tmp/pyembed/pythonw.exe /tmp/spectra_bundle/
-cp -r /tmp/pyembed/serial /tmp/spectra_bundle/
+cp -r /tmp/pyembed/*.dll /tmp/pyembed/*.pyd /tmp/pyembed/*.zip /tmp/pyembed/python.exe /tmp/pyembed/pythonw.exe /tmp/spectra_bundle/ 2>/dev/null || true
+for pkg in serial certifi; do
+    if [ -d "/tmp/pyembed/$pkg" ]; then
+        cp -r "/tmp/pyembed/$pkg" /tmp/spectra_bundle/
+    fi
+done
 cp -r /tmp/update_bundle/* /tmp/spectra_bundle/
 
 echo "python312.zip" > /tmp/spectra_bundle/python312._pth
@@ -69,9 +117,9 @@ echo "[*] Compiling Launcher resources..."
 llvm-rc /fo "$SCRIPT_DIR/resources.res" "$SCRIPT_DIR/resources.rc"
 
 echo "[*] Compiling PE32+ standalone launcher with zig..."
-"$ZIG_CMD" cc -target x86_64-windows -O2 -s -municode \
+"$ZIG_CMD" cc -target x86_64-windows -O2 -s -Wl,/subsystem:windows -municode \
     "$SCRIPT_DIR/launcher.c" "$SCRIPT_DIR/resources.res" \
-    -o "$ROOT_DIR/spectra.exe" -luser32 -lshell32 -ladvapi32
+    -o "$ROOT_DIR/spectra.exe" -luser32 -lshell32 -lgdi32 -ladvapi32
 
 rm -f "$SCRIPT_DIR/resources.res"
 
@@ -98,6 +146,10 @@ cp "$ROOT_DIR/dist/spectra_setup_build${BUILD_NUMBER}.exe" "$ROOT_DIR/dist/spect
 rm -f "$SCRIPT_DIR/installer.res"
 
 # 5. Compile Fast In-Place Updater (dist/spectra_update_build<BUILD>.exe)
+echo "[*] Packaging freshly compiled spectra.exe into update bundle..."
+cp "$ROOT_DIR/spectra.exe" /tmp/update_bundle/
+(cd /tmp/update_bundle && zip -q -u /tmp/update_bundle.zip spectra.exe)
+
 echo "[*] Compiling In-Place Updater resources..."
 llvm-rc /fo "$SCRIPT_DIR/updater.res" "$SCRIPT_DIR/updater.rc"
 
@@ -108,6 +160,10 @@ echo "[*] Compiling PE32+ fast updater with zig..."
     -luser32 -lshell32 -ladvapi32
 
 cp "$ROOT_DIR/dist/spectra_update_build${BUILD_NUMBER}.exe" "$ROOT_DIR/dist/spectra_update.exe"
+if [ -d "$HOME/Work" ]; then
+    cp "$ROOT_DIR/dist/spectra_update.exe" "$HOME/Work/spectra_update.exe"
+    cp "$ROOT_DIR/dist/spectra_update_build${BUILD_NUMBER}.exe" "$HOME/Work/spectra_update_build${BUILD_NUMBER}.exe"
+fi
 rm -f "$SCRIPT_DIR/updater.res"
 
 echo "================================================================================"

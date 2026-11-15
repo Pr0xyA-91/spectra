@@ -24,7 +24,7 @@ from drivers import list_drivers, DRIVER_DISPLAY_NAMES
 try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1605"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 
 # Global state for background polling
@@ -193,6 +193,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <button class="tab-btn" onclick="switchTab(event, 'tabBeverages')">Beverages & Dispensings</button>
     <button class="tab-btn" onclick="switchTab(event, 'tabMaintenance')">Maintenance & Hygiene</button>
     <button class="tab-btn" onclick="switchTab(event, 'tabRaw')">Raw Telemetry & System Info</button>
+    <button class="tab-btn" onclick="switchTab(event, 'tabHmiTools')">📦 HMI Tools (Kalerm)</button>
   </div>
 
   <!-- Tab 1: Live Sensors -->
@@ -256,6 +257,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div style="background:rgba(0,0,0,0.3); padding:12px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:400px; overflow-y:auto;" id="rawJson">No raw data.</div>
   </div>
 
+  <!-- Tab 6: Kalerm HMI Tools -->
+  <div id="tabHmiTools" class="tab-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <div>
+        <h3 style="margin: 0; color: var(--accent);">Kalerm HMI Firmware & Translation Auditor</h3>
+        <span id="hmiMeta" style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Loading firmware metadata...</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button onclick="loadHmiAudit()" class="btn-primary">🔄 Re-Scan</button>
+        <button onclick="patchHmiBinary()" class="btn-success">🩹 Patch Binary (Lab Copy)</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Severity</th><th>Finding ID</th><th>Key / Item</th><th>Locale</th><th>Current Value</th><th>Target Fix</th><th>Status</th></tr>
+      </thead>
+      <tbody id="tblHmiFindings">
+        <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Click 'Re-Scan' or switch to this tab to inspect Kalerm firmware.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <div class="status-bar">
     <span id="lblStatus">Ready (Windows Web Edition). Select a port to connect.</span>
     <span id="lblTimestamp">---</span>
@@ -280,6 +303,53 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       if (evt && evt.currentTarget) evt.currentTarget.classList.add('active');
       document.getElementById(tabId).classList.add('active');
+      if (tabId === 'tabHmiTools') {
+        loadHmiAudit();
+      }
+    }
+
+    async function loadHmiAudit() {
+      try {
+        const [infoRes, auditRes] = await Promise.all([
+          fetch('/api/hmi/info'),
+          fetch('/api/hmi/audit')
+        ]);
+        const info = await infoRes.json();
+        const audit = await auditRes.json();
+
+        if (info.success) {
+          document.getElementById('hmiMeta').textContent = `${info.binary_path.split('/').pop()} | SHA-256: ${info.sha256.substring(0, 16)}... | ${info.signature_status}`;
+        }
+        if (audit.success && audit.findings) {
+          const tbody = document.getElementById('tblHmiFindings');
+          tbody.innerHTML = '';
+          audit.findings.forEach(f => {
+            const tr = document.createElement('tr');
+            const sevBadge = f.severity === 'CRITICAL' ? '<span class="badge badge-err">CRITICAL</span>' : (f.severity === 'WARNING' ? '<span class="badge badge-warn">WARNING</span>' : '<span class="badge badge-info">INFO</span>');
+            const stBadge = f.status === 'FIXED' ? '<span class="badge badge-ok">FIXED</span>' : '<span class="badge badge-err">DETECTED</span>';
+            tr.innerHTML = `<td>${sevBadge}</td><td><code>${escapeHtml(f.id)}</code></td><td>${escapeHtml(f.key)}</td><td><code>${escapeHtml(f.locale)}</code></td><td style="color:#ffb86c">${escapeHtml(f.current_val)}</td><td style="color:#50fa7b">${escapeHtml(f.expected_val)}</td><td>${stBadge}</td>`;
+            tbody.appendChild(tr);
+          });
+        }
+      } catch (e) {
+        document.getElementById('hmiMeta').textContent = 'Failed to load HMI audit: ' + e;
+      }
+    }
+
+    async function patchHmiBinary() {
+      if (!confirm('Apply safety and localization patches to create a laboratory binary copy?')) return;
+      try {
+        const res = await fetch('/api/hmi/patch', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          alert('Patched binary created successfully!\n\nSHA-256: ' + data.result.sha256 + '\nOutput: ' + data.result.output_path);
+          loadHmiAudit();
+        } else {
+          alert('Patch error: ' + data.error);
+        }
+      } catch (e) {
+        alert('Patch request failed: ' + e);
+      }
     }
 
     async function fetchPorts() {
@@ -629,6 +699,7 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
         if url.path == "/" or url.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self._send_security_headers()
             self.end_headers()
             html = HTML_TEMPLATE.replace("__VERSION__", f"Build {__build__}")
@@ -734,6 +805,248 @@ class SpectraWebHandler(BaseHTTPRequestHandler):
                     session.close()
 
             self._send_json(data)
+
+        elif url.path == "/api/hmi/discover":
+            try:
+                import hmi_inspector
+                search_dir = params.get("dir", [None])[0]
+                targets = hmi_inspector.KalermHmiInspector.discover_local_targets(search_dir)
+                default_dir = os.path.expanduser("~/Downloads")
+                self._send_json({
+                    "success": True,
+                    "targets": targets,
+                    "default_dir": default_dir,
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "targets": []})
+
+        elif url.path == "/api/hmi/info":
+            target = params.get("path", [""])[0].strip() or os.path.expanduser("~/Downloads")
+            try:
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                sig = inspector.verify_signature()
+                self._send_json({
+                    "success": True,
+                    "binary_path": inspector.binary_path,
+                    "file_size": inspector.file_size,
+                    "container_type": getattr(inspector, "container_type", "ELF32_LVGL"),
+                    "container_badge": getattr(inspector, "container_badge", "ELF32 ARM (LVGL)"),
+                    "companion_ctr_bin": getattr(inspector, "companion_ctr_bin", None),
+                    "sha256": sig["sha256"],
+                    "signature_status": sig["status_label"],
+                    "signature_present": sig["signature_present"],
+                    "signature_path": sig["signature_path"],
+                    "warning": sig["warning"],
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path == "/api/hmi/audit":
+            target = params.get("path", [""])[0].strip() or os.path.expanduser("~/Downloads")
+            target_locale = params.get("locale", ["cs-CZ"])[0].strip() or "cs-CZ"
+            try:
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                findings = inspector.run_audit(target_locale=target_locale)
+                sig = inspector.verify_signature()
+                self._send_json({
+                    "success": True,
+                    "binary_path": inspector.binary_path,
+                    "target_locale": target_locale,
+                    "sha256": sig["sha256"],
+                    "findings": findings,
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "findings": []})
+
+        elif url.path == "/api/hmi/semantic":
+            target = params.get("path", [""])[0].strip() or os.path.expanduser("~/Downloads")
+            target_locale = params.get("locale", ["cs-CZ"])[0].strip() or "cs-CZ"
+            use_ollama = params.get("use_ollama", ["false"])[0].lower() in ("true", "1", "yes")
+            ollama_model = params.get("model", [None])[0]
+            auto_unload = params.get("auto_unload", ["true"])[0].lower() in ("true", "1", "yes")
+            try:
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                report = inspector.run_semantic_audit(
+                    target_locale=target_locale,
+                    use_ollama=use_ollama,
+                    ollama_model=ollama_model,
+                    auto_unload=auto_unload
+                )
+                self._send_json({"success": True, "report": report})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "report": None})
+
+        elif url.path in ("/api/hmi/ai_status", "/api/hmi/ai/status"):
+            try:
+                import hmi_inspector
+                status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
+                status["semantic_progress"] = hmi_inspector.KalermHmiInspector.get_semantic_scan_progress()
+                self._send_json({"success": True, "status": status})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path in ("/api/hmi/ollama_progress", "/api/hmi/ollama/progress"):
+            try:
+                import hmi_inspector
+                prog = hmi_inspector.KalermHmiInspector.get_ollama_download_progress()
+                self._send_json({"success": True, "progress": prog})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "progress": {}})
+
+        elif url.path in ("/api/hmi/semantic/progress", "/api/hmi/semantic_progress"):
+            try:
+                import hmi_inspector
+                prog = hmi_inspector.KalermHmiInspector.get_semantic_scan_progress()
+                self._send_json({"success": True, "progress": prog})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "progress": {}})
+
+        elif url.path == "/api/debug/status":
+            try:
+                import web_server
+                with web_server._debug_log_lock:
+                    logs_copy = list(web_server._debug_log_buffer)
+                err_cnt = sum(1 for x in logs_copy if x.get("level") == "ERROR")
+                warn_cnt = sum(1 for x in logs_copy if x.get("level") == "WARN")
+                self._send_json({
+                    "success": True,
+                    "build": __build__,
+                    "version": __version__,
+                    "diagnostics": web_server.get_debug_diagnostics(),
+                    "logs": logs_copy,
+                    "error_count": err_cnt,
+                    "warn_count": warn_cnt,
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "logs": []})
+
+        elif url.path == "/api/version":
+            self._send_json({
+                "success": True,
+                "build": __build__,
+                "version": __version__,
+            })
+
+        else:
+            self.send_error(404, "Not Found")
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_body = self.rfile.read(content_length)
+
+        if url.path == "/api/hmi/browse":
+            try:
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                initial_dir = body.get("initial_dir") or body.get("dir") or os.path.expanduser("~/Downloads")
+                import hmi_inspector
+                selected = hmi_inspector.KalermHmiInspector.prompt_file_browser(initial_dir)
+                if selected:
+                    self._send_json({"success": True, "path": selected})
+                else:
+                    self._send_json({"success": False, "cancelled": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path == "/api/hmi/patch":
+            try:
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                target = body.get("path") or os.path.expanduser("~/Downloads")
+                out_path = body.get("output_path") or None
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                res = inspector.apply_patches(out_path)
+                self._send_json({"success": True, "result": res})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path == "/api/hmi/export_report":
+            try:
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                target = body.get("path") or os.path.expanduser("~/Downloads")
+                fmt = body.get("format") or "md"
+                target_locale = body.get("locale") or "cs-CZ"
+                out_path = body.get("output_path")
+                if not out_path:
+                    out_path = os.path.join(os.path.expanduser("~/Downloads"), f"Kalerm_HMI_Firmware_Audit_Report_{target_locale}.{fmt}")
+                elif not os.path.isabs(out_path):
+                    out_path = os.path.join(os.path.expanduser("~/Downloads"), out_path)
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                saved = inspector.export_bug_report(out_path, format_type=fmt, target_locale=target_locale)
+                self._send_json({"success": True, "saved_path": saved})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path == "/api/hmi/semantic":
+            try:
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                target = body.get("path") or os.path.expanduser("~/Downloads")
+                target_locale = body.get("locale") or "cs-CZ"
+                use_ollama = bool(body.get("use_ollama", False))
+                ollama_model = body.get("model")
+                auto_unload = bool(body.get("auto_unload", True))
+                import hmi_inspector
+                inspector = hmi_inspector.KalermHmiInspector(target)
+                report = inspector.run_semantic_audit(
+                    target_locale=target_locale,
+                    use_ollama=use_ollama,
+                    ollama_model=ollama_model,
+                    auto_unload=auto_unload
+                )
+                self._send_json({"success": True, "report": report})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e), "report": None})
+
+        elif url.path in ("/api/hmi/ollama_control", "/api/hmi/ai/control"):
+            try:
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                action = body.get("action", "")
+                model = body.get("model")
+                import hmi_inspector
+                res = hmi_inspector.KalermHmiInspector.control_local_ollama(action=action, model=model)
+                is_error = res.get("status") in ("ERROR", "BINARY_NOT_FOUND", "OLLAMA_OFFLINE", "START_TIMEOUT")
+                ai_status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
+                self._send_json({"success": not is_error, "is_error": is_error, "result": res, "ai_status": ai_status})
+            except Exception as e:
+                self._send_json({"success": False, "is_error": True, "error": str(e)})
+
+        elif url.path == "/api/app/heartbeat":
+            self._send_json({"success": True, "status": "ALIVE"})
+
+        elif url.path in ("/api/app/window_closed", "/api/app/close"):
+            self._send_json({"success": True, "status": "TERMINATING"})
+            try:
+                import web_server
+                web_server.cleanup_resources()
+            except Exception:
+                pass
+            threading.Timer(0.25, lambda: os._exit(0)).start()
+
+        elif url.path == "/api/debug/clear":
+            try:
+                import web_server
+                with web_server._debug_log_lock:
+                    web_server._debug_log_buffer.clear()
+                web_server.log_debug_event("INFO", "DEBUG", "Debug log cleared")
+                self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+
+        elif url.path == "/api/debug/client_error":
+            try:
+                import web_server
+                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                msg = body.get("message", "Unknown client-side error")
+                details = body.get("details", "")
+                src = body.get("source", "FRONTEND")
+                web_server.log_debug_event("ERROR", src, msg, details)
+                self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
 
         else:
             self.send_error(404, "Not Found")

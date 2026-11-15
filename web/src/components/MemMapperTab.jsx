@@ -23,10 +23,21 @@ import {
   Shield,
   Eye,
   Trash2,
-  Info
+  Info,
+  Sparkles,
+  Power
 } from 'lucide-react';
 
-export default function MemMapperTab({ theme, selectedPort, liveData }) {
+export default function MemMapperTab({
+  theme,
+  selectedPort,
+  liveData,
+  aiEnabled = false,
+  aiModel = '',
+  onToggleAi = null,
+  beginAiWork = null,
+  endAiWork = null
+}) {
   // Sub-tab: 'eeprom' or 'raw_sensors'
   const [subTab, setSubTab] = useState('eeprom');
 
@@ -89,6 +100,12 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
   });
   const [isSavingSensorMap, setIsSavingSensorMap] = useState(false);
   const [copiedFrame, setCopiedFrame] = useState(null);
+
+  // Local AI Register Labeling state (opt-in, default OFF)
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [isSuggestingAi, setIsSuggestingAi] = useState(false);
+  const [aiSuggestError, setAiSuggestError] = useState('');
+  const pendingAiApplyRef = useRef(null);
 
   // --------------------------------------------------------------------------
   // 1. Fetch Mapper Identity & Summary
@@ -245,6 +262,18 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
   };
 
   useEffect(() => {
+    const pending = pendingAiApplyRef.current;
+    if (pending && Number(pending.addr) === Number(selectedAddr)) {
+      pendingAiApplyRef.current = null;
+      setMapForm({
+        name: pending.suggested_name || `Reg_0x${selectedAddr.toString(16).toUpperCase().padStart(4, '0')}`,
+        desc: pending.reasoning ? `[AI ${pending.confidence || 'medium'}] ${pending.reasoning}` : 'AI-suggested register mapping',
+        category: pending.category || 'custom',
+        unit: pending.unit || '',
+        status: 'theoretical'
+      });
+      return;
+    }
     if (selectedRegister) {
       setMapForm({
         name: selectedRegister.name || '',
@@ -255,6 +284,86 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
       });
     }
   }, [selectedAddr, registers]);
+
+  // --------------------------------------------------------------------------
+  // 5b. Local Ollama Register Labeling (Opt-in)
+  // --------------------------------------------------------------------------
+  const handleSuggestAiRegisters = async () => {
+    if (!aiEnabled) {
+      setAiSuggestError('Local AI is OFF. Enable Local AI before running register analysis.');
+      return;
+    }
+    setAiSuggestError('');
+    setIsSuggestingAi(true);
+    const taskId = 'mapper_ai_suggest';
+    if (beginAiWork) beginAiWork(taskId, 'Memory Mapper: Analyzing unknown/changed registers...', 20);
+    try {
+      // Prioritize changed or unknown registers; fallback to selected register if needed
+      let targetRegs = registers.filter((r) => r.is_changed || r.status === 'unknown' || r.status === 'theoretical');
+      if (targetRegs.length === 0 && selectedRegister) {
+        targetRegs = [selectedRegister];
+      }
+      const candidates = targetRegs.slice(0, 12).map((r) => ({
+        addr: r.addr,
+        addr_hex: r.hex_addr || r.addr.toString(16).toUpperCase().padStart(4, '0'),
+        val: r.val,
+        prev_val: r.baseline_val,
+        flips: r.bits_flipped || [],
+        status: r.status || 'unknown'
+      }));
+      const contextRegisters = registers
+        .filter((r) => r.status === 'mapped')
+        .slice(0, 20)
+        .map((r) => ({
+          addr: r.addr,
+          val: r.val,
+          name: r.name,
+          category: r.category
+        }));
+
+      const res = await fetch('/api/mapper/ai_suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidates,
+          context_registers: contextRegisters,
+          machine_model: liveData?.machine_model || 'Kalerm/Jura UART Machine',
+          model: aiModel || ''
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setAiSuggestions(data.suggestions || []);
+      if ((data.suggestions || []).length === 0) {
+        setAiSuggestError('Local AI returned no high-confidence register suggestions for these candidates.');
+      }
+    } catch (err) {
+      setAiSuggestError(err.message || 'AI register suggestion failed.');
+    } finally {
+      setIsSuggestingAi(false);
+      if (endAiWork) endAiWork(taskId);
+    }
+  };
+
+  const handleApplyAiSuggestion = (sug) => {
+    const targetAddr = Number(sug.addr);
+    const validCategories = ['counters', 'maintenance', 'calibration', 'settings', 'faults', 'hardware', 'recipe', 'spdl', 'custom'];
+    const normalizedCategory = validCategories.includes(sug.category) ? sug.category : 'custom';
+    const normalizedSug = { ...sug, category: normalizedCategory };
+    pendingAiApplyRef.current = normalizedSug;
+    setSelectedAddr(targetAddr);
+    setMapForm({
+      name: normalizedSug.suggested_name || `Reg_0x${targetAddr.toString(16).toUpperCase().padStart(4, '0')}`,
+      desc: normalizedSug.reasoning ? `[AI ${normalizedSug.confidence || 'medium'}] ${normalizedSug.reasoning}` : 'AI-suggested register mapping',
+      category: normalizedCategory,
+      unit: normalizedSug.unit || '',
+      status: 'theoretical'
+    });
+    setStatusMessage(`Applied AI suggestion for 0x${sug.addr_hex || targetAddr.toString(16).toUpperCase().padStart(4, '0')} into editor (status: theoretical). Save to persist.`);
+    setStatusType('info');
+  };
 
   // --------------------------------------------------------------------------
   // 6. Save Register Mapping into Model Spec
@@ -442,8 +551,8 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
               MEM MAPPER
             </h2>
           </div>
-          <span className="text-[10px] px-2 py-0.5 bg-red-950/80 text-red-400 border border-red-500/70 font-mono font-bold tracking-wider rounded">
-            ⚡ [DEV ONLY] REVERSE-ENGINEERING TOOL
+          <span className="text-[10px] px-2 py-0.5 bg-cyan-950/80 text-cyan-300 border border-cyan-500/60 font-mono font-bold tracking-wider rounded">
+            READ-ONLY DIFFERENTIAL SCOPE
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden md:inline">
             {mapperInfo?.model_family || 'Jura Logic Board'} (EF: {mapperInfo?.ef_code || '---'}) | {mapperInfo?.max_words || 512} Words | {mapperInfo?.address_width || 4}-Digit Hex
@@ -906,6 +1015,90 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
                   )}
                 </div>
               </div>
+
+              {/* Card 4: Local Ollama Register Labeling (Opt-in, Default OFF) */}
+              <div className={`p-4 border ${aiEnabled ? 'border-cyan-800/80' : theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
+                <div className="flex items-center justify-between border-b border-zinc-800 pb-2 text-xs">
+                  <div className="flex items-center space-x-2">
+                    <Sparkles className={`w-4 h-4 ${aiEnabled ? 'text-cyan-400' : 'text-zinc-500'}`} />
+                    <span className="font-bold text-white uppercase tracking-wider">
+                      LOCAL AI REGISTER LABELING
+                    </span>
+                  </div>
+                  {onToggleAi && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleAi(!aiEnabled)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1 border ${
+                        aiEnabled
+                          ? 'bg-red-950/60 hover:bg-red-900/70 text-red-300 border-red-700'
+                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+                      }`}
+                    >
+                      <Power className="w-3 h-3" />
+                      <span>{aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (OFF)'}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-zinc-400">
+                    {aiEnabled
+                      ? `Local AI ready${aiModel ? ` (${aiModel})` : ''}. Infers purpose from deltas & neighbors.`
+                      : 'AI is OFF by default so your device keeps zero RAM/CPU overhead.'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSuggestAiRegisters}
+                    disabled={!aiEnabled || isSuggestingAi || registers.length === 0}
+                    className="shrink-0 px-2.5 py-1.5 bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-500/70 text-cyan-300 font-bold rounded text-[11px] disabled:opacity-40"
+                  >
+                    {isSuggestingAi ? 'ANALYZING...' : '🧠 SUGGEST UNKNOWN / CHANGED'}
+                  </button>
+                </div>
+
+                {aiSuggestError && (
+                  <div className="p-2 bg-red-950/40 border border-red-800 rounded text-[11px] text-red-300">
+                    {aiSuggestError}
+                  </div>
+                )}
+
+                {aiSuggestions.length > 0 && (
+                  <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                    {aiSuggestions.map((sug, idx) => (
+                      <div
+                        key={`${sug.addr}-${idx}`}
+                        className="p-2.5 bg-black/50 border border-zinc-800 rounded space-y-1 text-[11px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <span className="text-cyan-400 font-bold">
+                              0x{sug.addr_hex || Number(sug.addr).toString(16).toUpperCase().padStart(4, '0')}
+                            </span>
+                            <span className="text-[#FCEE09] font-bold truncate">{sug.suggested_name}</span>
+                            <span className="px-1.5 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-400 uppercase">
+                              {sug.category || 'custom'}
+                            </span>
+                            {sug.unit && (
+                              <span className="text-[10px] text-emerald-400">[{sug.unit}]</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyAiSuggestion(sug)}
+                            className="shrink-0 px-2 py-0.5 bg-[#FCEE09] hover:bg-yellow-400 text-black font-bold rounded text-[10px]"
+                          >
+                            Apply to Editor
+                          </button>
+                        </div>
+                        {sug.reasoning && (
+                          <p className="text-zinc-400 text-[10px] leading-snug">{sug.reasoning}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -951,7 +1144,7 @@ export default function MemMapperTab({ theme, selectedPort, liveData }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
               {[
                 { label: 'HZ: (Operational State)', val: rawSensorData.frames?.HZ || '---' },
-                { label: 'AS: (Optical Bean Sensor)', val: rawSensorData.frames?.AS || '---' },
+                { label: 'AS: (Coffee Heater NTC Diagnostic)', val: rawSensorData.frames?.AS || '---' },
                 { label: 'CS: (Component Triacs)', val: rawSensorData.frames?.CS || '---' },
                 { label: 'RE:0028 (Fault Latch)', val: rawSensorData.frames?.RE_0028 || '---' },
               ].map((f) => (

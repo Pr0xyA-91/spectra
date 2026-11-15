@@ -13,8 +13,8 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_BUILD        "20261102.1738"
-#define SPECTRA_VERSION      "Build 20261102.1738"
+#define SPECTRA_BUILD        "20261114.0020"
+#define SPECTRA_VERSION      "Build 20261114.0020"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
@@ -38,11 +38,17 @@ static void kill_running_spectra(void) {
     si.wShowWindow = SW_HIDE;
     ZeroMemory(&pi, sizeof(pi));
 
-    wchar_t cmd[] = L"taskkill.exe /F /IM spectra.exe /T";
-    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 5000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
+    wchar_t cmds[2][64] = {
+        L"taskkill.exe /F /IM spectra-shell.exe /T",
+        L"taskkill.exe /F /IM spectra.exe /T"
+    };
+    for (int i = 0; i < 2; i++) {
+        ZeroMemory(&pi, sizeof(pi));
+        if (CreateProcessW(NULL, cmds[i], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 5000);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
     }
 }
 
@@ -70,15 +76,43 @@ static BOOL find_install_dir(wchar_t *out_dir, size_t max_len) {
         wchar_t candidate[MAX_PATH];
         swprintf(candidate, MAX_PATH, L"%ls\\Programs\\SPECTRA", local_app_data);
         if (dir_exists(candidate)) {
+            wchar_t build_sub[MAX_PATH];
+            swprintf(build_sub, MAX_PATH, L"%ls\\build_%hs", candidate, SPECTRA_BUILD);
+            if (dir_exists(build_sub)) {
+                wcsncpy(out_dir, build_sub, max_len);
+                return TRUE;
+            }
             wcsncpy(out_dir, candidate, max_len);
             return TRUE;
         }
     }
 
-    // 3. Check current working directory
+    // 3. Check executable directory (if updater is placed adjacent to SPECTRA files)
+    wchar_t exe_dir[MAX_PATH];
+    GetModuleFileNameW(NULL, exe_dir, MAX_PATH);
+    wchar_t *last_slash = wcsrchr(exe_dir, L'\\');
+    if (last_slash) *last_slash = L'\0';
+
+    wchar_t test_file[MAX_PATH];
+    swprintf(test_file, MAX_PATH, L"%ls\\spectra_app.py", exe_dir);
+    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
+        wcsncpy(out_dir, exe_dir, max_len);
+        return TRUE;
+    }
+    swprintf(test_file, MAX_PATH, L"%ls\\spectra.exe", exe_dir);
+    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
+        wcsncpy(out_dir, exe_dir, max_len);
+        return TRUE;
+    }
+    swprintf(test_file, MAX_PATH, L"%ls\\profiles_data.json", exe_dir);
+    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
+        wcsncpy(out_dir, exe_dir, max_len);
+        return TRUE;
+    }
+
+    // 4. Check current working directory
     wchar_t cur_dir[MAX_PATH];
     GetCurrentDirectoryW(MAX_PATH, cur_dir);
-    wchar_t test_file[MAX_PATH];
     swprintf(test_file, MAX_PATH, L"%ls\\profiles_data.json", cur_dir);
     if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
         wcsncpy(out_dir, cur_dir, max_len);

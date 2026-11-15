@@ -37,9 +37,16 @@ import profiles_db
 from serial_io import JuraSerialConnection
 
 try:
+    import spectra_py as _rust_core
+    HAS_RUST_CORE = True
+except ImportError:
+    _rust_core = None
+    HAS_RUST_CORE = False
+
+try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1435"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 
 # ---------------------------------------------------------------------------
@@ -47,6 +54,31 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DEFAULT_OPTICAL_BEAN_THRESHOLD = 115
 DEFAULT_OPTICAL_BEAN_HYSTERESIS = 5
+
+# ---------------------------------------------------------------------------
+# Hardware Article to Model Mapping
+# ---------------------------------------------------------------------------
+ARTICLE_MODEL_MAP: Dict[str, Tuple[str, str, str]] = {
+    "15133": ("A1", "15133 A1 Piano Black", "A-Line"),
+    "15171": ("A1", "15171 A1 Piano White", "A-Line"),
+    "15125": ("A1", "15125 A1", "A-Line"),
+    "15110": ("ENA Micro 101 Aroma+", "15110 ENA Micro 101 Aroma+", "ENA Micro"),
+    "13594": ("ENA Micro 1", "13594 ENA Micro 1 Micro Black", "ENA Micro"),
+    "13636": ("ENA Micro 1", "13636 ENA Micro 1 Micro Silver", "ENA Micro"),
+    "13735": ("ENA Micro 1", "13735 ENA Micro 1", "ENA Micro"),
+    "15221": ("D4", "15221 D4 Piano Black", "D-Line"),
+    "13356": ("IMPRESSA Z5", "13356 IMPRESSA Z5 230V CH", "Z-Line"),
+    "15420": ("WE8 (EA)", "15420 WE8 (EA)", "WE-Line"),
+    "15421": ("WE8 (EA)", "15421 WE8 (EA)", "WE-Line"),
+    "15141": ("WE8", "15141 WE8", "WE-Line"),
+    "15144": ("WE8", "15144 WE8", "WE-Line"),
+    "15109": ("E8", "15109 E8 Piano Black", "E-Line"),
+    "15084": ("E8", "15084 E8 Chrome", "E-Line"),
+    "13500": ("ENA 7", "13500 ENA 7 Ristretto Black EU 230V/50Hz", "ENA-Line"),
+    "13760": ("ENA 7", "13760 ENA 7 Blossom White EU 230V/50Hz", "ENA-Line"),
+    "13501": ("ENA 7", "13501 ENA 7", "ENA-Line"),
+    "13524": ("ENA 7", "13524 ENA 7", "ENA-Line"),
+}
 
 # ---------------------------------------------------------------------------
 # Jura Top-Tronic 8-bit EEPROM Models (2-digit hex addressing: RT:xx / RE:xx)
@@ -139,6 +171,14 @@ def decode_jura_date(val: int) -> Optional[datetime]:
     Bits 5..8 (4 bits): Month (1..12)
     Bits 9..15 (7 bits): Year offset from 1990 (e.g. 23 -> 2013)
     """
+    if HAS_RUST_CORE and _rust_core is not None and hasattr(_rust_core, "decode_jura_date_word"):
+        try:
+            if not isinstance(val, int) or val < 0 or val > 0xFFFF:
+                return None
+            ymd = _rust_core.decode_jura_date_word(val)
+            return datetime(ymd[0], ymd[1], ymd[2]) if ymd is not None else None
+        except Exception:
+            pass
     if not val or val == 0xFFFF or val == 0:
         return None
     day = val & 0x1F
@@ -191,6 +231,12 @@ def decode_jura_temperature(val: Any) -> Optional[float]:
             return None
     except ValueError:
         return None
+
+    if HAS_RUST_CORE and _rust_core is not None and hasattr(_rust_core, "decode_jura_temperature_word"):
+        try:
+            return _rust_core.decode_jura_temperature_word(num)
+        except Exception:
+            pass
 
     if num <= 0 or num >= 1900:
         return None
@@ -379,6 +425,7 @@ def query_live_sensors(
             bu_init_ok = True
             mv_init_ok = True
             mv_busy = False
+            hz_beans_charged = True
             heater_ready_flag = True
             button_matrix_hex = "0000"
             aux_inputs_bits = "00"
@@ -393,6 +440,7 @@ def query_live_sensors(
                     has_hz_status = True
                     bu_init_ok = (parts[0][1] == "1")
                     mv_busy = (parts[0][2] == "1")
+                    hz_beans_charged = (parts[0][3] == "1")
                     heater_ready_flag = (parts[0][5] == "1")
                     mv_init_ok = (parts[0][6] == "1")
                 if len(parts) > 1:
@@ -505,7 +553,7 @@ def query_live_sensors(
             is_dual_heater = is_known_dual or is_hardware_dual
             heater_count = 2 if is_dual_heater else 1
 
-            # 2. Query Diagnostic Fault & Input Registers (RE:0028 & IC:)
+            # 2. Query Diagnostic Fault & Input Registers (RE:0028, RE:0029, IC:)
             val_r28 = 0
             total_fm_timeouts = 0
             fm_intake_timeouts = 0
@@ -514,6 +562,36 @@ def query_live_sensors(
             bu_init_count = 0
             loader_version = ""
             display_firmware = ""
+
+            has_commercial_bean_sensor = bool(
+                getattr(conn, "_as_supported", False)
+                or (detected_ef and any(x in str(detected_ef).upper() for x in ("EF518", "XJ", "GIGA")))
+                or ("XJ" in str(port_name).upper() or "GIGA" in str(port_name).upper())
+            )
+
+            # Query non-volatile configuration register RE:0029 (filter flags)
+            cached_r29 = getattr(conn, "_cached_val_r29", None)
+            should_query_r29 = (conn is not None and (not fast_poll or cached_r29 is None))
+
+            val_r29 = cached_r29 if cached_r29 is not None else 0
+            if should_query_r29:
+                r29 = conn.query_ascii("RE:0029")
+                if r29 and r29.startswith("re:"):
+                    try:
+                        val_r29 = int(r29[3:], 16)
+                        setattr(conn, "_cached_val_r29", val_r29)
+                    except ValueError:
+                        pass
+
+            raw_cs = getattr(conn, "_cached_raw_cs", None)
+            if not fast_poll:
+                # Query CS: (Component Status) during full interrogation
+                cs_resp = conn.query_ascii("CS:")
+                if cs_resp and cs_resp.lower().startswith("cs:"):
+                    raw_cs = cs_resp
+                    setattr(conn, "_cached_raw_cs", raw_cs)
+                if raw_cs:
+                    results["raw_cs"] = raw_cs
 
             if not fast_poll:
                 # Query hardware fault register RE:0028 (fast, ~350ms)
@@ -568,12 +646,12 @@ def query_live_sensors(
                 val_r28 = getattr(conn, "_cached_val_r28", 0)
                 results["fault_register_hex"] = f"0x{val_r28:04X}"
 
-            # Optical Bean Hopper Sensor (AS: Check Sensor - commercial lines: XJ, GIGA)
+            # Coffee Heater NTC Diagnostic Sensor Self-Test (AS: Check Sensor - P518Ani.exe VA 0x004E6E28, String #251)
             # Polled during manual refresh (not fast_poll), on first query of a session, or every ~2.0s in Live Data
             last_as_ts = getattr(conn, "_last_as_ts", 0.0)
             cached_beans = getattr(conn, "_cached_beans_ok", None)
             as_supported = getattr(conn, "_as_supported", None)
-            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 2.0))
+            should_query_as = (as_supported is not False) and ((not fast_poll) or (cached_beans is None) or (now_ts - last_as_ts >= 3.0))
 
             if should_query_as:
                 as_resp = conn.query_ascii("AS:")
@@ -584,8 +662,8 @@ def query_live_sensors(
                         try:
                             off_adc = int(as_parts[0][4:8], 16)
                             on_adc = int(as_parts[1][4:8], 16)
-                            # Reject floating / invalid ADCs (e.g. machine in standby or unpowered sensor bus)
-                            if 0 < off_adc < 3500 and 0 < on_adc < 3500:
+                            # P518Ani.exe Check Sensor valid window: 180 < off_adc < 17000
+                            if 0 < off_adc < 17000 and 0 < on_adc < 18500:
                                 setattr(conn, "_cached_bean_adcs", (off_adc, on_adc))
                                 setattr(conn, "_last_as_ts", now_ts)
                                 setattr(conn, "_as_supported", True)
@@ -599,54 +677,18 @@ def query_live_sensors(
                     if fail_cnt >= 3 and getattr(conn, "_as_supported", None) is None:
                         setattr(conn, "_as_supported", False)
 
-            # Evaluate bean hopper level:
-            # Multi-layer safety verification:
-            # 1. Optical IR Sensor (AS: Check Sensor - commercial lines: XJ, GIGA):
-            #    Net delta (ON_ADC - OFF_ADC) removes ambient light DC offset.
-            #    Calibrated via configurable threshold (default 115 ± 5):
-            #    - Covered / Charged: delta <= (threshold - hysteresis, <= 110) -> Beans OK
-            #    - Uncovered / Empty: delta >= (threshold + hysteresis, >= 120) -> Fill Beans
-            #    - Normal thermal drift band (85..105 counts) is safely classified as Beans OK.
-            #    - Extraction Transient Immunity: During mechanical compression (bu_encoder_pos_raw > 250),
-            #      water extraction (flow_pulses_raw > 0 and flow_ml_s > 0), or valve travel, electrical
-            #      load sag causes optical baseline shifts. Spurious empty triggers are suppressed during brew.
-            # 2. Puck Compression Fallback:
-            #    When optical sensor is absent, cake thickness <= 14 ticks indicates dry grinder run.
-            optical_empty = False
-            cached_adcs = getattr(conn, "_cached_bean_adcs", None)
-            opt_thresh = _optical_bean_threshold
-            opt_hyst = _optical_bean_hysteresis
-            opt_lower = opt_thresh - opt_hyst
-            opt_upper = opt_thresh + opt_hyst
-
-            # Detect active brewing cycle to prevent electrical sag false alarms
-            is_active_brew = (
-                bu_encoder_pos_raw > 250
-                or (flow_pulses_raw > 0 and flow_ml_s > 0.0)
-                or mv_busy
+            # Re-evaluate commercial bean sensor support after AS: query
+            has_commercial_bean_sensor = bool(
+                getattr(conn, "_as_supported", False)
+                or (detected_ef and any(x in str(detected_ef).upper() for x in ("EF518", "XJ", "GIGA")))
+                or ("XJ" in str(port_name).upper() or "GIGA" in str(port_name).upper())
             )
 
-            if cached_adcs:
-                off_adc, on_adc = cached_adcs
-                delta = on_adc - off_adc
-                if is_active_brew:
-                    # Suppress transient ADC swings during active brew
-                    optical_empty = False
-                elif delta <= opt_lower:
-                    optical_empty = False
-                elif delta >= opt_upper:
-                    optical_empty = True
-                else:
-                    # Latch previous state across hysteresis deadband
-                    optical_empty = not getattr(conn, "_cached_beans_ok", True)
-
-                beans_empty = optical_empty
-            else:
-                # Fallback for models without optical sensor (e.g. standard residential lines)
-                puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
-                beans_empty = puck_empty
-
-            beans_ok = not beans_empty
+            # Evaluate bean hopper status:
+            # On Jura appliances, puck compression measurement <= 14 ticks indicates an empty grinder run (Universal fallback).
+            # Note: On EF518 (XJ5/XJ9), the optical bean barrier is wired directly to the EF518D Display PCB and monitored locally.
+            puck_empty = (cake_thickness_ticks > 0 and cake_thickness_ticks <= 14)
+            beans_ok = not puck_empty
             setattr(conn, "_cached_beans_ok", beans_ok)
 
             # Evaluate dynamic Brew Unit mechanical position & movement delta
@@ -741,14 +783,9 @@ def query_live_sensors(
             filter_liters = 0.0
 
             if not fast_poll:
-                r29 = conn.query_ascii("RE:0029")
-                if r29 and r29.startswith("re:"):
-                    try:
-                        w29 = int(r29[3:], 16)
-                        filter_ext = bool(w29 & 0x0001)
-                        filter_claris = bool(w29 & 0x0010)
-                    except ValueError:
-                        pass
+                if val_r29 is not None:
+                    filter_ext = bool(val_r29 & 0x0001)
+                    filter_claris = bool(val_r29 & 0x0010)
 
                 rc3 = conn.query_ascii("RE:00C3")
                 if rc3 and rc3.startswith("re:"):
@@ -800,6 +837,7 @@ def query_live_sensors(
                     "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
                     "ok": beans_ok,
                     "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Puck thickness nominal" if beans_ok else "Grinder dry run detected"),
                     "icon": "🫘"
                 },
                 {
@@ -918,21 +956,37 @@ def query_live_sensors(
                 "details": f"Rotary selector: {rotary_pos} | Key matrix (HZ[8]): 0x{button_matrix_hex} | Puck measurement: {cake_thickness_ticks} ticks | Aux bits (HZ[7][4..5]): {aux_inputs_bits}",
                 "icon": "🎛️"
             })
+            opt_thresh = _optical_bean_threshold
+            opt_hyst = _optical_bean_hysteresis
+            opt_lower = opt_thresh - opt_hyst
+            opt_upper = opt_thresh + opt_hyst
+            delta = None
             cached_adcs = getattr(conn, "_cached_bean_adcs", None)
+            shunt_ratio = None
+            gain_pct = None
+            ntc_self_test_ok = None
             if cached_adcs:
                 off_adc, on_adc = cached_adcs
                 delta = on_adc - off_adc
+                shunt_ratio = round(on_adc / off_adc, 4) if off_adc > 0 else 1.0
+                gain_pct = round((shunt_ratio - 1.0) * 100.0, 2)
+                ntc_self_test_ok = (180 < off_adc < 17000) and (1.050 <= shunt_ratio <= 1.070)
+
+                # Coffee Heater NTC Diagnostic Sensor Self-Test (P518Ani.exe Check Sensor VA 0x004E6E28, String #251)
                 sensor_list.append({
-                    "id": "optical_bean_sensor",
-                    "name": "Optical Bean Hopper Sensor",
-                    "status": "BEANS OK" if beans_ok else "FILL BEANS (Empty)",
-                    "ok": beans_ok,
-                    "badge": "NOMINAL" if beans_ok else "EMPTY",
-                    "details": f"Reflected IR ADC: {on_adc} | Ambient ADC: {off_adc} | Delta: {delta} counts (Threshold: {opt_thresh} ± {opt_hyst}, Bounds: ≤{opt_lower} / ≥{opt_upper}) | Status: {'Hopper Charged' if beans_ok else 'Fill Beans'}",
-                    "icon": "🫘",
-                    "value": on_adc,
-                    "unit": "ADC"
+                    "id": "heater_ntc_diagnostic_sensor",
+                    "name": "Coffee Heater NTC Diagnostic Sensor",
+                    "status": "CALIBRATION NOMINAL (+6.0% Shunt OK)" if ntc_self_test_ok else "CALIBRATION WARNING / OUT OF RANGE",
+                    "ok": ntc_self_test_ok,
+                    "badge": f"{shunt_ratio:.4f} (+{gain_pct}%)" if ntc_self_test_ok else "FAULT",
+                    "details": f"NTC Calibration Self-Test (AS:): Shunt ON ADC {on_adc} / Ambient OFF ADC {off_adc} (Ratio: {shunt_ratio:.4f}, Gain: +{gain_pct}%) | Range: 180..17000 | Status: {'Circuit Nominal' if ntc_self_test_ok else 'False Values (P518 String #251)'}",
+                    "icon": "🌡️",
+                    "value": shunt_ratio,
+                    "unit": "ratio"
                 })
+
+
+
             for mask, s_id, label, desc_fault, desc_ok in fault_defs:
                 tripped = bool(val_r28 & mask)
                 sensor_list.append({
@@ -947,7 +1001,8 @@ def query_live_sensors(
 
             # 4. Error Frequency Counters (dynamically mapped for Single vs Dual Heater)
             counters: Dict[str, int] = {}
-            if not fast_poll:
+            has_error_counters = not (detected_ef.startswith("EF634") or detected_ef in TWO_DIGIT_ADDRESS_EFS)
+            if not fast_poll and has_error_counters:
                 if is_dual_heater:
                     counter_queries = [
                         ("RE:01B0", "Encoder Channel Errors", "Coffee Thermoblock NTC Short Circuits"),
@@ -1025,11 +1080,14 @@ def query_live_sensors(
                 "machine_state_status": ready_status,
                 "cake_thickness_ticks": cake_thickness_ticks,
                 "bean_adcs": getattr(conn, "_cached_bean_adcs", None),
+                "heater_ntc_self_test_ok": ntc_self_test_ok if cached_adcs else None,
+                "heater_ntc_shunt_ratio": shunt_ratio if cached_adcs else None,
+                "heater_ntc_shunt_gain_pct": gain_pct if cached_adcs else None,
                 "optical_threshold": opt_thresh,
                 "optical_hysteresis": opt_hyst,
                 "optical_lower": opt_lower,
                 "optical_upper": opt_upper,
-                "optical_delta": (on_adc - off_adc) if cached_adcs else None,
+                "optical_delta": delta,
                 "button_matrix": button_matrix_hex,
                 "aux_inputs": aux_inputs_bits,
                 "heater_ntc_raw": heater_ntc_raw,
@@ -1108,6 +1166,7 @@ def query_live_sensors(
                     "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
                     "ok": beans_ok,
                     "badge": "NORMAL" if beans_ok else "FILL BEANS",
+                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Puck thickness nominal" if beans_ok else "Grinder dry run detected"),
                     "icon": "🫘"
                 },
                 {
@@ -1190,6 +1249,127 @@ class JuraStatsSession:
         self.live_sensors: Dict[str, Any] = {}
         self.raw_log: List[Dict[str, str]] = []
         self.is_legacy_cleartext = False
+        self.last_eeprom: Dict[int, int] = {}
+        self.address_width: int = 4
+        self.override_products: Optional[List[Dict[str, Any]]] = None
+        self.override_maint_labels: Optional[List[str]] = None
+        self.offset_override_info: Optional[Dict[str, Any]] = None
+
+    def apply_local_offset_override(
+        self,
+        eeprom: Optional[Dict[int, int]] = None,
+        article_num: Optional[str] = None,
+    ) -> bool:
+        """
+        Apply a saved local AI/J.O.E.-calibrated EEPROM offset override (if present)
+        directly to this session's counters and maintenance stats.
+        """
+        mem = eeprom if eeprom is not None else self.last_eeprom
+        if not mem:
+            return False
+
+        art = article_num or self.telemetry.get("article_number")
+        ov = profiles_db.get_eeprom_offset_override(
+            self.ef_code,
+            article_number=art,
+            model_name=self.model_family,
+        )
+        if not ov:
+            self.override_products = None
+            self.override_maint_labels = None
+            self.offset_override_info = None
+            return False
+
+        def _read_word(addr_val: Any) -> int:
+            try:
+                addr_int = int(addr_val)
+            except Exception:
+                return 0
+            if addr_int in mem:
+                return mem[addr_int]
+            if self.conn and getattr(self.conn, "is_open", False):
+                addr_str = f"{addr_int:02X}" if self.address_width == 2 else f"{addr_int:04X}"
+                ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
+                if ans and ans.lower().startswith("re:"):
+                    try:
+                        mem[addr_int] = int(ans[3:].strip(), 16)
+                        self.last_eeprom[addr_int] = mem[addr_int]
+                    except ValueError:
+                        pass
+            return mem.get(addr_int, 0)
+
+        ov_prods = ov.get("products") or []
+        if ov_prods:
+            new_counters: Dict[int, int] = {}
+            new_prod_defs: List[Dict[str, Any]] = []
+            single_preps = 0
+            double_preps = 0
+            for idx, item in enumerate(ov_prods, start=1):
+                code = int(item.get("code") or idx)
+                val = _read_word(item.get("addr"))
+                is_dbl = bool(item.get("is_double", False))
+                new_counters[code] = val
+                if is_dbl:
+                    double_preps += val
+                else:
+                    single_preps += val
+                new_prod_defs.append({
+                    "code": code,
+                    "name": str(item.get("name") or f"Product #{code}"),
+                    "is_double": is_dbl,
+                    "active": True,
+                })
+            self.counters = new_counters
+            self.override_products = new_prod_defs
+            self.total_preparations = single_preps + double_preps
+            self.total_cups = single_preps + (double_preps * 2)
+            self.telemetry["total_preparations"] = self.total_preparations
+            self.telemetry["total_cups"] = self.total_cups
+
+        ov_maint = ov.get("maintenance") or []
+        ov_pct = ov.get("maintenance_pct") or []
+        pct_by_name = {str(p.get("name", "")).strip().lower(): p for p in ov_pct if isinstance(p, dict)}
+        if ov_maint:
+            new_maint_counts: List[int] = []
+            new_maint_pcts: List[Optional[int]] = []
+            new_maint_labels: List[str] = []
+            for m in ov_maint:
+                label = str(m.get("name") or "Maintenance")
+                new_maint_labels.append(label)
+                new_maint_counts.append(_read_word(m.get("addr")))
+                p_match = pct_by_name.get(label.strip().lower())
+                if p_match is None:
+                    # Try fuzzy prefix match (e.g. Cleaning vs Cleaning / Cleaning %)
+                    l_low = label.strip().lower()
+                    for pk, pv in pct_by_name.items():
+                        if l_low in pk or pk in l_low:
+                            p_match = pv
+                            break
+                if p_match is not None:
+                    w = _read_word(p_match.get("addr"))
+                    byte_sel = str(p_match.get("byte") or "low").lower()
+                    pct_val = ((w >> 8) & 0xFF) if byte_sel == "high" else (w & 0xFF)
+                    new_maint_pcts.append(pct_val)
+                else:
+                    new_maint_pcts.append(None)
+            self.maint_counts = new_maint_counts
+            self.maint_pcts = new_maint_pcts
+            self.override_maint_labels = new_maint_labels
+
+        self.offset_override_info = {
+            "active": True,
+            "override_key": ov.get("override_key"),
+            "updated_at": ov.get("updated_at"),
+            "source": ov.get("source", "ai_joe_calibration"),
+            "model_used": ov.get("model_used"),
+            "products_mapped": len(ov_prods),
+            "maintenance_mapped": len(ov_maint),
+        }
+        self.log(
+            f"Applied local EEPROM offset override ({ov.get('override_key')}): "
+            f"{len(ov_prods)} beverages, {len(ov_maint)} maintenance counters"
+        )
+        return True
 
     def query_live_sensors(self) -> Dict[str, Any]:
         """Query live hardware sensors and microswitches for current session."""
@@ -1309,6 +1489,7 @@ class JuraStatsSession:
                 is_a1 = "EF509" in self.ef_code.upper() or "A1" in self.model_family.upper() or "ENA MICRO" in self.model_family.upper()
                 is_we8 = "EF535" in self.ef_code.upper() or "WE8" in self.model_family.upper()
                 is_e8 = "EF533" in self.ef_code.upper() or "E8" in self.model_family.upper()
+                is_ena7 = "EF634" in self.ef_code.upper() or "ENA 7" in self.model_family.upper() or "ENA7" in self.model_family.upper()
 
                 # Query Display Sub-Bus Firmware Gateway (TY$:)
                 ty_sub = self.conn.query_ascii("TY$:", timeout=0.8)
@@ -1328,6 +1509,8 @@ class JuraStatsSession:
                     blocks.append(0x0330)
                 elif is_we8 or is_e8:
                     blocks.extend([0x70, 0xE0, 0x160, 0x170, 0x180, 0x1E0])
+                elif is_ena7:
+                    blocks.extend([0x50, 0x60, 0x70, 0xD0])
 
                 update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
                 eeprom: Dict[int, int] = {}
@@ -1385,6 +1568,10 @@ class JuraStatsSession:
                     id_addrs.append((0x162, "Descaling Percentage"))
                     id_addrs.append((0x163, "Cleaning Percentage"))
                     id_addrs.append((0x1E1, "Filter Percentage"))
+                elif is_ena7:
+                    id_addrs.append((0x52, "Filter Cycles"))
+                    id_addrs.append((0x56, "BU Initializations"))
+                    id_addrs.append((0xD6, "Machine Switch-On"))
 
                 for addr_int, desc in id_addrs:
                     if addr_int not in eeprom or eeprom[addr_int] == 0:
@@ -1543,6 +1730,39 @@ class JuraStatsSession:
                     filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
                     milk_rinses = eeprom.get(0x0020, 0)
                     milk_cleanings = eeprom.get(0x0021, 0)
+                elif is_ena7:
+                    # Jura ENA 7 / EF634 platform:
+                    # 0x0000: 1 Espresso (Single)
+                    # 0x0001: 2 Espressi (Double)
+                    # 0x0002: 1 Coffee (Single)
+                    # 0x0003: 2 Coffees (Double)
+                    # 0x0004: 1 Aroma-Boost (Single)
+                    # 0x0005: Steam / Hot Water valve cycles
+                    # 0x0006: Ground Coffee bypass (Single)
+                    esp1 = eeprom.get(0x0000, 0)
+                    esp2 = eeprom.get(0x0001, 0)
+                    cof1 = eeprom.get(0x0002, 0)
+                    cof2 = eeprom.get(0x0003, 0)
+                    aroma = eeprom.get(0x0004, 0)
+                    hotwater = eeprom.get(0x0005, 0)
+                    ground = eeprom.get(0x0006, 0)
+
+                    self.counters[1] = esp1
+                    self.counters[2] = esp2
+                    self.counters[3] = cof1
+                    self.counters[4] = cof2
+                    self.counters[5] = aroma
+                    if ground > 0:
+                        self.counters[6] = ground
+                    if hotwater > 0:
+                        self.counters[13] = hotwater
+
+                    single_preps = esp1 + cof1 + aroma + ground
+                    double_preps = esp2 + cof2
+                    self.total_preparations = single_preps + double_preps
+                    self.total_cups = single_preps + (double_preps * 2)
+
+                    filter_cycles = eeprom.get(0x0052, 0)
                 else:
                     # Map standard Jura EEPROM statistics addresses
                     esp1 = eeprom.get(1, 0)
@@ -1647,24 +1867,6 @@ class JuraStatsSession:
                         if 10000 <= cand <= 99999:
                             hw_article = str(cand)
 
-                ARTICLE_MODEL_MAP = {
-                    "15133": ("A1", "15133 A1 Piano Black", "A-Line"),
-                    "15171": ("A1", "15171 A1 Piano White", "A-Line"),
-                    "15125": ("A1", "15125 A1", "A-Line"),
-                    "15110": ("ENA Micro 101 Aroma+", "15110 ENA Micro 101 Aroma+", "ENA Micro"),
-                    "13594": ("ENA Micro 1", "13594 ENA Micro 1 Micro Black", "ENA Micro"),
-                    "13636": ("ENA Micro 1", "13636 ENA Micro 1 Micro Silver", "ENA Micro"),
-                    "13735": ("ENA Micro 1", "13735 ENA Micro 1", "ENA Micro"),
-                    "15221": ("D4", "15221 D4 Piano Black", "D-Line"),
-                    "13356": ("IMPRESSA Z5", "13356 IMPRESSA Z5 230V CH", "Z-Line"),
-                    "15420": ("WE8 (EA)", "15420 WE8 (EA)", "WE-Line"),
-                    "15421": ("WE8 (EA)", "15421 WE8 (EA)", "WE-Line"),
-                    "15141": ("WE8", "15141 WE8", "WE-Line"),
-                    "15144": ("WE8", "15144 WE8", "WE-Line"),
-                    "15109": ("E8", "15109 E8 Piano Black", "E-Line"),
-                    "15084": ("E8", "15084 E8 Chrome", "E-Line"),
-                }
-
                 if hw_article:
                     article_num = hw_article
                     if hw_article in ARTICLE_MODEL_MAP:
@@ -1678,7 +1880,7 @@ class JuraStatsSession:
                     else:
                         app_type = f"{hw_article} {self.model_family}"
                 else:
-                    article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else "13705"))))
+                    article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else ("13500" if is_ena7 else "13705")))))
                     app_type = self.profile.get("appliance_type", self.model_family)
 
                 ean_code = "N/A"
@@ -1697,6 +1899,8 @@ class JuraStatsSession:
                     self.maint_counts = [cleanings, descalings, rinses, filter_cycles, milk_rinses, milk_cleanings]
                     self.maint_pcts = [clean_pct, decalc_pct, None, filter_pct, None, None]
                 else:
+                    if is_ena7:
+                        filter_cycles = eeprom.get(0x0052, 0)
                     self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
                     self.maint_pcts = [None, None, None, None]
 
@@ -1731,6 +1935,11 @@ class JuraStatsSession:
                     "water_since_decalc_liters": round(water_since_decalc / 10.0, 1),
                     "power_spec": self.power_spec,
                 }
+
+                # Store swept EEPROM and apply any saved local AI/J.O.E. offset override immediately
+                self.last_eeprom = dict(eeprom)
+                self.address_width = address_width
+                self.apply_local_offset_override(self.last_eeprom, article_num=article_num)
 
                 # Interrogate Live Hardware Sensors & Switches
                 update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
@@ -1864,19 +2073,22 @@ class JuraStatsSession:
         # Build beverage list
         beverage_list = []
         profile_codes = set()
-        profile_prods = self.profile.get("products", [])
-        # In ASCII EEPROM mode, if a generic or unconfigured profile was matched,
-        # fall back to classic 6-slot EEPROM beverage descriptors so counts are not mislabeled.
-        # But if the matched profile has a specific product list (e.g. Z5 with 13 products), preserve it!
-        if self.is_legacy_cleartext and (not profile_prods or self.profile.get("model_family") == "Generic Jura Automatic"):
-            profile_prods = [
-                {"code": 1, "name": "1 Espresso", "is_double": False, "active": True},
-                {"code": 2, "name": "1 Coffee", "is_double": False, "active": True},
-                {"code": 3, "name": "1 Special Coffee / Ristretto", "is_double": False, "active": True},
-                {"code": 4, "name": "2 Espressi", "is_double": True, "active": True},
-                {"code": 5, "name": "2 Coffees", "is_double": True, "active": True},
-                {"code": 6, "name": "2 Special Coffees", "is_double": True, "active": True},
-            ]
+        if self.override_products:
+            profile_prods = self.override_products
+        else:
+            profile_prods = self.profile.get("products", [])
+            # In ASCII EEPROM mode, if a generic or unconfigured profile was matched,
+            # fall back to classic 6-slot EEPROM beverage descriptors so counts are not mislabeled.
+            # But if the matched profile has a specific product list (e.g. Z5 with 13 products), preserve it!
+            if self.is_legacy_cleartext and (not profile_prods or self.profile.get("model_family") == "Generic Jura Automatic"):
+                profile_prods = [
+                    {"code": 1, "name": "1 Espresso", "is_double": False, "active": True},
+                    {"code": 2, "name": "1 Coffee", "is_double": False, "active": True},
+                    {"code": 3, "name": "1 Special Coffee / Ristretto", "is_double": False, "active": True},
+                    {"code": 4, "name": "2 Espressi", "is_double": True, "active": True},
+                    {"code": 5, "name": "2 Coffees", "is_double": True, "active": True},
+                    {"code": 6, "name": "2 Special Coffees", "is_double": True, "active": True},
+                ]
 
         for p in profile_prods:
             code = p.get("code")
@@ -1902,7 +2114,9 @@ class JuraStatsSession:
                 })
 
         # Build maintenance list
-        if self.is_legacy_cleartext:
+        if self.override_maint_labels:
+            mc_labels = self.override_maint_labels
+        elif self.is_legacy_cleartext:
             if len(self.maint_counts) == 6:
                 mc_labels = ["Cleaning", "Descaling", "Coffee System Rinsing", "Filter Change", "Milk System Rinsing", "Milk System Cleaning"]
             else:
@@ -1946,7 +2160,8 @@ class JuraStatsSession:
             "telemetry": self.telemetry,
             "alerts": self.active_alerts,
             "live_sensors": self.live_sensors,
-            "raw_log_entries": len(self.raw_log)
+            "raw_log_entries": len(self.raw_log),
+            "offset_override": self.offset_override_info,
         }
 
     # ========================================================================

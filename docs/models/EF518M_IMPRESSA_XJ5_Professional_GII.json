@@ -4,7 +4,9 @@
   "display_ef": "EF518D",
   "series": "IMPRESSA Professional X-Line",
   "article_numbers": [
-    "18016"
+    "13705",
+    "13583",
+    "13636"
   ],
   "hardware": {
     "thermoblocks": 1,
@@ -28,12 +30,19 @@
         "prebrew_2": "0044"
       }
     },
-    "optical_hopper": {
+    "ntc_sensor_check": {
       "command": "AS:",
-      "empty_adc_threshold": 1710,
-      "nominal_adc_threshold": 1907,
-      "nominal_delta_max": 85,
-      "empty_delta_min": 95
+      "description": "Coffee Heater NTC Diagnostic Sensor Self-Test (P518Ani.exe String #251)",
+      "valid_adc_min": 180,
+      "valid_adc_max": 17000,
+      "nominal_shunt_ratio": 1.0600
+    },
+    "bean_hopper": {
+      "live_status_source": "HZ[0][3]",
+      "charged_bit": "1",
+      "empty_bit": "0",
+      "non_volatile_register": "RE:0029",
+      "non_volatile_mask": "0x0040"
     }
   },
   "custom_registers": {
@@ -1410,9 +1419,9 @@
     "002D": "0708",
     "002E": "2D64",
     "002F": "141E",
-    "0030": "4660",
-    "0031": "0033",
-    "0032": "2EBE",
+    "0030": "03E8",
+    "0031": "0001",
+    "0032": "302F",
     "0033": "2996",
     "0039": "1E6F",
     "003A": "046E",

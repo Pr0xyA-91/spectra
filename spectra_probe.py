@@ -25,6 +25,8 @@ import re
 import csv
 import json
 import time
+import shutil
+import subprocess
 import datetime
 import argparse
 from typing import Dict, Any, Optional, Tuple, List
@@ -32,7 +34,7 @@ from typing import Dict, Any, Optional, Tuple, List
 try:
     from version import BUILD_NUMBER
 except ImportError:
-    BUILD_NUMBER = "20261102.1435"
+    BUILD_NUMBER = "20261112.1820"
 
 # Ensure repository root is on sys.path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,8 +50,44 @@ except ImportError:
     profiles_db = None
     decode_jura_date = None
 
+try:
+    import spectra_py as _rust_core
+    HAS_RUST_CORE = True
+except ImportError:
+    _rust_core = None
+    HAS_RUST_CORE = False
+
 
 SAFE_READ_COMMANDS = ("TY:", "TL:", "TY$:", "TL$:", "IC:", "CS$:", "HZ:", "AS:", "RT:", "RE:")
+
+
+def _coerce_int(val_str: Any) -> Any:
+    """Coerce string value to int if numeric (handling spaces, thousands commas/dots)."""
+    if not isinstance(val_str, str):
+        return val_str
+    s = val_str.strip().strip('"\'')
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    # Remove whitespace / non-breaking space
+    cleaned = re.sub(r'[\s\u00a0\u202f]', '', s)
+    # Check standard thousands separators: 1,234 or 1.234
+    if re.fullmatch(r'\d{1,3}(,\d{3})+', cleaned):
+        try:
+            return int(cleaned.replace(',', ''))
+        except ValueError:
+            pass
+    if re.fullmatch(r'\d{1,3}(\.\d{3})+', cleaned):
+        try:
+            return int(cleaned.replace('.', ''))
+        except ValueError:
+            pass
+    try:
+        return int(cleaned)
+    except ValueError:
+        pass
+    return val_str
 
 
 def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
@@ -91,27 +129,32 @@ def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
             continue
 
         # Key-value lines (comma or semicolon delimited)
-        parts = [p.strip() for p in re.split(r'[,;]', line) if p.strip()]
+        if ';' in line:
+            parts = [p.strip() for p in line.split(';') if p.strip()]
+        else:
+            try:
+                import csv
+                reader = csv.reader([line])
+                parts = [p.strip() for p in next(reader) if p.strip()]
+            except Exception:
+                parts = [p.strip() for p in re.split(r'[,;]', line) if p.strip()]
+
         if len(parts) >= 2:
-            key, val_str = parts[0], parts[1]
+            key = parts[0]
+            if len(parts) > 2 and all(p.isdigit() for p in parts[1:]):
+                val_str = "".join(parts[1:])
+            else:
+                val_str = parts[1]
+
             if current_section == "cockpit":
                 result["cockpit"][key] = val_str
             elif current_section == "maintenance":
-                try:
-                    result["maintenance"][key] = int(val_str)
-                except ValueError:
-                    result["maintenance"][key] = val_str
+                result["maintenance"][key] = _coerce_int(val_str)
             elif current_section == "products":
                 if key.lower().startswith("total number of products"):
-                    try:
-                        result["total_products"] = int(val_str)
-                    except ValueError:
-                        result["total_products"] = val_str
+                    result["total_products"] = _coerce_int(val_str)
                 else:
-                    try:
-                        result["products"][key] = int(val_str)
-                    except ValueError:
-                        result["products"][key] = val_str
+                    result["products"][key] = _coerce_int(val_str)
 
     return result
 
@@ -223,7 +266,7 @@ def decode_machine_identity(eeprom: Dict[int, int], gateways: Dict[str, str]) ->
     tl = gateways.get("TL:", "")
     if "RL78" in tl.upper() or "EF533" in ty.upper() or "EF535" in ty.upper() or "EF536" in ty.upper():
         ident["platform_family"] = "Renesas RL78 (Modern TFT / Gen 2)"
-    elif "R8C" in tl.upper() or "EF509" in ty.upper() or "EF518" in ty.upper():
+    elif "R8C" in tl.upper() or "EF509" in ty.upper() or "EF518" in ty.upper() or "EF634" in ty.upper():
         ident["platform_family"] = "Renesas R8C (Classic Domestic / Commercial)"
     elif "Z5" in ty.upper() or "EF642" in ty.upper():
         ident["platform_family"] = "Motorola 68HC (Legacy Top-Tronic)"
@@ -258,7 +301,12 @@ def decode_machine_identity(eeprom: Dict[int, int], gateways: Dict[str, str]) ->
     return ident
 
 
-def correlate_with_joe(eeprom: Dict[int, int], joe_data: Dict[str, Any]) -> Dict[str, Any]:
+def correlate_with_joe(
+    eeprom: Dict[int, int],
+    joe_data: Dict[str, Any],
+    use_ollama: bool = False,
+    ollama_model: Optional[str] = None,
+) -> Dict[str, Any]:
     """Cross-reference ground truth from J.O.E. export against EEPROM addresses."""
     correlations = {
         "products": [],
@@ -297,15 +345,32 @@ def correlate_with_joe(eeprom: Dict[int, int], joe_data: Dict[str, Any]) -> Dict
                 return 100
         return 10
 
+    def _rank_matches(value: int, category: str) -> List[str]:
+        if value <= 0 or (category == "cockpit" and value > 0xFF):
+            return []
+        if HAS_RUST_CORE and _rust_core is not None and hasattr(_rust_core, "correlate_with_joe_ranked"):
+            try:
+                clean_eeprom = {int(k): int(v) for k, v in eeprom.items() if 0 <= int(k) <= 0xFFFF and 0 <= int(v) <= 0xFFFF}
+                return list(_rust_core.correlate_with_joe_ranked(clean_eeprom, int(value), category))
+            except Exception:
+                pass
+        if category == "cockpit":
+            raw_matches = [
+                addr for addr, val in eeprom.items()
+                if (val & 0xFF) == value or ((val >> 8) & 0xFF) == value
+            ]
+        else:
+            raw_matches = [addr for addr, val in eeprom.items() if val == value]
+        raw_matches.sort(key=lambda a: score_address_for_category(a, category), reverse=True)
+        return [f"0x{a:04X}" for a in raw_matches]
+
     # 1. Product beverage correlation
     prods = joe_data.get("products", {})
     for bev_name, count in prods.items():
+        if not isinstance(count, int):
+            continue
         correlations["summary"]["total_products_checked"] += 1
-        matches = []
-        if count > 0:
-            raw_matches = [addr for addr, val in eeprom.items() if val == count]
-            raw_matches.sort(key=lambda a: score_address_for_category(a, "product"), reverse=True)
-            matches = [f"0x{a:04X}" for a in raw_matches]
+        matches = _rank_matches(count, "product")
 
         matched = len(matches) > 0
         if matched:
@@ -327,11 +392,7 @@ def correlate_with_joe(eeprom: Dict[int, int], joe_data: Dict[str, Any]) -> Dict
         if not isinstance(count, int):
             continue
         correlations["summary"]["total_maint_checked"] += 1
-        matches = []
-        if count > 0:
-            raw_matches = [addr for addr, val in eeprom.items() if val == count]
-            raw_matches.sort(key=lambda a: score_address_for_category(a, "maintenance"), reverse=True)
-            matches = [f"0x{a:04X}" for a in raw_matches]
+        matches = _rank_matches(count, "maintenance")
 
         matched = len(matches) > 0
         if matched:
@@ -353,15 +414,7 @@ def correlate_with_joe(eeprom: Dict[int, int], joe_data: Dict[str, Any]) -> Dict
         m_pct = re.search(r'(\d+)\s*%', val_str)
         if m_pct:
             pct_val = int(m_pct.group(1))
-            matches = []
-            if pct_val > 0:
-                raw_matches = []
-                for addr, val in eeprom.items():
-                    # Prioritize high bytes or dual-byte encoding (e.g. 0x1E1E)
-                    if (val & 0xFF) == pct_val or ((val >> 8) & 0xFF) == pct_val:
-                        raw_matches.append(addr)
-                raw_matches.sort(key=lambda a: score_address_for_category(a, "cockpit"), reverse=True)
-                matches = [f"0x{a:04X}" for a in raw_matches]
+            matches = _rank_matches(pct_val, "cockpit")
 
             note = "0% (cannot isolate from zero registers)" if pct_val == 0 else ""
             correlations["cockpit"].append({
@@ -373,6 +426,35 @@ def correlate_with_joe(eeprom: Dict[int, int], joe_data: Dict[str, Any]) -> Dict
                 "suggested_address": matches[0] if matches else None,
                 "note": note
             })
+
+    if use_ollama:
+        try:
+            import spectra_ai
+            if spectra_ai.is_ai_enabled():
+                canon_products = [
+                    "Espresso", "2x Espresso", "Coffee", "2x Coffee", "Cappuccino",
+                    "Latte Macchiato", "Ristretto", "2x Ristretto", "Flat White",
+                    "Espresso Macchiato", "Milk Foam", "Milk", "Hot Water",
+                    "Pot of Coffee", "Americano", "Lungo", "Cortado",
+                ]
+                canon_maint = [
+                    "Cleaning", "Descaling", "Filter Change", "Milk System Cleaning",
+                    "Cappuccino Rinse", "Coffee Rinse", "Switch-off Rinse",
+                ]
+                unmatched_prod = [p["name"] for p in correlations["products"] if not p.get("matched")]
+                unmatched_maint = [m["name"] for m in correlations["maintenance"] if not m.get("matched")]
+                if unmatched_prod:
+                    p_map = spectra_ai.match_joe_labels_with_ai(unmatched_prod, canon_products, model=ollama_model)
+                    for p in correlations["products"]:
+                        if p["name"] in p_map:
+                            p["ai_canonical_match"] = p_map[p["name"]]
+                if unmatched_maint:
+                    m_map = spectra_ai.match_joe_labels_with_ai(unmatched_maint, canon_maint, model=ollama_model)
+                    for m in correlations["maintenance"]:
+                        if m["name"] in m_map:
+                            m["ai_canonical_match"] = m_map[m["name"]]
+        except Exception:
+            pass
 
     return correlations
 
@@ -414,7 +496,9 @@ def capture_machine_bundle(
     conn,
     joe_data: Optional[Dict[str, Any]] = None,
     max_words: int = 0,
-    on_progress=None
+    on_progress=None,
+    use_ollama: bool = False,
+    ollama_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Safely interrogate gateways, sweep EEPROM, decode identity,
@@ -440,10 +524,27 @@ def capture_machine_bundle(
 
     eeprom = sweep_eeprom(conn, max_words=max_words, on_progress=on_progress)
     identity = decode_machine_identity(eeprom, gateways)
-    model_name = (joe_data or {}).get("model_name") or identity.get("article_number") or "Jura_Appliance"
+
+    model_name = (joe_data or {}).get("model_name")
+    if not model_name:
+        try:
+            import stats_collector
+            art_num = str(identity.get("article_number", ""))
+            if art_num in getattr(stats_collector, "ARTICLE_MODEL_MAP", {}):
+                fam_info = stats_collector.ARTICLE_MODEL_MAP[art_num]
+                model_name = fam_info[0] if isinstance(fam_info, (list, tuple)) else str(fam_info)
+            elif profiles_db:
+                prof = profiles_db.get_profile_by_firmware(gateways.get("TY:", ""))
+                if prof:
+                    model_name = prof.name
+        except Exception:
+            pass
+
+    if not model_name:
+        model_name = identity.get("article_number") or "Jura_Appliance"
     identity["model_name"] = model_name
 
-    correlations = correlate_with_joe(eeprom, joe_data or {}) if joe_data else {}
+    correlations = correlate_with_joe(eeprom, joe_data or {}, use_ollama=use_ollama, ollama_model=ollama_model) if joe_data else {}
     mock_code = generate_mock_python_code(gateways, eeprom, model_name)
 
     return {
@@ -561,6 +662,252 @@ def build_text_report(bundle: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+COMMUNITY_REPO = "Pr0xyA-91/spectra-captures"
+
+
+def upload_capture_to_community_repo(
+    json_path: Optional[str] = None,
+    repo: str = COMMUNITY_REPO,
+    open_browser: bool = False,
+    bundle_data: Optional[Dict[str, Any]] = None
+) -> Tuple[bool, str, Optional[str]]:
+    """
+    Uploads a captured EEPROM JSON bundle to the public SPECTRA community repository.
+    Never swallows errors silently (returns precise error messages).
+    Never opens a browser directly unless open_browser=True.
+    Limits issue body to 65,536 characters; creates an unlisted Gist if the bundle is larger.
+    Retries issue creation without labels if target repository lacks the 'capture' label (422).
+
+    Returns:
+        (success: bool, status_message: str, url: Optional[str])
+    """
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+    import github_auth
+
+    # 1. Resolve payload
+    if bundle_data is not None:
+        data = bundle_data
+    elif json_path and os.path.isfile(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            return False, f"Invalid JSON bundle: {e}", None
+    elif json_path:
+        return False, f"File not found: {json_path}", None
+    else:
+        return False, "No capture data or file path provided.", None
+
+    ident = data.get("identity", {})
+    model_name = ident.get("model_name") or "Unknown"
+    article_number = str(ident.get("article_number") or "unknown")
+    gateways = data.get("gateways", {})
+    firmware = gateways.get("TY:", "").replace("ty:", "").strip()
+    words_count = len(data.get("eeprom_words", {}))
+    has_joe = bool(data.get("joe_ground_truth", {}).get("raw_lines"))
+    metadata = data.get("metadata") or {}
+    timestamp = data.get("timestamp") or metadata.get("timestamp") or time.strftime("%Y-%m-%d %H:%M:%S")
+    build_val = data.get("build") or metadata.get("spectra_build") or BUILD_NUMBER
+
+    offset_fix = data.get("ai_offset_fix") or data.get("override")
+    has_offset_fix = isinstance(offset_fix, dict) and bool(
+        offset_fix.get("products") or offset_fix.get("maintenance") or offset_fix.get("maintenance_pct")
+    )
+
+    title = (
+        f"[Offset Fix + Capture] {model_name} (Article {article_number})"
+        if has_offset_fix
+        else f"[Capture] {model_name} (Article {article_number})"
+    )
+    header = (
+        f"### Machine Details\n"
+        f"- **Manufacturer**: {ident.get('manufacturer', 'Jura')}\n"
+        f"- **Model Name**: {model_name}\n"
+        f"- **Article Number**: {article_number}\n"
+        f"- **Firmware**: {firmware}\n"
+        f"- **Build**: {build_val}\n"
+        f"- **Timestamp**: {timestamp}\n"
+        f"- **EEPROM Words**: {words_count}\n"
+        f"- **J.O.E. Ground Truth**: {'Yes' if has_joe else 'No'}\n"
+        f"- **Verified Offset Fix Included**: {'Yes (Local AI + J.O.E.)' if has_offset_fix else 'No'}\n\n"
+    )
+
+    fix_section = ""
+    if has_offset_fix:
+        fix_lines = [
+            "### Verified EEPROM Offset Fix (Local AI Calibration)",
+            f"- **Model Used**: `{offset_fix.get('model_used', 'local_ai')}`",
+        ]
+        if offset_fix.get("notes"):
+            fix_lines.append(f"- **Notes**: {offset_fix.get('notes')}")
+        fix_lines.extend([
+            "",
+            "| Category | Item | Address | J.O.E. Ref | EEPROM Raw | Exact |",
+            "|---|---|---|---|---|---|",
+        ])
+        for p in offset_fix.get("products", []):
+            fix_lines.append(
+                f"| Product | {p.get('name')} | `{p.get('addr_hex')}` | {p.get('joe_count')} | {p.get('eeprom_val')} | {'Yes' if p.get('verified_exact') else 'No'} |"
+            )
+        for m in offset_fix.get("maintenance", []):
+            fix_lines.append(
+                f"| Maintenance | {m.get('name')} | `{m.get('addr_hex')}` | {m.get('joe_count')} | {m.get('eeprom_val')} | {'Yes' if m.get('verified_exact') else 'No'} |"
+            )
+        for c in offset_fix.get("maintenance_pct", []):
+            fix_lines.append(
+                f"| Cockpit % | {c.get('name')} ({c.get('byte')} byte) | `{c.get('addr_hex')}` | {c.get('joe_pct')}% | `{c.get('eeprom_word_hex')}` | Yes |"
+            )
+        fix_lines.append("")
+        fix_section = "\n".join(fix_lines) + "\n"
+
+    # Fallback pre-filled submission URL (unauthenticated / manual fallback)
+    compact_body = (
+        header +
+        fix_section +
+        "### Capture JSON Data\n"
+        "Please paste your capture JSON below:\n\n"
+        "```json\n\n```\n"
+    )
+    params = urllib.parse.urlencode({
+        "template": "capture_submission.md",
+        "title": title,
+        "body": compact_body
+    })
+    web_url = f"https://github.com/{repo}/issues/new?{params}"
+
+    # 2. Resolve authentication token
+    resolved = github_auth.resolve_token()
+    token = resolved["token"] if resolved else None
+
+    if not token:
+        if open_browser:
+            try:
+                import webbrowser
+                webbrowser.open(web_url)
+            except Exception:
+                pass
+        return False, "Authentication missing: please sign in with GitHub or provide an access token.", web_url
+
+    # 3. Format payload: direct issue body vs Gist fallback (65,536 char limit)
+    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    direct_body = (
+        header +
+        fix_section +
+        "### Capture JSON Data\n"
+        "```json\n"
+        f"{json_str}\n"
+        "```\n"
+    )
+
+    if len(direct_body.encode("utf-8")) <= 65536:
+        issue_body = direct_body
+    else:
+        # Create unlisted gist
+        safe_model = re.sub(r'[^\w\-_]', '_', model_name)
+        gist_filename = f"spectra_capture_{safe_model}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        gist_payload = json.dumps({
+            "description": f"SPECTRA Capture Bundle - {model_name} (Article {article_number})",
+            "public": False,
+            "files": {
+                gist_filename: {
+                    "content": json_str
+                }
+            }
+        }).encode("utf-8")
+
+        gist_req = urllib.request.Request(
+            "https://api.github.com/gists",
+            data=gist_payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "User-Agent": "SPECTRA-Diagnostics"
+            }
+        )
+        try:
+            import tls_utils
+            with urllib.request.urlopen(gist_req, timeout=25, context=tls_utils.get_ssl_context()) as g_resp:
+                g_data = json.loads(g_resp.read().decode("utf-8"))
+                gist_url = g_data.get("html_url")
+        except urllib.error.HTTPError as he:
+            if he.code == 401:
+                return False, "GitHub API error 401: Unauthorized (bad credentials)", None
+            elif he.code == 403:
+                return False, "GitHub API error 403: Forbidden (rate limit or insufficient token scopes)", None
+            else:
+                return False, f"GitHub Gist API error {he.code}: {he.reason}", None
+        except urllib.error.URLError as ue:
+            return False, f"Network error creating capture gist: {ue.reason}", None
+        except Exception as e:
+            return False, f"Failed to upload capture gist: {e}", None
+
+        issue_body = (
+            header +
+            fix_section +
+            "### Capture JSON Data\n"
+            f"> **Note**: The full capture payload ({len(json_str):,} characters) exceeds GitHub's 65,536 character issue limit.\n\n"
+            f"**Full JSON Capture Bundle (Gist)**: [{gist_filename}]({gist_url})\n"
+        )
+
+    # 4. Create Issue in community repository
+    api_url = f"https://api.github.com/repos/{repo}/issues"
+
+    def _post_issue(include_label: bool = True):
+        payload_dict = {
+            "title": title,
+            "body": issue_body,
+        }
+        if include_label:
+            payload_dict["labels"] = ["capture"]
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(payload_dict).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "User-Agent": "SPECTRA-Diagnostics"
+            }
+        )
+        import tls_utils
+        return urllib.request.urlopen(req, timeout=20, context=tls_utils.get_ssl_context())
+
+    try:
+        with _post_issue(include_label=True) as resp:
+            resp_data = json.loads(resp.read().decode("utf-8"))
+            issue_url = resp_data.get("html_url")
+            return True, f"Capture uploaded successfully: {issue_url}", issue_url
+    except urllib.error.HTTPError as he:
+        if he.code == 422:
+            # Retry without label
+            try:
+                with _post_issue(include_label=False) as resp2:
+                    resp_data2 = json.loads(resp2.read().decode("utf-8"))
+                    issue_url = resp_data2.get("html_url")
+                    return True, f"Capture uploaded successfully: {issue_url}", issue_url
+            except urllib.error.HTTPError as he2:
+                if he2.code == 401:
+                    return False, "GitHub API error 401: Unauthorized (bad credentials)", None
+                elif he2.code == 403:
+                    return False, "GitHub API error 403: Forbidden (rate limit or permissions)", None
+                return False, f"GitHub API error {he2.code}: {he2.reason}", None
+            except Exception as e2:
+                return False, f"GitHub API error on retry: {e2}", None
+        elif he.code == 401:
+            return False, "GitHub API error 401: Unauthorized (bad credentials)", None
+        elif he.code == 403:
+            return False, "GitHub API error 403: Forbidden (rate limit or permissions)", None
+        else:
+            return False, f"GitHub API error {he.code}: {he.reason}", None
+    except urllib.error.URLError as ue:
+        return False, f"Network error contacting GitHub API: {ue.reason}", None
+    except Exception as e:
+        return False, f"Failed to submit issue: {e}", None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="SPECTRA Field Capture & Remote Archetype Diagnostic Probe",
@@ -582,6 +929,7 @@ Examples:
     parser.add_argument("--demo", "-d", help="Run in offline simulation mode (e.g. WE8, S8, D4, XJ5, Z6)")
     parser.add_argument("--words", "-w", type=int, default=0, help="Override EEPROM words (e.g. 512 or 1024; 0 = auto-detect)")
     parser.add_argument("--out", "-o", help="Custom output filename prefix")
+    parser.add_argument("--upload", action="store_true", help="Automatically submit captured bundle to community telemetry database (Pr0xyA-91/spectra-captures)")
     parser.add_argument("--non-interactive", action="store_true", help="Do not prompt for missing inputs")
 
     args = parser.parse_args()
@@ -597,7 +945,7 @@ Examples:
     elif not port_name:
         available_ports = []
         if serial_io:
-            available_ports = serial_io.list_diagnostic_ports()
+            available_ports = serial_io.list_serial_ports()
         else:
             import glob
             available_ports = glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
@@ -726,10 +1074,41 @@ Examples:
     print(f"    JSON Bundle : {os.path.abspath(json_filename)}")
     print(f"    Text Report : {os.path.abspath(txt_filename)}")
     print("=" * 78)
-    print("[*] Remote Colleague Instructions:")
-    print(f"    Please email or upload '{os.path.basename(json_filename)}' to the development team.")
-    print("    With this file, engineers can replicate and debug the exact machine offline.")
+    print("[*] Community Telemetry Integration:")
+    print(f"    Target Database: https://github.com/{COMMUNITY_REPO}")
     print("=" * 78)
+
+    # 10. Community Telemetry Upload
+    should_upload = args.upload
+    if not should_upload and not args.non_interactive and sys.stdin.isatty():
+        try:
+            choice = input(f"\n[?] Upload '{os.path.basename(json_filename)}' to public telemetry database for analysis? [y/N]: ").strip().lower()
+            if choice in ("y", "yes"):
+                should_upload = True
+        except (KeyboardInterrupt, EOFError):
+            pass
+
+    if should_upload:
+        print(f"\n[*] Submitting capture to SPECTRA community repository ({COMMUNITY_REPO})...")
+        success, msg, issue_url = upload_capture_to_community_repo(json_filename)
+        if success:
+            print(f"[+] {msg}")
+            if issue_url:
+                print(f"    Tracking Issue: {issue_url}")
+        else:
+            print(f"[-] Upload failed: {msg}")
+            if issue_url and not args.non_interactive and sys.stdin.isatty():
+                try:
+                    open_br = input("\n[?] Open pre-filled submission form in browser? [y/N]: ").strip().lower()
+                    if open_br in ("y", "yes"):
+                        import webbrowser
+                        webbrowser.open(issue_url)
+                    else:
+                        print(f"    You can manually submit by creating an issue at: {issue_url}")
+                except (KeyboardInterrupt, EOFError):
+                    print(f"    You can manually submit by creating an issue at: {issue_url}")
+            elif issue_url:
+                print(f"    You can manually submit by creating an issue at: {issue_url}")
 
 
 if __name__ == "__main__":

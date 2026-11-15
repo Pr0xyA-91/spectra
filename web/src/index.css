@@ -2,6 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+:root,
+html,
+body {
+  color-scheme: dark;
+}
+
+select {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  color-scheme: dark !important;
+  background-color: #121218 !important;
+  color: #f4f4f5 !important;
+  border-color: #3f3f46;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2322d3ee' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.55rem center !important;
+  background-size: 0.85rem !important;
+  padding-right: 1.85rem !important;
+}
+
+select:focus {
+  border-color: #06b6d4 !important;
+  outline: none !important;
+}
+
+select option,
+select optgroup {
+  background-color: #18181b !important;
+  color: #f4f4f5 !important;
+}
+
 .clip-cyber {
   clip-path: polygon(
     0 0,

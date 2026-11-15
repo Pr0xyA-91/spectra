@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SPECTRA - Universal Hardware Telemetry & Logic Board Diagnostics
-Universal Appliance Telemetry & Diagnostics Engine (Windows Edition)
+Universal Appliance Telemetry & Diagnostics Engine (Jura Module)
 """
 
 import sys
@@ -16,7 +16,7 @@ import stats_collector as sc
 try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1605"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 
 
@@ -52,8 +52,168 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Show live raw serial protocol logging")
     parser.add_argument("--set-bean-threshold", type=int, metavar="COUNTS", help="Set optical bean sensor sensitivity threshold (counts)")
     parser.add_argument("--get-bean-threshold", action="store_true", help="Show optical bean sensor calibration parameters")
+    parser.add_argument("--hmi-inspect", metavar="PATH", help="Inspect and audit Kalerm HMI firmware binary or update folder")
+    parser.add_argument("--hmi-search", metavar="QUERY", help="Filter keys/strings in Kalerm HMI firmware binary")
+    parser.add_argument("--hmi-lang", default="cs-CZ", help="Locale for --hmi-search (default: cs-CZ)")
+    parser.add_argument("--hmi-export-report", metavar="PATH", help="Export Markdown/HTML/PDF HMI firmware audit bug report")
+    parser.add_argument("--hmi-patch", nargs="?", const="", metavar="OUT_PATH", help="Create patched lab binary copy")
+    parser.add_argument("--hmi-semantic", action="store_true", help="Run 3-tier offline semantic hybrid auditor and extract learned glossary")
+    parser.add_argument("--hmi-ollama", action="store_true", help="Enable optional local Ollama reviewer (127.0.0.1:11434)")
+    parser.add_argument("--hmi-ollama-model", metavar="MODEL", help="Target model for local Ollama reviewer (e.g. qwen2.5:0.5b)")
+    parser.add_argument("--hmi-ai-check", action="store_true", help="Run host hardware self-check and adaptive AI model recommendation")
 
     args = parser.parse_args()
+
+    # Kalerm HMI AI System & Hardware Self-Check CLI handler
+    if args.hmi_ai_check:
+        try:
+            import hmi_inspector
+            status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
+            hw = status["hardware"]
+            cpu = hw["cpu"]
+            mem = hw["memory"]
+            gpu = hw["gpu"]
+            disk = hw["disk"]
+            ollama = status["ollama"]
+
+            print("=" * 78)
+            print("SPECTRA HOST HARDWARE SELF-CHECK & ADAPTIVE AI MODEL SELECTOR")
+            print("=" * 78)
+            print(f"[*] Hardware Tier:        [{hw['tier']}]")
+            print(f"    Description:          {hw['tier_description']}")
+            print(f"[*] CPU Model:            {cpu['model']} ({cpu['logical_cores']} logical cores)")
+            print(f"    SIMD Capabilities:    {', '.join(cpu['simd_flags']) if cpu['simd_flags'] else 'Standard x86/ARM'} (AVX2: {'YES' if cpu['has_avx2'] else 'NO'})")
+            print(f"[*] Host Memory:          {mem['ram_available_mb']:,} MB available / {mem['ram_total_mb']:,} MB total")
+            print(f"[*] GPU Acceleration:     {'Discrete GPU' if gpu['has_discrete_gpu'] else 'Integrated / CPU Only'} ({gpu['name']})")
+            if gpu['has_discrete_gpu']:
+                print(f"    VRAM Capacity:        {gpu['vram_total_mb']:,} MB")
+            print(f"[*] Disk Space Free:      {disk['disk_free_gb']} GB")
+            print(f"[*] Auto-Unload from RAM: {'RECOMMENDED (Low Memory Host)' if hw['auto_unload_recommended'] else 'Optional (High Memory Host)'}")
+            print(f"[*] Recommended Model:    {hw['recommended_model']} (Default: {hw['default_selected_model']})")
+
+            print("\n" + "-" * 78)
+            print("LOCAL OLLAMA DAEMON STATUS")
+            print("-" * 78)
+            print(f"[*] Daemon Endpoint:      {ollama['endpoint']} ({'ONLINE' if ollama['available'] else 'OFFLINE'})")
+            print(f"[*] Binary Installed:     {'YES (' + status['binary_path'] + ')' if status['binary_installed'] else 'NO (not in PATH)'}")
+            if ollama['available']:
+                print(f"[*] Installed Models:     {', '.join(ollama['models']) if ollama['models'] else 'None'}")
+
+            print("\n" + "-" * 78)
+            print("OFFLINE AI MODEL CATALOG & MACHINE COMPATIBILITY")
+            print("-" * 78)
+            print(f"{'Model ID':<16} {'RAM Min':<10} {'Disk':<9} {'Compatibility':<16} {'Speed / Description'}")
+            print("-" * 78)
+            for m in hw["model_catalog"]:
+                rec_mark = "⭐ " if m["is_recommended"] else "   "
+                ins_mark = " [Installed]" if m["is_installed"] else ""
+                print(f"{rec_mark}{m['id']:<14} {m['min_ram_mb']} MB    {m['disk_mb']} MB   {m['compatibility']:<16} {m['speed_cpu']}{ins_mark}")
+            print("=" * 78)
+            sys.exit(0)
+        except Exception as e:
+            print(f"[-] ERROR in AI Hardware Check: {e}")
+            sys.exit(1)
+
+    # Kalerm HMI Inspector & Firmware Auditor CLI handler
+    if args.hmi_inspect or args.hmi_search or args.hmi_export_report or args.hmi_patch is not None or args.hmi_semantic:
+        try:
+            import hmi_inspector
+            target = args.hmi_inspect or hmi_inspector.DEFAULT_KALERM_DIR
+            inspector = hmi_inspector.KalermHmiInspector(target)
+
+            sig = inspector.verify_signature()
+            print(f"[*] Target Binary: {inspector.binary_path}")
+            print(f"[*] Binary Size:   {inspector.file_size:,} bytes")
+            print(f"[*] SHA-256:       {sig['sha256']}")
+            print(f"[*] Signature:     {sig['status_label']}")
+            if sig["warning"]:
+                print(f"    Notice: {sig['warning']}")
+
+            if args.hmi_search:
+                print(f"\n[*] Searching for '{args.hmi_search}' in locale {args.hmi_lang}...")
+                langs = inspector.extract_all_languages()
+                lang_data = langs.get(args.hmi_lang) or inspector.extract_language(args.hmi_lang)
+                if not lang_data:
+                    print(f"[-] Locale {args.hmi_lang} not found. Available: {', '.join(langs.keys())}")
+                    sys.exit(1)
+
+                matches = 0
+                q = args.hmi_search.lower()
+                for k, p in lang_data["phrases"].items():
+                    if q in k.lower() or q in p["val"].lower():
+                        matches += 1
+                        print(f"[{p['index']:3d}] Key: {k}")
+                        print(f"      Value:     {repr(p['val'])}")
+                        print(f"      Value VMA: 0x{p['val_vma']:08x} (file offset: 0x{p['val_file_off']:08x})")
+                        print(f"      Slot file: 0x{p['slot_file_off']:08x}")
+                        print("-" * 60)
+                print(f"[*] Total matches found: {matches}")
+
+            if (args.hmi_inspect and not args.hmi_search and args.hmi_patch is None and not args.hmi_export_report) or (not args.hmi_search and args.hmi_patch is None and not args.hmi_export_report):
+                target_loc = args.hmi_lang or "cs-CZ"
+                print("\n" + "=" * 78)
+                print(f"SPECTRA AUTOMATED FIRMWARE & LOCALIZATION AUDIT FINDINGS [{target_loc}]")
+                print("=" * 78)
+                findings = inspector.run_audit(target_locale=target_loc)
+                for f in findings:
+                    badge = f"[{f['severity']}]"
+                    st = f"[{f['status']}]"
+                    print(f"\n{st:<12} {badge:<10} {f['id']}: {f['key']} ({f['locale']})")
+                    print(f"  Category:     {f['category']}")
+                    print(f"  Current Val:  {repr(f['current_val'])}")
+                    print(f"  Target Fix:   {repr(f['expected_val'])}")
+                    print(f"  VMA / Offset: 0x{f['vma']:08x} / 0x{f['file_offset']:08x}")
+                    print(f"  Description:  {f['description']}")
+                print("\n" + "=" * 78)
+
+            if args.hmi_semantic:
+                target_loc = args.hmi_lang or "cs-CZ"
+                print("\n" + "=" * 78)
+                print(f"SPECTRA 3-TIER OFFLINE SEMANTIC HYBRID AUDITOR [{target_loc}]")
+                print("=" * 78)
+                sem_res = inspector.run_semantic_audit(
+                    target_locale=target_loc,
+                    use_ollama=args.hmi_ollama,
+                    ollama_model=args.hmi_ollama_model
+                )
+                print(f"[*] Engine:           {sem_res['tier2_engine']}")
+                print(f"[*] Total Phrases:    {sem_res['summary']['total_phrases']}")
+                print(f"[*] Glossary Terms:   {sem_res['summary']['glossary_terms_count']} learned domain terms")
+                print(f"[*] Avg Alignment:    {sem_res['summary']['average_alignment'] * 100:.1f}%")
+                print(f"[*] Flagged Anomaly:  {sem_res['summary']['flagged_count']}")
+                print(f"[*] Local Ollama:     {'Available' if sem_res['tier3_ollama']['available'] else 'Offline / Inactive'}")
+
+                print(f"\n--- TOP LEARNED DOMAIN TERMS (Tier 1 Self-Learning Glossary) ---")
+                for g in sem_res["tier1_glossary"][:15]:
+                    print(f"  {g['en_term']:15} -> {g['target_term']:12} ({g['target_word']:15}) [conf={g['confidence']*100:.0f}%, sup={g['support']}]")
+
+                if sem_res["flagged_phrases"]:
+                    print(f"\n--- FLAGGED SEMANTIC ANOMALIES & LOW ALIGNMENT OUTLIERS ---")
+                    for fl in sem_res["flagged_phrases"][:10]:
+                        print(f"  [{fl['alignment_score']:.2f}] Key: {fl['key']}")
+                        print(f"        EN:     {repr(fl['en_val'])}")
+                        print(f"        Target: {repr(fl['target_val'])}")
+                        print(f"        Reason: {fl['reason']}")
+                        if fl.get("suggested_val"):
+                            print(f"        Fix:    {repr(fl['suggested_val'])}")
+
+            if args.hmi_patch is not None:
+                out_p = args.hmi_patch if args.hmi_patch else None
+                print("\n[*] Applying safety and localization fixes to binary...")
+                res = inspector.apply_patches(out_p)
+                print(f"[+] Patched binary successfully created: {res['output_path']}")
+                print(f"[+] Patched SHA-256: {res['sha256']}")
+                print(f"[+] Applied {len(res['patches_applied'])} patch operations.")
+
+            if args.hmi_export_report:
+                print(f"\n[*] Exporting audit report to {args.hmi_export_report}...")
+                saved = inspector.export_bug_report(args.hmi_export_report)
+                print(f"[+] Report exported successfully to: {saved}")
+
+            sys.exit(0)
+        except Exception as e:
+            print(f"[-] ERROR in HMI Inspector: {e}")
+            sys.exit(1)
 
     if args.get_bean_threshold:
         c = sc.get_optical_bean_calibration()
@@ -187,9 +347,12 @@ def main():
         if args.export:
             out_path = os.path.abspath(args.export)
             import json
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(sensors_data, f, indent=2, ensure_ascii=False)
-            print(f"[+] Sensor telemetry saved to: {out_path}")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(sensors_data, f, indent=2, ensure_ascii=False)
+                print(f"[+] Sensor telemetry saved to: {out_path}")
+            except Exception as e:
+                print(f"[-] ERROR saving sensor telemetry to {out_path}: {e}")
 
         sys.exit(0)
 
@@ -219,9 +382,12 @@ def main():
 
         if args.export:
             out_path = os.path.abspath(args.export)
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(diff_report)
-            print(f"[+] Diff report saved to: {out_path}")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(diff_report)
+                print(f"[+] Diff report saved to: {out_path}")
+            except Exception as e:
+                print(f"[-] ERROR saving diff report to {out_path}: {e}")
         sys.exit(0)
 
     def log_handler(msg: str):
@@ -235,37 +401,40 @@ def main():
         sys.stdout.write(f"\r[*] Progress: [{bar}] {pct*100:3.0f}% - {status:<45}")
         sys.stdout.flush()
 
-    session = sc.JuraStatsSession(target_port, baudrate=args.baud, log_cb=log_handler)
-    print()
-    success = session.run_interrogation(progress_cb=prog_handler)
-    print("\n")
+    with sc.JuraStatsSession(target_port, baudrate=args.baud, log_cb=log_handler) as session:
+        print()
+        success = session.run_interrogation(progress_cb=prog_handler)
+        print("\n")
 
-    if not success:
-        print("[-] FAILED to read statistics from machine. Check connections, permissions, or port.")
-        sys.exit(1)
+        if not success:
+            print("[-] FAILED to read statistics from machine. Check connections, permissions, or port.")
+            sys.exit(1)
 
-    print("[+] Successfully interrogated machine!")
-    text_report = session.export_text_report()
-    print("\n" + text_report)
+        print("[+] Successfully interrogated machine!")
+        text_report = session.export_text_report()
+        print("\n" + text_report)
 
-    if args.export:
-        out_path = os.path.abspath(args.export)
-        fmt = args.format
-        if out_path.endswith(".json"):
-            fmt = "json"
-        elif out_path.endswith(".csv"):
-            fmt = "csv"
+        if args.export:
+            out_path = os.path.abspath(args.export)
+            fmt = args.format
+            if out_path.endswith(".json"):
+                fmt = "json"
+            elif out_path.endswith(".csv"):
+                fmt = "csv"
 
-        if fmt == "json":
-            content = session.export_json()
-        elif fmt == "csv":
-            content = session.export_csv()
-        else:
-            content = text_report
+            if fmt == "json":
+                content = session.export_json()
+            elif fmt == "csv":
+                content = session.export_csv()
+            else:
+                content = text_report
 
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"\n[+] Diagnostic report saved to: {out_path} ({len(content)} bytes)")
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"\n[+] Diagnostic report saved to: {out_path} ({len(content)} bytes)")
+            except Exception as e:
+                print(f"\n[-] ERROR saving report to {out_path}: {e}")
 
 
 if __name__ == "__main__":

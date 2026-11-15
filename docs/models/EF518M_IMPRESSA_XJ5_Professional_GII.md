@@ -13,7 +13,7 @@
 | **Display Bootloader** | `tl$:R8C Loader V2.0` | Sub-bus bootloader |
 | **Display Checksum** | `cs$:0105` | Microcontroller checksum |
 | **Hardware Mask (IC:)** | `ic:0E0B` | Motherboard architecture code |
-| **Jura Article Numbers** | `18016` | Factory production SKU(s) |
+| **Jura Article Numbers** | `13705`, `13583`, `13636` | Factory production SKU(s) |
 | **Thermoblock Heating** | `1 Thermoblock(s)` (Steam: `No`) | Thermal system |
 | **Optical Hopper Sensor** | `Installed (AS: Supported)` | Infrared bean level monitor |
 | **External Plumbing** | `Supported (Filter_Ext Counters Active)` | Commercial plumbing support |
@@ -293,9 +293,9 @@
 | `0x002D` | `0x0708` | `1800` | Unmapped | Subsystem or Model Register |
 | `0x002E` | `0x2D64` | `11620` | Unmapped | Subsystem or Model Register |
 | `0x002F` | `0x141E` | `5150` | Unmapped | Subsystem or Model Register |
-| `0x0030` | `0x4660` | `18016` | **Universal** | Appliance hardware / article configuration number |
-| `0x0031` | `0x0033` | `51` | **Universal** | Production batch sequential manufacturing serial number |
-| `0x0032` | `0x2EBE` | `11966` | **Universal** | Factory manufacturing date (Day: bits 0-4, Month: bits 5-8, Year: bits 9-15) |
+| `0x0030` | `0x03E8` | `1000` | **Universal** | Appliance hardware / article configuration number |
+| `0x0031` | `0x0001` | `1` | **Universal** | Production batch sequential manufacturing serial number |
+| `0x0032` | `0x302F` | `12335` | **Universal** | Factory manufacturing date (Day: bits 0-4, Month: bits 5-8, Year: bits 9-15) |
 | `0x0033` | `0x2996` | `10646` | Unmapped | Subsystem or Model Register |
 | `0x0039` | `0x1E6F` | `7791` | Unmapped | Subsystem or Model Register |
 | `0x003A` | `0x046E` | `1134` | Unmapped | Subsystem or Model Register |

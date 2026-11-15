@@ -5,28 +5,17 @@ Loads and queries machine profiles (products, maintenance items, alerts)
 for over 75 modern Jura coffee machines.
 """
 
-import sys
 import os
 import re
 import json
+import datetime
+import threading
 from typing import Optional, Dict, Any, List
 
-def _get_data_file() -> str:
-    # 1. PyInstaller bundled temp extraction directory (_MEIPASS)
-    if hasattr(sys, "_MEIPASS"):
-        bundled = os.path.join(sys._MEIPASS, "profiles_data.json")
-        if os.path.exists(bundled):
-            return bundled
-    # 2. Frozen executable directory (onedir mode or portable unpack)
-    if getattr(sys, "frozen", False):
-        adjacent = os.path.join(os.path.dirname(sys.executable), "profiles_data.json")
-        if os.path.exists(adjacent):
-            return adjacent
-    # 3. Standard development directory
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles_data.json")
-
-DATA_FILE = _get_data_file()
+DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
 DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
+EEPROM_OVERRIDES_FILE = os.path.join(os.path.expanduser("~/.config/spectra"), "eeprom_overrides.json")
+_OVERRIDES_LOCK = threading.Lock()
 
 # Default fallback profile if machine model is unknown
 DEFAULT_PROFILE = {
@@ -287,3 +276,136 @@ def list_supported_models() -> list:
         items.append((ef, label))
     items.sort(key=lambda x: x[1])
     return items
+
+
+# ============================================================================
+# Local Per-Machine EEPROM Offset Overrides (AI / J.O.E. Calibrated)
+# ============================================================================
+
+def _normalize_override_key(raw: Optional[str]) -> str:
+    txt = str(raw or "").strip().upper()
+    if not txt:
+        return ""
+    m = re.search(r'(EF\w+)', txt)
+    if m:
+        return m.group(1)
+    return re.sub(r'\s+', '_', txt)
+
+
+def _read_eeprom_overrides_locked() -> Dict[str, Any]:
+    if not os.path.exists(EEPROM_OVERRIDES_FILE):
+        return {}
+    try:
+        with open(EEPROM_OVERRIDES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_eeprom_overrides_locked(data: Dict[str, Any]) -> None:
+    parent = os.path.dirname(EEPROM_OVERRIDES_FILE)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp_path = EEPROM_OVERRIDES_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, EEPROM_OVERRIDES_FILE)
+
+
+def list_eeprom_offset_overrides() -> Dict[str, Any]:
+    """Return all saved local EEPROM offset overrides keyed by normalized identifier."""
+    with _OVERRIDES_LOCK:
+        return dict(_read_eeprom_overrides_locked())
+
+
+def save_eeprom_offset_override(
+    override_payload: Dict[str, Any],
+    model_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Persist a local AI/J.O.E.-calibrated EEPROM offset map so stats_collector reads
+    this machine accurately immediately on this device.
+    """
+    if not isinstance(override_payload, dict):
+        raise ValueError("override_payload must be a dictionary")
+
+    ef_raw = str(override_payload.get("ef_code") or "").strip()
+    art_raw = str(override_payload.get("article_number") or "").strip()
+    mod_raw = str(override_payload.get("model_name") or "").strip()
+    key = (
+        _normalize_override_key(model_key)
+        or _normalize_override_key(ef_raw)
+        or (art_raw.upper() if art_raw and art_raw.lower() != "unknown" else "")
+        or _normalize_override_key(mod_raw)
+        or "CUSTOM_MACHINE"
+    )
+
+    entry = dict(override_payload)
+    entry["override_key"] = key
+    entry["updated_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+
+    with _OVERRIDES_LOCK:
+        all_ov = _read_eeprom_overrides_locked()
+        all_ov[key] = entry
+        _write_eeprom_overrides_locked(all_ov)
+
+    return entry
+
+
+def get_eeprom_offset_override(
+    raw_model_or_ef: Optional[str] = None,
+    article_number: Optional[str] = None,
+    model_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Find the best matching local EEPROM offset override by EF code, article number, or model name."""
+    with _OVERRIDES_LOCK:
+        all_ov = _read_eeprom_overrides_locked()
+    if not all_ov:
+        return None
+
+    candidates: List[str] = []
+    for raw in (raw_model_or_ef, article_number, model_name):
+        if raw:
+            up = str(raw).strip().upper()
+            candidates.append(up)
+            norm = _normalize_override_key(up)
+            if norm and norm not in candidates:
+                candidates.append(norm)
+
+    # 1. Exact key match
+    for cand in candidates:
+        if cand in all_ov:
+            return dict(all_ov[cand])
+
+    # 2. Match stored metadata (article_number, ef_code, model_name)
+    for k, entry in all_ov.items():
+        if not isinstance(entry, dict):
+            continue
+        stored_art = str(entry.get("article_number") or "").strip().upper()
+        stored_ef = _normalize_override_key(entry.get("ef_code"))
+        stored_mod = _normalize_override_key(entry.get("model_name"))
+        for cand in candidates:
+            if stored_art and cand == stored_art:
+                return dict(entry)
+            if stored_ef and (cand == stored_ef or stored_ef in cand or cand in stored_ef):
+                return dict(entry)
+            if stored_mod and cand == stored_mod:
+                return dict(entry)
+    return None
+
+
+def delete_eeprom_offset_override(model_key: str) -> bool:
+    """Remove a saved local EEPROM offset override by key."""
+    norm = _normalize_override_key(model_key)
+    raw = str(model_key or "").strip().upper()
+    with _OVERRIDES_LOCK:
+        all_ov = _read_eeprom_overrides_locked()
+        removed = False
+        for k in (raw, norm):
+            if k and k in all_ov:
+                del all_ov[k]
+                removed = True
+        if removed:
+            _write_eeprom_overrides_locked(all_ov)
+        return removed

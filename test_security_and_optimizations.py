@@ -11,6 +11,7 @@ Covers:
 - Precompiled regex performance in protocol parsers.
 """
 
+import os
 import unittest
 import html
 from typing import List, Tuple
@@ -189,6 +190,159 @@ class TestSecurityAndOptimizations(unittest.TestCase):
             self.assertFalse(gui_web.is_valid_port(None))
         except ImportError:
             pass
+
+    def test_spectra_app_inprocess_server_and_lifecycle(self):
+        """Verify spectra_app in-process background server, heartbeat endpoint, and clean teardown."""
+        import spectra_app
+        import web_server
+        import urllib.request
+        import json
+
+        # Verify cleanup_resources safe execution
+        web_server.cleanup_resources()
+
+        # Start in-process server
+        httpd, port, url = spectra_app.start_inprocess_server()
+        try:
+            self.assertGreater(port, 1024)
+            self.assertTrue(url.startswith("http://127.0.0.1:"))
+
+            # Test heartbeat endpoint
+            req = urllib.request.Request(
+                f"{url}/api/app/heartbeat",
+                data=b"{}",
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                self.assertEqual(resp.status, 200)
+                data = json.loads(resp.read().decode("utf-8"))
+                self.assertTrue(data.get("success"))
+                self.assertEqual(data.get("status"), "ALIVE")
+        finally:
+            spectra_app.shutdown_spectra_cleanly(httpd)
+
+    def test_spectra_app_browser_finder(self):
+        """Verify chromeless browser discovery function executes without unhandled exceptions."""
+        import spectra_app
+        browser = spectra_app.find_chromeless_browser()
+        # May be None or a valid string path to msedge/chrome/chromium
+        if browser is not None:
+            self.assertIsInstance(browser, str)
+            self.assertTrue(os.path.isfile(browser) or os.path.isabs(browser))
+
+    def test_host_monitor_geometry_and_autoscaling(self):
+        """Verify host monitor workarea detection and auto-zoom calculations across resolutions."""
+        import spectra_app
+        geom = spectra_app.get_host_monitor_geometry()
+        self.assertIn("work_w", geom)
+        self.assertIn("work_h", geom)
+        self.assertIn("win_w", geom)
+        self.assertIn("win_h", geom)
+        self.assertIn("auto_zoom", geom)
+
+        # Host bounds sanity
+        self.assertLessEqual(geom["win_w"], geom["work_w"])
+        self.assertLessEqual(geom["win_h"], geom["work_h"])
+        self.assertGreaterEqual(geom["auto_zoom"], 0.75)
+        self.assertLessEqual(geom["auto_zoom"], 1.35)
+
+        # Simulated test cases:
+        # Case A: Compact Laptop 1366x768
+        w, h = 1366, 768
+        win_w = min(max(int(w * 0.94), min(960, w)), w)
+        win_h = min(max(int(h * 0.92), min(600, h)), h)
+        zoom = round(max(0.75, min(w / 1480.0, h / 880.0)), 2)
+        self.assertLessEqual(win_w, w)
+        self.assertLessEqual(win_h, h)
+        self.assertEqual(zoom, 0.87)
+
+        # Case B: Standard FHD 1920x1080
+        w, h = 1920, 1080
+        win_w = min(max(int(w * 0.94), min(960, w)), w)
+        win_h = min(max(int(h * 0.92), min(600, h)), h)
+        self.assertLessEqual(win_w, w)
+        self.assertLessEqual(win_h, h)
+
+        # Case C: HiDPI / QHD 2560x1440 (scale_factor=1)
+        w, h = 2560, 1440
+        zoom = round(min(1.35, w / 1920.0), 2)
+        self.assertEqual(zoom, 1.33)
+
+    def test_debug_diagnostics_and_ring_buffer(self):
+        """Verify ring-buffer logger boundedness, diagnostics collection, and debug endpoints."""
+        import web_server
+        import spectra_app
+        import urllib.request
+        import json
+
+        # 1. Test ring buffer boundedness (maxlen=500)
+        with web_server._debug_log_lock:
+            web_server._debug_log_buffer.clear()
+        for i in range(550):
+            web_server.log_debug_event("INFO", "TEST", f"Message {i}")
+
+        with web_server._debug_log_lock:
+            self.assertEqual(len(web_server._debug_log_buffer), 500)
+            self.assertEqual(web_server._debug_log_buffer[-1]["message"], "Message 549")
+
+        # 2. Test diagnostics collector
+        diag = web_server.get_debug_diagnostics()
+        self.assertIn("process", diag)
+        self.assertIn("threads", diag)
+        self.assertIn("serial", diag)
+        self.assertIn("ollama", diag)
+        self.assertIn("children", diag)
+        self.assertEqual(diag["process"]["pid"], os.getpid())
+        self.assertGreaterEqual(len(diag["threads"]), 1)
+
+        # 3. Test REST API endpoints via in-process server
+        httpd, port, url = spectra_app.start_inprocess_server()
+        try:
+            # GET /api/debug/status
+            req = urllib.request.Request(f"{url}/api/debug/status")
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                self.assertEqual(resp.status, 200)
+                data = json.loads(resp.read().decode("utf-8"))
+                self.assertTrue(data.get("success"))
+                self.assertIn("diagnostics", data)
+                self.assertIn("logs", data)
+                self.assertIn("error_count", data)
+
+            # POST /api/debug/client_error
+            post_data = json.dumps({
+                "message": "Simulated Frontend Exception",
+                "source": "FRONTEND",
+                "details": "Error: ReferenceError at app.js:42",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{url}/api/debug/client_error",
+                data=post_data,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                self.assertEqual(resp.status, 200)
+                res = json.loads(resp.read().decode("utf-8"))
+                self.assertTrue(res.get("success"))
+
+            # Verify it was recorded as an ERROR
+            with web_server._debug_log_lock:
+                frontend_events = [x for x in web_server._debug_log_buffer if x.get("source") == "FRONTEND"]
+                self.assertGreaterEqual(len(frontend_events), 1)
+                self.assertEqual(frontend_events[-1]["level"], "ERROR")
+                self.assertEqual(frontend_events[-1]["message"], "Simulated Frontend Exception")
+
+            # POST /api/debug/clear
+            req = urllib.request.Request(
+                f"{url}/api/debug/clear",
+                data=b"{}",
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                self.assertEqual(resp.status, 200)
+                res = json.loads(resp.read().decode("utf-8"))
+                self.assertTrue(res.get("success"))
+        finally:
+            spectra_app.shutdown_spectra_cleanly(httpd)
 
 
 if __name__ == "__main__":

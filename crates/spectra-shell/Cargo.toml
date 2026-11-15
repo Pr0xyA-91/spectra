@@ -1,0 +1,11 @@
+[package]
+name = "spectra-shell"
+version = "0.1.0"
+edition = "2021"
+description = "Native OS single-window WebView shell for SPECTRA (WebView2 on Windows, WebKitGTK 4.1 on Linux)"
+
+[dependencies]
+spectra-agent = { path = "../spectra-agent" }
+tokio = { workspace = true }
+tao = "0.30"
+wry = "0.47"

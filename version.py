@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SPECTRA Diagnostics Suite — Centralized Build Metadata (Windows Edition)
+SPECTRA Diagnostics Suite — Centralized Build Metadata
 Provides build-number-only branding (dropping semantic versions):
-- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261102.1520")
-- __version__: Build number representation (e.g. "Build 20261102.1520")
+- __build__: Date-and-time build identifier (format: YYYYMMDD.HHMM, e.g. "20261102.1435")
+- __version__: Build number representation (e.g. "Build 20261102.1435")
 - BUILD_NUMBER / VERSION: Exported aliases for full cross-module compatibility
 - __edition__: Branch / target platform designation
 - Helper formatters and CLI bump utility
@@ -14,11 +14,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__build__ = "20261102.1738"
+__build__ = "20261114.0020"
 __version__ = f"Build {__build__}"
 BUILD_NUMBER = __build__
 VERSION = __version__
-__edition__ = "Windows Multi-Manufacturer & Rust Hybrid"
+__edition__ = "Linux Multi-Manufacturer & Rust Hybrid"
 
 
 def get_version_string(with_build: bool = True) -> str:
