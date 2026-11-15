@@ -1,0 +1,294 @@
+{
+  "model_family": "ENA 7",
+  "ef_code": "EF634",
+  "display_ef": "None",
+  "series": "ENA-Line",
+  "article_number": "13500",
+  "article_numbers": [
+    "13500",
+    "13760",
+    "13501",
+    "13524"
+  ],
+  "appliance_type": "13500 ENA 7 Ristretto Black EU 230V/50Hz",
+  "software_version_display": "EF634 V01.31",
+  "address_width": 4,
+  "max_words": 512,
+  "products": [
+    {
+      "code": 1,
+      "name": "1 Espresso",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 2,
+      "name": "2 Espressi",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 3,
+      "name": "1 Coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 4,
+      "name": "2 Coffees",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 5,
+      "name": "1 Aroma-Boost",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 6,
+      "name": "Ground Coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 13,
+      "name": "Hot Water",
+      "is_double": false,
+      "active": true
+    }
+  ],
+  "maintenance_counters": [
+    "Cleaning",
+    "Descaling",
+    "Rinsing",
+    "Filter"
+  ],
+  "maintenance_percentages": [
+    "Cleaning",
+    "FilterChange",
+    "Decalc"
+  ],
+  "alerts": [
+    {
+      "bit": 0,
+      "blocking": true,
+      "name": "Tray Missing / Full"
+    },
+    {
+      "bit": 1,
+      "blocking": true,
+      "name": "Fill Water Tank"
+    },
+    {
+      "bit": 2,
+      "blocking": true,
+      "name": "Empty Coffee Grounds"
+    },
+    {
+      "bit": 10,
+      "blocking": false,
+      "name": "Fill Bean Container"
+    },
+    {
+      "bit": 13,
+      "blocking": false,
+      "name": "Machine Ready"
+    }
+  ],
+  "hardware": {
+    "thermoblocks": 1,
+    "has_steam_heater": false,
+    "has_optical_hopper": true,
+    "has_sub_bus": false,
+    "has_external_plumbing": false,
+    "has_milk_system": false,
+    "has_spdl_string_table_in_0100": true,
+    "optical_hopper": {
+      "command": "AS:",
+      "empty_adc_threshold": 101,
+      "nominal_adc_threshold": 99,
+      "nominal_delta_max": 2,
+      "empty_delta_min": 10
+    },
+    "bu_calibration": {
+      "upper_limit_ticks": 1281,
+      "mill_target_ticks": 230,
+      "prebrew_travel_ticks": 266,
+      "compression_ticks": 520,
+      "registers": {
+        "upper_limit": "0047",
+        "mill_target": "0041",
+        "prebrew_1": "0042",
+        "compression": "0043",
+        "prebrew_2": "0044"
+      }
+    }
+  },
+  "custom_registers": {
+    "0000": {
+      "name": "Espresso_Single",
+      "description": "Product 1 Cup Espresso preparation count"
+    },
+    "0001": {
+      "name": "Espresso_Double",
+      "description": "Product 2 Cups Espressi preparation count"
+    },
+    "0002": {
+      "name": "Coffee_Single",
+      "description": "Product 1 Cup Coffee preparation count"
+    },
+    "0003": {
+      "name": "Coffee_Double",
+      "description": "Product 2 Cups Coffees preparation count"
+    },
+    "0004": {
+      "name": "Aroma_Boost_Single",
+      "description": "Product 1 Cup Aroma-Boost preparation count"
+    },
+    "0005": {
+      "name": "Steam_Water_Valve_Cycles",
+      "description": "Steam and Hot Water manual valve actuation cycles"
+    },
+    "0006": {
+      "name": "Ground_Coffee_Single",
+      "description": "Product Ground Coffee / bypass funnel preparation count"
+    },
+    "0007": {
+      "name": "Coffee_System_Rinses",
+      "description": "Total coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Total_Cleaning",
+      "description": "Total cleaning tablet cycles executed"
+    },
+    "0009": {
+      "name": "Total_Descaling",
+      "description": "Total descaling operations executed"
+    },
+    "000A": {
+      "name": "Grinder_Seconds",
+      "description": "Lifetime grinder operating duration in seconds"
+    },
+    "000D": {
+      "name": "Water_Since_Descaling",
+      "description": "Coffee water volume dispensed since last descaling (dl)"
+    },
+    "000F": {
+      "name": "Preps_Since_Cleaning",
+      "description": "Total coffee preparations brewed since last cleaning cycle"
+    },
+    "0010": {
+      "name": "Water_Volume_Total",
+      "description": "Cumulative water volume dispensed including rinses (dl)"
+    },
+    "0011": {
+      "name": "Rinses_Since_Cleaning",
+      "description": "Rinsing operations executed since last cleaning cycle"
+    },
+    "0012": {
+      "name": "Descaling_Agent_Volume",
+      "description": "Cumulative descaling fluid consumed (dl)"
+    },
+    "0015": {
+      "name": "Service_Counter",
+      "description": "Preparations since last maintenance intervention"
+    },
+    "0016": {
+      "name": "Preps_After_Cleaning_Alarm",
+      "description": "Preparations brewed after cleaning alarm prompt"
+    },
+    "001B": {
+      "name": "Total_Milk_Minutes",
+      "description": "Total milk / frothed milk dispensing duration (minutes)"
+    },
+    "001C": {
+      "name": "Total_Hotwater_Minutes",
+      "description": "Total hot water dispensing duration (minutes)"
+    },
+    "001E": {
+      "name": "Hotwater_Until_Prev_Descalc",
+      "description": "Hot water duration until previous descaling (minutes)"
+    },
+    "001F": {
+      "name": "Coffee_Water_Until_Prev_Descalc",
+      "description": "Coffee water volume until previous descaling (dl)"
+    },
+    "0028": {
+      "name": "History_Fault_Bitmask",
+      "description": "Non-volatile hardware safety fault latch bitmask (0x0019 = Errors 0, 7, 8)"
+    },
+    "0030": {
+      "name": "Appliance_Number",
+      "description": "Unique factory appliance / machine ID (Maschinennummer: 1004)"
+    },
+    "0031": {
+      "name": "Serial_Word",
+      "description": "Factory production line / batch serial word (1)"
+    },
+    "0032": {
+      "name": "Production_Date",
+      "description": "Bitfield production date (15.1.2012)"
+    },
+    "0036": {
+      "name": "Water_Through_Filter",
+      "description": "Cumulative water volume dispensed through current CLARIS filter (dl)"
+    },
+    "003D": {
+      "name": "Water_Hardness_Config",
+      "description": "Configured water hardness setting (°dH: 20)"
+    },
+    "003E": {
+      "name": "Auto_Off_Timeout_Minutes",
+      "description": "Automatic shut-off countdown timer setting in minutes (300 min = 5.0 h)"
+    },
+    "0052": {
+      "name": "Total_Filter_Change",
+      "description": "Total CLARIS filter replacement operations (23)"
+    },
+    "0056": {
+      "name": "BU_Initialization_Count",
+      "description": "Total lifetime brew unit power-on initializations (44/45)"
+    },
+    "0065": {
+      "name": "Service_Date",
+      "description": "Authorized technician service date bitfield (15.1.2017)"
+    },
+    "0066": {
+      "name": "Service_Animation_ID",
+      "description": "Service diagnostic animation ID (1540)"
+    },
+    "0067": {
+      "name": "Service_Invoicing_Code",
+      "description": "Service invoicing repair code (110 = Repair)"
+    },
+    "0068": {
+      "name": "Service_Stamp_Number",
+      "description": "Sequential service stamp counter (1)"
+    },
+    "006A": {
+      "name": "Service_Job_Code",
+      "description": "Service job code in low byte (254 = Appliance checked)"
+    },
+    "007E": {
+      "name": "Article_Number_High",
+      "description": "Hardware article number high byte (0x34 -> 13500)"
+    },
+    "007F": {
+      "name": "Article_Number_Low",
+      "description": "Hardware article number low byte (0xBC -> 13500)"
+    },
+    "00D6": {
+      "name": "Total_Machine_Switch_On",
+      "description": "Cumulative appliance power switch-on count (5522/5523)"
+    },
+    "00DA": {
+      "name": "SPDL_Country_Code",
+      "description": "SPDL destination market ISO 3166 ASCII country code ('CZ')"
+    },
+    "00DC": {
+      "name": "SPDL_Language_Date",
+      "description": "SPDL language pack flash date bitfield (11.6.2010)"
+    }
+  }
+}

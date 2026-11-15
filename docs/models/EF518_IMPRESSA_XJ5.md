@@ -5,7 +5,7 @@
 **Display Sub-MCU**: `EF518D V02.04` | **Display Bootloader**: `R8C Loader V2.0`  
 **Jura Article Numbers**: `13705` (Smart Connect Brillantsilber), `13583` (Platinum), `13636` (Dark Inox)  
 **Hardware Revision Code (`IC:`)**: `0x0F0B` / `0x230A` | **Display ROM Checksum (`CS$:`)**: `0x0105`  
-**Tested Unit Electronic Serial**: `0051` | **Production Date**: May 30, 2013 (`0x42BC`)
+**Demo Unit Electronic Serial**: `0001` | **Production Date**: January 15, 2014 (`0x302F`)
 
 ---
 

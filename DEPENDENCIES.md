@@ -8,8 +8,8 @@ Comprehensive dependency specifications, runtime requirements, and driver compat
 
 | Edition | Primary Target | Runtime Requirements | Mandatory Dependencies | Optional Dependencies | Primary UI |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| **`spectra` (`main`)** | Linux (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10`<br>`Rust >= 1.80` *(for native crates)* | **None** *(Zero pip packages for core)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback)<br>`cargo` (Rust hybrid build) | 5-Paradigm Web Workstation / GTK3 Desktop / CLI |
-| **`spectra-win` (`windows`)** | Windows 10 / 11 (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10` *(embedded in installer)* | `pyserial >= 3.5` *(bundled in setup/launcher)* | None *(Standalone .exe and Web UI are self-contained)* | Browser Web Workstation / Standalone Launcher / CLI |
+| **`spectra` (`main`)** | Linux (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10`<br>`Rust >= 1.80` *(for native crates)* | **None** *(Zero pip packages for core)* | `PyGObject` (GTK3 desktop UI)<br>`pyserial >= 3.5` (UART fallback)<br>`cargo` (Rust hybrid build)<br>`keyring` (secure credential vault storage)<br>`gh` CLI (optional token source) | 5-Paradigm Web Workstation / GTK3 Desktop / CLI |
+| **`spectra-win` (`windows`)** | Windows 10 / 11 (Multi-Manufacturer & Rust Hybrid) | `Python >= 3.10` *(embedded in installer)* | `pyserial >= 3.5` *(bundled in setup/launcher)* | `keyring` (Windows Credential Manager)<br>`gh` CLI (optional token source) | Browser Web Workstation / Standalone Launcher / CLI |
 
 ---
 
@@ -38,6 +38,10 @@ Built from the ground up for high reliability in Linux field environments, deskt
     * **Debian / Ubuntu**: `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0`
     * **Arch / Manjaro / Omarchy**: `sudo pacman -S python-gobject gtk3`
     * **Fedora**: `sudo dnf install python3-gobject gtk3`
+* **Community Telemetry & GitHub Integration (`github_auth.py`)**:
+  * Core OAuth Device Flow, PAT validation, and issue creation run using **100% Python Standard Library** (`urllib.request`, `json`, `ssl`).
+  * **Optional Credential Storage (`keyring`)**: When installed (`python3 -m pip install keyring`), tokens are securely stored in the system vault (SecretService, KWallet). If absent, tokens fall back to chmod `0600` JSON files in `~/.config/spectra/github_auth.json`.
+  * **Optional Ambient Token Source (`gh` CLI)**: If GitHub CLI (`gh`) is installed and authenticated on the system (`gh auth login`), `gh auth token` is probed automatically as a fallback token source when no explicit token is configured.
 
 ---
 
@@ -53,6 +57,10 @@ Tailored for Windows 10 (1809+) and Windows 11 (64-bit) field laptops and worksh
   * Auto-discovers Windows `COM*` ports.
 * **Web Workstation (`gui_web.py` / `web_server.py`)**:
   * Zero additional setup required! Automatically opens in Microsoft Edge, Google Chrome, Firefox, or Brave at `http://127.0.0.1:8080`.
+* **Community Telemetry & GitHub Integration (`github_auth.py`)**:
+  * Core OAuth Device Flow, PAT validation, and issue creation run using standard library HTTP.
+  * **Optional Credential Storage (`keyring`)**: When available, tokens persist into Windows Credential Manager. Otherwise, tokens are stored in `%APPDATA%\spectra\github_auth.json` with user-restricted access.
+  * **Optional Ambient Token Source (`gh` CLI)**: If GitHub CLI (`gh.exe`) is present on PATH and authenticated, SPECTRA resolves its active token via `gh auth token`.
 
 ---
 
@@ -94,9 +102,9 @@ Open **Device Manager** (`devmgmt.msc`) and expand **Ports (COM & LPT)**:
 
 ### Debian / Ubuntu / Raspberry Pi OS
 ```bash
-# 1. Clone private repository
-git clone https://github.com/Pr0xyA-91/spectra_dev.git
-cd spectra_dev
+# 1. Clone repository
+git clone https://github.com/Pr0xyA-91/spectra.git
+cd spectra
 
 # 2. (Optional) Install GTK3 GUI dependencies if running desktop environment
 sudo apt update && sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0
@@ -116,4 +124,4 @@ python3 cli.py
 ```
 
 ### Windows 10 / 11
-Run the native offline installer `dist/spectra_setup_build20261102.1605.exe` or execute `bin/spectra.exe`.
+Run the native offline installer `dist/spectra_setup.exe` or execute `bin/spectra.exe`.

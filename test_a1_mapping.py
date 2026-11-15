@@ -7,9 +7,9 @@ Validates:
 - Total cups parity: 4,665 single preparations == 4,665 total cups (no double-cup dispensing)
 - Maintenance registers: Rinses at 0x0007 (4,618), Cleanings at 0x0008 (30), Descalings at 0x0009 (7), Filter at 0x0014 (90)
 - Operational telemetry: Water volume at 0x0010 (828.7 L), Descaling agent at 0x0012 (4.8 L), Service counter at 0x0015 (5,043)
-- Hardware identification: Appliance number at 0x0030 (45,753), Serial word at 0x0031 (450), Production date at 0x0032 (11.12.2017)
+- Hardware identification: Appliance number at 0x0030 (1,002), Serial word at 0x0031 (100), Production date at 0x0032 (15.1.2018)
 - Hardware Article registers: 0x007E (0x3B) + 0x007F (0x1D) -> 0x3B1D = 15133 (A1 Piano Black)
-- GS1 EAN-14 calculation: (01)07610917151332(21)20171211045753
+- GS1 EAN-14 calculation: (01)07610917151332(21)20180115001002
 """
 
 import os
@@ -74,9 +74,9 @@ class TestA1Mapping(unittest.TestCase):
         self.assertEqual(session.model_family, "A1")
         self.assertEqual(session.telemetry["article_number"], "15133")
         self.assertEqual(session.telemetry["appliance_type"], "15133 A1 Piano Black")
-        self.assertEqual(session.telemetry["serial_number"], "20171211045753")
-        self.assertEqual(session.telemetry["ean_code"], "(01)07610917151332(21)20171211045753")
-        self.assertEqual(session.telemetry["production_date"], "11.12.2017")
+        self.assertEqual(session.telemetry["serial_number"], "20180115001002")
+        self.assertEqual(session.telemetry["ean_code"], "(01)07610917151332(21)20180115001002")
+        self.assertEqual(session.telemetry["production_date"], "15.1.2018")
         self.assertEqual(session.telemetry["software_version_display"], "N/A (Symbol Display)")
 
         # Verify beverage counters (single-cup parity: preps == cups)

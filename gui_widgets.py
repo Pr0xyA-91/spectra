@@ -43,7 +43,7 @@ except (ImportError, ValueError, Exception):
 try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1435"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 
 
@@ -1066,7 +1066,12 @@ class DiagnosticAdvisorWidget(Gtk.Box):
 # 6. Service Inspection Certificate / Customer PDF-Ready HTML Generator
 # ============================================================================
 
-def generate_service_report_html(summary: dict, health_score: int, technician_checklist: List[Tuple[str, bool]]) -> str:
+def generate_service_report_html(
+    summary: dict,
+    health_score: int,
+    technician_checklist: List[Tuple[str, bool]],
+    ai_summary: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     Generates a professional, branded customer service inspection certificate
     in self-contained HTML format ready for printing to PDF or customer handoff.
@@ -1120,6 +1125,20 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
             <span>{safe_item}</span>
         </li>
         """
+
+    # Optional AI Customer Handoff Summary block (only when explicitly requested by user)
+    ai_summary_html = ""
+    if ai_summary and ai_summary.get("customer_summary"):
+        safe_ai_note = html.escape(str(ai_summary.get("customer_summary", "")))
+        safe_ai_next = html.escape(str(ai_summary.get("recommended_next_service", "")))
+        next_line = f"<div style='margin-top: 8px; font-weight: 600; color: #0f172a;'>Recommended Next Step: {safe_ai_next}</div>" if safe_ai_next else ""
+        ai_summary_html = f"""
+    <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-left: 4px solid #0284c7; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px;">
+        <div style="font-size: 11px; font-weight: 800; color: #0369a1; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;">Customer Service Summary</div>
+        <div style="font-size: 13px; color: #1e293b; line-height: 1.5;">{safe_ai_note}</div>
+        {next_line}
+    </div>
+    """
 
     cert_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1283,6 +1302,8 @@ def generate_service_report_html(summary: dict, health_score: int, technician_ch
             <span class="spec-val">{timestamp}</span>
         </div>
     </div>
+
+    {ai_summary_html}
 
     <div class="two-col">
         <div>

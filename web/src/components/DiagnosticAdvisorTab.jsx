@@ -11,6 +11,12 @@ import {
   Layers,
   ChevronRight,
   Info,
+  Power,
+  RefreshCw,
+  Upload,
+  Check,
+  Send,
+  Sliders,
 } from 'lucide-react';
 
 /**
@@ -21,6 +27,7 @@ import {
  * - Technician Field Service Inspection Checklist
  * - Beverage Specialty Recipe Analytics with proportional distribution bars
  * - 1-Click Customer Service Report & Multi-format Export triggers
+ * - Inline Local AI Bench Triage, Customer Summary & CSV/Screenshot Offset Calibrator
  */
 export default function DiagnosticAdvisorTab({
   theme,
@@ -31,6 +38,15 @@ export default function DiagnosticAdvisorTab({
   onOpenExport,
   onInterrogate,
   isInterrogating,
+  aiEnabled = false,
+  aiModel = '',
+  onToggleAi = null,
+  beginAiWork = null,
+  endAiWork = null,
+  aiServiceSummary = null,
+  setAiServiceSummary = null,
+  onStatsUpdated = null,
+  onOpenConfig = null,
 }) {
   const [checklist, setChecklist] = useState({
     chk1: true, // Visual inspection of silicone pressure lines & brass fittings
@@ -38,6 +54,245 @@ export default function DiagnosticAdvisorTab({
     chk3: false, // Descaling cycle execution & flowmeter verification
     chk4: true, // Clean microswitch contact leaves on rear chassis
   });
+  const [aiTriage, setAiTriage] = useState(null);
+  const [isRunningTriage, setIsRunningTriage] = useState(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [aiError, setAiError] = useState('');
+
+  // Inline Offset Calibrator (CSV or J.O.E./Legacy Screenshot)
+  const [refFileName, setRefFileName] = useState('');
+  const [refCsvText, setRefCsvText] = useState('');
+  const [refImageB64, setRefImageB64] = useState('');
+  const [refIsImage, setRefIsImage] = useState(false);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calResult, setCalResult] = useState(null);
+  const [calNotice, setCalNotice] = useState({ msg: '', error: false, url: '' });
+  const [appliedLocal, setAppliedLocal] = useState(false);
+
+  const handleRunAiTriage = async () => {
+    if (!aiEnabled) return;
+    setIsRunningTriage(true);
+    setAiError('');
+    if (beginAiWork) beginAiWork();
+    try {
+      const res = await fetch('/api/advisor/ai_triage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telemetry: liveData || {},
+          stats: statsData || {},
+          model: aiModel || undefined,
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { success: false, error: `HTTP ${res.status}` };
+      if (data.success && data.triage) {
+        setAiTriage({ ...data.triage, model: data.model });
+      } else {
+        setAiError(data.error || 'Failed to generate AI fault triage.');
+      }
+    } catch (err) {
+      setAiError(err.message);
+    } finally {
+      setIsRunningTriage(false);
+      if (endAiWork) endAiWork();
+    }
+  };
+
+  const handleGenerateServiceSummary = async () => {
+    if (!aiEnabled) return;
+    setIsGeneratingSummary(true);
+    setAiError('');
+    if (beginAiWork) beginAiWork();
+    try {
+      const res = await fetch('/api/service_report/ai_summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stats: statsData || {},
+          model: aiModel || undefined,
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { success: false, error: `HTTP ${res.status}` };
+      if (data.success && data.customer_summary) {
+        if (setAiServiceSummary) setAiServiceSummary(data);
+      } else {
+        setAiError(data.error || 'Failed to generate customer summary.');
+      }
+    } catch (err) {
+      setAiError(err.message);
+    } finally {
+      setIsGeneratingSummary(false);
+      if (endAiWork) endAiWork();
+    }
+  };
+
+  const handleReferenceUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCalResult(null);
+    setCalNotice({ msg: '', error: false, url: '' });
+    setAppliedLocal(false);
+    setRefFileName(file.name);
+
+    const lower = file.name.toLowerCase();
+    const isImg = file.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp)$/i.test(lower);
+    setRefIsImage(isImg);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const val = String(evt.target?.result || '');
+      if (isImg) {
+        setRefImageB64(val);
+        setRefCsvText('');
+      } else {
+        setRefCsvText(val);
+        setRefImageB64('');
+      }
+    };
+    if (isImg) reader.readAsDataURL(file);
+    else reader.readAsText(file);
+  };
+
+  const handleCalibrateUploadedRef = async () => {
+    if (!aiEnabled) return;
+    if (!refCsvText && !refImageB64) {
+      setCalNotice({ msg: 'Choose a J.O.E. / legacy CSV export or diagnostic screenshot first.', error: true, url: '' });
+      return;
+    }
+    setIsCalibrating(true);
+    setCalNotice({ msg: '', error: false, url: '' });
+    setAppliedLocal(false);
+    if (beginAiWork) beginAiWork();
+    try {
+      const res = await fetch('/api/offsets/calibrate_upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_name: refFileName,
+          csv_text: refCsvText || undefined,
+          image_b64: refImageB64 || undefined,
+          port: selectedPort,
+          model: aiModel || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setCalNotice({ msg: data.error || 'Calibration failed.', error: true, url: '' });
+      } else {
+        setCalResult(data);
+        setCalNotice({
+          msg: `Matched ${data.matched_products} beverage + ${data.matched_maintenance} maintenance offsets cleanly.`,
+          error: false,
+          url: '',
+        });
+      }
+    } catch (err) {
+      setCalNotice({ msg: `Calibration error: ${err.message}`, error: true, url: '' });
+    } finally {
+      setIsCalibrating(false);
+      if (endAiWork) endAiWork();
+    }
+  };
+
+  const handleApplyCalibrationLocally = async () => {
+    if (!calResult?.override) return;
+    try {
+      const res = await fetch('/api/offsets/apply_local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: calResult.capture_id || undefined,
+          override: calResult.override,
+          port: selectedPort,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAppliedLocal(true);
+        if (data.updated_stats && onStatsUpdated) onStatsUpdated(data.updated_stats);
+        setCalNotice({
+          msg: `Applied & saved (${data.saved_key}). Statistical counters refreshed immediately.`,
+          error: false,
+          url: '',
+        });
+      } else {
+        setCalNotice({ msg: data.error || 'Failed to save local override.', error: true, url: '' });
+      }
+    } catch (err) {
+      setCalNotice({ msg: err.message, error: true, url: '' });
+    }
+  };
+
+  const handleContributeOffsetFix = async () => {
+    if (!calResult?.override) return;
+    setCalNotice({ msg: 'Submitting verified offset fix to community repository...', error: false, url: '' });
+    try {
+      const res = await fetch('/api/offsets/contribute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: calResult.capture_id || undefined,
+          override: calResult.override,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCalNotice({
+          msg: data.message || 'Contributed successfully to Pr0xyA-91/spectra-captures.',
+          error: false,
+          url: data.url || '',
+        });
+      } else {
+        setCalNotice({
+          msg: data.error || 'GitHub upload unavailable — use Export File (.json) to submit manually.',
+          error: true,
+          url: data.url || '',
+        });
+      }
+    } catch (err) {
+      setCalNotice({ msg: `Contribute error: ${err.message}`, error: true, url: '' });
+    }
+  };
+
+  const handleExportPatchFile = async () => {
+    if (!calResult?.override) return;
+    try {
+      const res = await fetch('/api/offsets/export_patch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: calResult.capture_id || undefined,
+          override: calResult.override,
+          save_dialog: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.dialog_unavailable && data.patch_json) {
+        const blob = new Blob([data.patch_json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename || 'spectra_offset_patch.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setCalNotice({ msg: `Downloaded ${data.filename}`, error: false, url: '' });
+      } else if (data.success) {
+        setCalNotice({ msg: `Saved patch file: ${data.saved_path || data.filename}`, error: false, url: '' });
+      } else if (!data.cancelled) {
+        setCalNotice({ msg: data.error || 'Export failed.', error: true, url: '' });
+      }
+    } catch (err) {
+      setCalNotice({ msg: `Export error: ${err.message}`, error: true, url: '' });
+    }
+  };
 
   // Empty State: Machine has not been read yet
   if (!statsData) {
@@ -122,16 +377,26 @@ export default function DiagnosticAdvisorTab({
           {/* Quick Action Buttons for Reports */}
           <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-gray-800">
             <button
-              onClick={onOpenServiceReport}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-950/60 hover:bg-sky-900 border border-sky-600/60 text-sky-200 font-bold text-xs rounded transition-colors"
+              onClick={() => onOpenServiceReport(false)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-950/60 hover:bg-sky-900 border border-sky-600/60 text-sky-200 font-bold text-xs rounded transition-colors cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5" />
               <span>📄 VIEW / PRINT SERVICE CERTIFICATE</span>
             </button>
 
+            {aiEnabled && aiServiceSummary?.customer_summary && (
+              <button
+                onClick={() => onOpenServiceReport(true)}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/70 text-emerald-200 font-bold text-xs rounded transition-colors cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>📄 CERTIFICATE + AI SUMMARY</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenExport}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900 border border-purple-600/60 text-purple-200 font-bold text-xs rounded transition-colors"
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900 border border-purple-600/60 text-purple-200 font-bold text-xs rounded transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>💾 EXPORT DIAGNOSTIC DATA</span>
@@ -233,6 +498,232 @@ export default function DiagnosticAdvisorTab({
               <span>Clean microswitch contact leaf springs on rear chassis with IPA</span>
             </label>
           </div>
+        </div>
+
+        {/* Opt-In Local AI Bench Triage & Customer Service Summary (Default: OFF) */}
+        <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2">
+            <div className="flex items-center space-x-1.5 text-xs font-bold text-purple-300 uppercase tracking-wider">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              <span>LOCAL AI BENCH TRIAGE, SUMMARY &amp; OFFSET CALIBRATOR</span>
+            </div>
+            {onToggleAi && (
+              <button
+                onClick={() => onToggleAi(!aiEnabled)}
+                className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold border cursor-pointer transition-colors ${
+                  aiEnabled
+                    ? 'bg-purple-950/80 border-purple-500 text-purple-200 hover:bg-rose-950/80 hover:border-rose-500 hover:text-rose-200'
+                    : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Power className="w-3 h-3" />
+                <span>{aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (DEFAULT OFF)'}</span>
+              </button>
+            )}
+          </div>
+
+          {!aiEnabled ? (
+            <p className="text-[11px] text-zinc-400 font-mono">
+              Local AI is currently <strong>OFF</strong> (0 MB RAM used). Enable it when you want on-demand bench fault triage or a plain-language customer summary.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleRunAiTriage}
+                  disabled={isRunningTriage}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white font-bold text-xs rounded cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRunningTriage ? 'animate-spin' : ''}`} />
+                  <span>{isRunningTriage ? 'RUNNING TRIAGE...' : '🧠 RUN AI BENCH TRIAGE'}</span>
+                </button>
+                <button
+                  onClick={handleGenerateServiceSummary}
+                  disabled={isGeneratingSummary}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-800 hover:bg-cyan-700 disabled:opacity-50 text-white font-bold text-xs rounded cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>{isGeneratingSummary ? 'GENERATING NOTE...' : '📝 GENERATE CUSTOMER SUMMARY'}</span>
+                </button>
+              </div>
+
+              {aiError && (
+                <div className="p-2 rounded bg-rose-950/60 border border-rose-700 text-rose-200 text-[11px] font-mono">
+                  {aiError}
+                </div>
+              )}
+
+              {aiTriage && (
+                <div className="p-3 bg-black/50 border border-purple-800/60 rounded space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-purple-300">Bench Diagnosis ({aiTriage.model})</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                      aiTriage.urgency === 'HIGH'
+                        ? 'bg-rose-950 text-rose-300 border border-rose-600'
+                        : aiTriage.urgency === 'MEDIUM'
+                        ? 'bg-amber-950 text-amber-300 border border-amber-600'
+                        : 'bg-emerald-950 text-emerald-300 border border-emerald-600'
+                    }`}>
+                      URGENCY: {aiTriage.urgency}
+                    </span>
+                  </div>
+                  <p className="text-gray-200 leading-relaxed">{aiTriage.summary}</p>
+                  {aiTriage.probable_causes?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-bold text-zinc-400 uppercase">Probable Causes:</div>
+                      <ul className="list-disc list-inside text-zinc-300 text-[11px]">
+                        {aiTriage.probable_causes.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {aiTriage.bench_checks?.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-bold text-zinc-400 uppercase">Recommended Bench Checks:</div>
+                      <ul className="list-disc list-inside text-cyan-300 text-[11px]">
+                        {aiTriage.bench_checks.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {aiServiceSummary?.customer_summary && (
+                <div className="p-3 bg-black/50 border border-cyan-800/60 rounded space-y-1.5 text-xs">
+                  <div className="font-bold text-cyan-300 text-[11px] uppercase">Customer Handoff Summary Preview</div>
+                  <p className="text-gray-200 leading-relaxed">{aiServiceSummary.customer_summary}</p>
+                  {aiServiceSummary.recommended_next_service && (
+                    <p className="text-[11px] text-amber-300 font-mono">Next Service: {aiServiceSummary.recommended_next_service}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Wrong Counters? Fix Machine Offsets via J.O.E. CSV or Legacy Screenshot */}
+              <div className="pt-3 border-t border-gray-800/90 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center space-x-1.5 text-[11px] font-bold text-amber-300 uppercase">
+                    <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Wrong Counters? Fix Machine Offsets (J.O.E. / Legacy CSV or Screenshot)</span>
+                  </div>
+                  {onOpenConfig && (
+                    <button
+                      type="button"
+                      onClick={onOpenConfig}
+                      className="text-[10px] font-mono text-cyan-400 hover:underline cursor-pointer"
+                    >
+                      Models &amp; Machine Library
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center space-x-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 rounded text-xs font-mono cursor-pointer">
+                    <Upload className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{refFileName ? refFileName : 'Upload CSV / Screenshot (.csv, .png, .jpg)'}</span>
+                    <input
+                      type="file"
+                      accept=".csv,.txt,.png,.jpg,.jpeg,.webp,image/*"
+                      onChange={handleReferenceUpload}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    disabled={isCalibrating || (!refCsvText && !refImageB64)}
+                    onClick={handleCalibrateUploadedRef}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-bold text-xs rounded cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCalibrating ? 'animate-spin' : ''}`} />
+                    <span>{isCalibrating ? 'CALIBRATING...' : 'CALIBRATE OFFSETS'}</span>
+                  </button>
+                </div>
+
+                {refIsImage && (
+                  <p className="text-[10px] font-mono text-zinc-400">
+                    Screenshot detected: requires a Vision-capable model (e.g. <span className="text-purple-300">gemma3:4b</span>) or Tesseract OCR.
+                  </p>
+                )}
+
+                {calNotice.msg && (
+                  <div
+                    className={`p-2 rounded text-[11px] font-mono border flex flex-wrap items-center justify-between gap-2 ${
+                      calNotice.error
+                        ? 'bg-rose-950/50 border-rose-700 text-rose-200'
+                        : 'bg-emerald-950/40 border-emerald-700 text-emerald-200'
+                    }`}
+                  >
+                    <span>{calNotice.msg}</span>
+                    {calNotice.url && (
+                      <a
+                        href={calNotice.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline text-cyan-300 font-bold"
+                      >
+                        View Submission
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {calResult?.override && (
+                  <div className="p-3 bg-black/60 border border-amber-700/60 rounded space-y-2.5 text-xs font-mono">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <span className="text-amber-300 font-bold">
+                        Calibrated {calResult.matched_products} Beverages • {calResult.matched_maintenance} Maintenance ({calResult.extraction_source})
+                      </span>
+                      <span className="text-zinc-400">
+                        Total Preps: <strong className="text-rose-400">{calResult.preview_before?.total_preps ?? '—'}</strong> →{' '}
+                        <strong className="text-emerald-400">{calResult.preview_after?.total_preps ?? '—'}</strong>
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto text-[10px]">
+                      {(calResult.override.products || []).slice(0, 8).map((p, idx) => (
+                        <div key={`p-${idx}`} className="flex justify-between px-2 py-1 bg-zinc-950 border border-zinc-800 rounded">
+                          <span className="text-zinc-300 truncate">{p.name}</span>
+                          <span className="text-cyan-300">{p.addr_hex} ({p.joe_count})</span>
+                        </div>
+                      ))}
+                      {(calResult.override.maintenance || []).slice(0, 6).map((m, idx) => (
+                        <div key={`m-${idx}`} className="flex justify-between px-2 py-1 bg-zinc-950 border border-zinc-800 rounded">
+                          <span className="text-amber-200 truncate">{m.name}</span>
+                          <span className="text-amber-400">{m.addr_hex} ({m.joe_count})</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleApplyCalibrationLocally}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded text-[11px] cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{appliedLocal ? 'APPLIED LOCALLY ✓' : 'APPLY LOCALLY NOW'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleContributeOffsetFix}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-sky-700 hover:bg-sky-600 text-white font-bold rounded text-[11px] cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>CONTRIBUTE TO PUBLIC REPO</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleExportPatchFile}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 text-zinc-200 font-bold rounded text-[11px] cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>EXPORT FILE (.JSON)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

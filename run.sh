@@ -18,21 +18,24 @@ if ! id -Gn | grep -qw "uucp" && getent group uucp 2>/dev/null | grep -qw "$USER
     exec newgrp uucp -c "$cmd"
 fi
 
-# Check if user requested Web / Next-Gen UI
-if [[ "$*" == *"--ui"* ]] || [[ "$*" == *"--web"* ]]; then
-    exec "$PROJECT_DIR/run_ui.sh" "$@"
+# Check if user requested legacy GTK GUI
+if [[ "$*" == *"--legacy-gtk"* ]] || [[ "$*" == *"--gtk"* ]]; then
+    exec python3 "$PROJECT_DIR/gui.py" "$@"
+fi
+
+# Check if user requested Vite dev hot-reload
+if [[ "$*" == *"--dev"* ]]; then
+    exec "$PROJECT_DIR/run_ui.sh" --dev
 fi
 
 # Check if user requested CLI mode or help
 if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]]; then
-    python3 "$PROJECT_DIR/cli.py" "$@"
-    exit 0
+    exec python3 "$PROJECT_DIR/cli.py" "$@"
 fi
 
-# If specific arguments are passed, pass them to cli.py
-if [ $# -gt 0 ]; then
-    python3 "$PROJECT_DIR/cli.py" "$@"
-    exit 0
+# If specific arguments are passed that don't match web/app flags, pass them to cli.py
+if [ $# -gt 0 ] && [[ "$*" != *"--app"* ]] && [[ "$*" != *"--ui"* ]] && [[ "$*" != *"--web"* ]] && [[ "$*" != *"--browser"* ]]; then
+    exec python3 "$PROJECT_DIR/cli.py" "$@"
 fi
 
 # Check permissions for serial devices
@@ -42,5 +45,5 @@ if [ -e "/dev/ttyUSB0" ] && [ ! -r "/dev/ttyUSB0" ]; then
     echo "[!] Note: You must log out and log back in for usermod group changes to activate."
 fi
 
-# Launch Desktop GUI by default
-exec python3 "$PROJECT_DIR/gui.py"
+# Launch Standalone Native Desktop App by default
+exec python3 "$PROJECT_DIR/spectra_app.py" "$@"

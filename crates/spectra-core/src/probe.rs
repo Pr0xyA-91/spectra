@@ -61,6 +61,81 @@ pub fn correlate_with_joe_export(
     results
 }
 
+/// Scores a candidate EEPROM register address against canonical regions for a counter category.
+pub fn score_address_for_category(addr: u16, category: &str) -> u32 {
+    match category {
+        "product" => {
+            if (0x0180..=0x018F).contains(&addr) || addr == 0x017F {
+                100
+            } else if (0x0330..=0x033F).contains(&addr) {
+                95
+            } else if (0x0001..=0x0006).contains(&addr) {
+                90
+            } else if (0x00E0..=0x00E6).contains(&addr) {
+                80
+            } else {
+                10
+            }
+        }
+        "maintenance" => {
+            if (0x0007..=0x0009).contains(&addr) {
+                100
+            } else if (0x0020..=0x0022).contains(&addr) {
+                95
+            } else if addr == 0x000E || addr == 0x0014 {
+                90
+            } else {
+                10
+            }
+        }
+        "cockpit" => {
+            if (0x0160..=0x016F).contains(&addr) || (0x01E0..=0x01EF).contains(&addr) {
+                100
+            } else {
+                10
+            }
+        }
+        _ => 10,
+    }
+}
+
+/// Sweeps `eeprom` for matching addresses in the given category (`"product"`, `"maintenance"`,
+/// or `"cockpit"` percentage byte match), returning candidate addresses ordered highest score first.
+pub fn correlate_value_addresses_ranked(
+    eeprom: &HashMap<u16, u16>,
+    target_value: u32,
+    category: &str,
+) -> Vec<u16> {
+    if target_value == 0 {
+        return Vec::new();
+    }
+    let mut matches: Vec<u16> = Vec::new();
+    if category == "cockpit" {
+        if target_value > 0xFF {
+            return matches;
+        }
+        let pct = target_value as u16;
+        for (&addr, &val) in eeprom {
+            if (val & 0xFF) == pct || ((val >> 8) & 0xFF) == pct {
+                matches.push(addr);
+            }
+        }
+    } else if target_value <= 0xFFFF {
+        let target_u16 = target_value as u16;
+        for (&addr, &val) in eeprom {
+            if val == target_u16 {
+                matches.push(addr);
+            }
+        }
+    }
+    matches.sort_by(|&a, &b| {
+        score_address_for_category(b, category)
+            .cmp(&score_address_for_category(a, category))
+            .then_with(|| a.cmp(&b))
+    });
+    matches
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +164,15 @@ mod tests {
         let retail = matches.iter().find(|m| m.beverage_name == "Retail Cups").unwrap();
         assert_eq!(retail.matched_address, 0x00E9);
         assert!(retail.is_32bit_counter);
+
+        // Verify ranked category correlation
+        let mut ranked_eeprom = HashMap::new();
+        ranked_eeprom.insert(0x0002, 42);
+        ranked_eeprom.insert(0x0182, 42);
+        ranked_eeprom.insert(0x01E4, 0x1E35); // 0x35 = 53%
+        let prod_ranked = correlate_value_addresses_ranked(&ranked_eeprom, 42, "product");
+        assert_eq!(prod_ranked, vec![0x0182, 0x0002]);
+        let pct_ranked = correlate_value_addresses_ranked(&ranked_eeprom, 53, "cockpit");
+        assert_eq!(pct_ranked, vec![0x01E4]);
     }
 }

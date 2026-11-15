@@ -38,12 +38,23 @@ import {
   Droplet,
   Trash2,
   Copy,
+  Box,
+  Upload,
+  ExternalLink,
+  Key,
+  LogOut,
+  Github,
+  Power,
+  Settings,
 } from 'lucide-react';
 
 import OscilloscopeStripChart from './OscilloscopeStripChart';
 import DigitalTwinSchematic from './DigitalTwinSchematic';
 import DiagnosticAdvisorTab from './DiagnosticAdvisorTab';
 import MemMapperTab from './MemMapperTab';
+import HmiInspectorTab from './HmiInspectorTab';
+import AiStatusBar from './AiStatusBar';
+import ConfigModal from './ConfigModal';
 
 // ============================================================================
 // 1. THEME DEFINITION
@@ -76,7 +87,7 @@ export const THEMES = {
 };
 
 // ============================================================================
-// WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS + DEV MEM MAPPER)
+// WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS + MEM MAPPER)
 // ============================================================================
 const WORKSPACE_TABS = [
   { id: 'overview', label: '01 // OVERVIEW', desc: 'Health Scorecard & AI Advisor' },
@@ -86,11 +97,40 @@ const WORKSPACE_TABS = [
   { id: 'alerts', label: '05 // ALERTS', desc: 'Active Lockouts & System Flags' },
   { id: 'system', label: '06 // IDENTITY', desc: 'EEPROM String, Power & Barcode' },
   { id: 'bus_log', label: '07 // COMMAND INJECTOR', desc: 'Safe UART Wire Injection' },
-  { id: 'mem_mapper', label: '08 // MEM MAPPER [DEV]', desc: 'EEPROM Register Matrix, Differential Scope & Raw Sensor Mapping' },
+  { id: 'mem_mapper', label: '08 // MEM MAPPER', desc: 'EEPROM Register Matrix, Differential Scope & Raw Sensor Mapping' },
+  { id: 'hmi_tools', label: '09 // FIRMWARE INSPECTOR', desc: 'ELF32, APK & MCU Firmware Inspector, Localization Auditor & Lab Patcher' },
 ];
 
-export default function SpectraWorkspace() {
+export default function SpectraWorkspace({
+  isDebugOpen = false,
+  setIsDebugOpen = () => {},
+  debugCounts = { errorCount: 0, warnCount: 0 },
+  debugSummary = null,
+  scaleMode = 'auto',
+  setScaleMode = () => {},
+  currentScale = 1.0,
+} = {}) {
   const theme = THEMES.cyberpunk;
+  const [liveBuild, setLiveBuild] = useState(debugSummary?.build || '');
+  const [bootReady, setBootReady] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setBootReady(true), 150);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (debugSummary?.build) {
+      setLiveBuild(debugSummary.build);
+    } else {
+      fetch('/api/version')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.build) setLiveBuild(d.build);
+        })
+        .catch(() => {});
+    }
+  }, [debugSummary?.build]);
 
   // Active Workspace Tab (Default: overview)
   const [activeTab, setActiveTab] = useState('overview');
@@ -139,9 +179,137 @@ export default function SpectraWorkspace() {
   const [joeCsvContent, setJoeCsvContent] = useState('');
   const [joeFileName, setJoeFileName] = useState('');
   const [isDumping, setIsDumping] = useState(false);
+  const [exportStatus, setExportStatus] = useState({ loading: false, msg: '', error: false });
+  const [capturedBundle, setCapturedBundle] = useState(null);
+  const [capturedId, setCapturedId] = useState('');
+  const [capturedFilename, setCapturedFilename] = useState('');
+  const [browserDownloadAvailable, setBrowserDownloadAvailable] = useState(null);
+  const [githubAuth, setGithubAuth] = useState({ authenticated: false, login: null, method: null, device_flow_available: false });
+  const [deviceFlow, setDeviceFlow] = useState(null);
+  const [showPatInput, setShowPatInput] = useState(false);
+  const [patInput, setPatInput] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // Beverage Filter
   const [bevSearch, setBevSearch] = useState('');
+
+  // Global Local AI State (Default: strictly OFF to preserve host CPU/RAM)
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiModel, setAiModel] = useState(() => {
+    try {
+      return localStorage.getItem('spectra_ollama_model') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [aiTask, setAiTask] = useState({ active: false });
+  const [aiDownload, setAiDownload] = useState({ active: false });
+  const [aiSystem, setAiSystem] = useState(null);
+  const [aiAutoUnload, setAiAutoUnload] = useState(true);
+  const [aiBusyCount, setAiBusyCount] = useState(0);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [useAiJoeMatch, setUseAiJoeMatch] = useState(false);
+  const [aiServiceSummary, setAiServiceSummary] = useState(null);
+  const [isCalibratingOffsets, setIsCalibratingOffsets] = useState(false);
+  const [offsetCalibration, setOffsetCalibration] = useState(null);
+  const [offsetAppliedLocally, setOffsetAppliedLocally] = useState(false);
+
+  const fetchAiGlobalStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ai/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.success) {
+        setAiEnabled(Boolean(data.ai_enabled));
+        if (data.preferred_model && !aiModel) {
+          setAiModel(data.preferred_model);
+        }
+        if (typeof data.auto_unload === 'boolean') {
+          setAiAutoUnload(data.auto_unload);
+        }
+        setAiTask(data.task || { active: false });
+        setAiDownload(data.download || { active: false });
+        if (data.system) {
+          setAiSystem(data.system);
+        }
+      }
+    } catch {}
+  }, [aiModel]);
+
+  const handleSaveAiConfig = useCallback(async ({ model, auto_unload }) => {
+    if (model !== undefined) {
+      setAiModel(model);
+      try {
+        localStorage.setItem('spectra_ollama_model', model || '');
+      } catch {}
+    }
+    if (auto_unload !== undefined) {
+      setAiAutoUnload(Boolean(auto_unload));
+    }
+    try {
+      const res = await fetch('/api/ai/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, auto_unload }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.preferred_model) setAiModel(data.preferred_model);
+        if (typeof data.auto_unload === 'boolean') setAiAutoUnload(data.auto_unload);
+        if (data.system) setAiSystem(data.system);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchAiGlobalStatus();
+  }, [fetchAiGlobalStatus]);
+
+  useEffect(() => {
+    if (!aiTask?.active && !aiDownload?.active && aiBusyCount === 0) return;
+    const iv = setInterval(() => {
+      fetchAiGlobalStatus();
+    }, 650);
+    return () => clearInterval(iv);
+  }, [aiTask?.active, aiDownload?.active, aiBusyCount, fetchAiGlobalStatus]);
+
+  const handleToggleAi = useCallback(async (nextEnabled, modelOverride = null) => {
+    const targetEnabled = Boolean(nextEnabled);
+    setAiEnabled(targetEnabled);
+    if (!targetEnabled) {
+      setUseAiJoeMatch(false);
+    }
+    try {
+      const res = await fetch('/api/ai/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: targetEnabled,
+          model: modelOverride || aiModel || undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.status) {
+          setAiEnabled(Boolean(data.status.ai_enabled));
+          setAiTask(data.status.task || { active: false });
+          setAiDownload(data.status.download || { active: false });
+        }
+      }
+    } catch {}
+  }, [aiModel]);
+
+  const beginAiWork = useCallback(() => {
+    setAiBusyCount((c) => c + 1);
+    fetchAiGlobalStatus();
+  }, [fetchAiGlobalStatus]);
+
+  const endAiWork = useCallback(() => {
+    setAiBusyCount((c) => Math.max(0, c - 1));
+    fetchAiGlobalStatus();
+  }, [fetchAiGlobalStatus]);
 
   // In-flight guard and failure debounce for non-blocking auto-poll
   const inFlightPollRef = useRef(false);
@@ -208,7 +376,10 @@ export default function SpectraWorkspace() {
       const ports = await res.json();
       setAvailablePorts(ports);
       if (ports.length > 0) {
-        const hwPort = ports.find((p) => p.includes('ttyUSB') || p.startsWith('COM') || p.includes('by-id')) || ports[0];
+        const hwPort =
+          ports.find((p) => p.includes('ttyUSB') || p.includes('ttyACM') || p.includes('USB') || p.includes('by-id') || p.toUpperCase().startsWith('COM')) ||
+          ports.find((p) => p.includes('DEMO')) ||
+          ports[0];
         setSelectedPort(hwPort);
         setIsPolling(true);
         querySensors(true, hwPort);
@@ -384,15 +555,138 @@ export default function SpectraWorkspace() {
   // --------------------------------------------------------------------------
   // 7. Reports & Export Handlers
   // --------------------------------------------------------------------------
-  const handleOpenServiceReport = () => {
-    if (!selectedPort) return;
-    window.open(`/api/service_report?port=${encodeURIComponent(selectedPort)}`, '_blank');
+  const fetchGithubStatus = async () => {
+    try {
+      const res = await fetch('/api/github/auth/status');
+      if (res.ok) {
+        const data = await res.json();
+        setGithubAuth(data);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch github status:', e);
+    }
   };
 
-  const handleTriggerExport = (fmt) => {
+  useEffect(() => {
+    if (showExportModal || showConfigModal) {
+      fetchGithubStatus();
+    }
+  }, [showExportModal, showConfigModal]);
+
+  // GitHub Device Flow Polling Loop
+  useEffect(() => {
+    if (!deviceFlow?.device_code) return;
+    let cancelled = false;
+    let pollTimer = null;
+
+    const poll = async (intervalSec) => {
+      if (cancelled) return;
+      try {
+        const res = await fetch('/api/github/auth/device/poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_code: deviceFlow.device_code, interval: intervalSec }),
+        });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.status === 'complete' && data.login) {
+          setGithubAuth({ authenticated: true, login: data.login, method: 'device_flow', device_flow_available: true });
+          setDeviceFlow(null);
+          setExportStatus({ loading: false, msg: `✓ Signed in as @${data.login}!`, error: false });
+          return;
+        }
+
+        if (data.status === 'slow_down') {
+          const nextInterval = data.interval || intervalSec + 5;
+          pollTimer = setTimeout(() => poll(nextInterval), nextInterval * 1000);
+          return;
+        }
+
+        if (data.status === 'pending') {
+          pollTimer = setTimeout(() => poll(intervalSec), intervalSec * 1000);
+          return;
+        }
+
+        // Error / expired / denied
+        setDeviceFlow(null);
+        setExportStatus({ loading: false, msg: data.error || 'Device authorization ended.', error: true });
+      } catch (err) {
+        if (!cancelled) {
+          setDeviceFlow(null);
+          setExportStatus({ loading: false, msg: `Device poll error: ${err.message}`, error: true });
+        }
+      }
+    };
+
+    pollTimer = setTimeout(() => poll(deviceFlow.interval || 5), (deviceFlow.interval || 5) * 1000);
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+  }, [deviceFlow]);
+
+  const triggerBrowserDownload = (content, filename, mime = 'application/json') => {
+    try {
+      const dataStr = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      const blob = new Blob([dataStr], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'spectra_export.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error('Browser download failed:', err);
+    }
+  };
+
+  const handleOpenServiceReport = (includeAiSummary = false) => {
     if (!selectedPort) return;
-    window.location.href = `/api/export?port=${encodeURIComponent(selectedPort)}&format=${fmt}`;
-    setShowExportModal(false);
+    const aiParam = includeAiSummary && aiEnabled ? '&ai_summary=1' : '';
+    window.open(`/api/service_report?port=${encodeURIComponent(selectedPort)}${aiParam}`, '_blank');
+  };
+
+  const handleTriggerExport = async (fmt) => {
+    if (!selectedPort) return;
+    setExportStatus({ loading: true, msg: 'Prompting file save location...', error: false });
+    try {
+      const res = await fetch(`/api/export?port=${encodeURIComponent(selectedPort)}&format=${fmt}&save_dialog=1`);
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { success: false, error: !res.ok ? `Server error (${res.status}): ${text.slice(0, 200)}` : text };
+      }
+
+      if (data.success && data.saved_path) {
+        setExportStatus({ loading: false, msg: `✓ Saved: ${data.saved_path}`, error: false });
+        setTimeout(() => {
+          setShowExportModal(false);
+          setExportStatus({ loading: false, msg: '', error: false });
+        }, 2200);
+      } else if (data.cancelled) {
+        setExportStatus({ loading: false, msg: 'Export cancelled.', error: false });
+        if (data.content) {
+          setBrowserDownloadAvailable({ content: data.content, filename: data.filename || `spectra_export.${fmt}`, mime: data.mime || 'text/plain' });
+        }
+      } else if (data.dialog_unavailable) {
+        if (data.content) {
+          triggerBrowserDownload(data.content, data.filename || `spectra_export.${fmt}`, data.mime || 'text/plain');
+          setExportStatus({ loading: false, msg: `✓ Saved via browser download (${data.filename})`, error: false });
+        } else {
+          setExportStatus({ loading: false, msg: `Dialog unavailable: ${data.error}`, error: true });
+        }
+      } else {
+        setExportStatus({ loading: false, msg: `Export failed: ${data.error || 'Unknown error'}`, error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Export request error: ${err.message}`, error: true });
+    }
   };
 
   const handleJoeFileUpload = (e) => {
@@ -413,35 +707,262 @@ export default function SpectraWorkspace() {
   const handleTriggerDumpCapture = async () => {
     if (!selectedPort) return;
     setIsDumping(true);
+    const usingAi = Boolean(aiEnabled && useAiJoeMatch && joeCsvContent);
+    if (usingAi) beginAiWork();
+    setExportStatus({ loading: true, msg: 'Sweeping EEPROM & capturing hardware dump...', error: false });
     try {
       const res = await fetch('/api/export_capture', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           port: selectedPort,
-          joe_csv: joeCsvContent
+          joe_csv: joeCsvContent,
+          save_dialog: false,
+          use_ollama: usingAi,
+          model: aiModel || undefined,
+        })
+      });
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { success: false, error: !res.ok ? `Server error (${res.status}): ${text.slice(0, 200)}` : text };
+      }
+
+      if (data.success && data.bundle) {
+        setCapturedBundle(data.bundle);
+        setCapturedId(data.capture_id || '');
+        setCapturedFilename(data.filename || 'spectra_capture.json');
+        const words = Object.keys(data.bundle?.eeprom_words || {}).length;
+        const model = data.bundle?.identity?.model_name || 'Machine';
+        setExportStatus({
+          loading: false,
+          msg: `✓ Capture ready: ${model} (${words} words). Choose Save or Upload below.`,
+          error: false
+        });
+      } else {
+        setExportStatus({ loading: false, msg: `Dump failed: ${data.error || 'Unknown error'}`, error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Dump capture failed: ${err.message}`, error: true });
+    } finally {
+      setIsDumping(false);
+      if (usingAi) endAiWork();
+    }
+  };
+
+  const handleCalibrateOffsetsFromJoe = async (enableFirst = false) => {
+    if (!aiEnabled && !enableFirst) {
+      setExportStatus({ loading: false, msg: 'Local AI is OFF. Enable Local AI to run EEPROM offset calibration.', error: true });
+      return;
+    }
+    if (enableFirst && !aiEnabled) {
+      await handleToggleAi(true);
+    }
+    if (!joeCsvContent && !(capturedBundle?.joe_ground_truth?.raw_lines?.length)) {
+      setExportStatus({ loading: false, msg: 'Attach a J.O.E. CSV export first so Local AI has ground-truth counts to match.', error: true });
+      return;
+    }
+    setIsCalibratingOffsets(true);
+    setOffsetAppliedLocally(false);
+    beginAiWork();
+    setExportStatus({ loading: true, msg: 'Local AI is matching J.O.E. counts against EEPROM offsets...', error: false });
+    try {
+      const res = await fetch('/api/ai/calibrate_offsets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: capturedId || undefined,
+          bundle: capturedBundle || undefined,
+          port: selectedPort,
+          joe_csv: joeCsvContent || undefined,
+          model: aiModel || undefined,
         })
       });
       const data = await res.json();
-      if (data.success && data.bundle) {
-        const blob = new Blob([JSON.stringify(data.bundle, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = data.filename || 'spectra_capture.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setShowExportModal(false);
+      if (data.success && data.override) {
+        if (data.bundle) setCapturedBundle(data.bundle);
+        if (data.capture_id) setCapturedId(data.capture_id);
+        setOffsetCalibration(data.override);
+        setExportStatus({
+          loading: false,
+          msg: `✓ AI matched ${data.matched_products} product + ${data.matched_maintenance} maintenance offsets. Review and click Fix Locally or Report Upstream.`,
+          error: false,
+        });
       } else {
-        alert(data.error || 'Failed to capture diagnostic dump.');
+        setExportStatus({ loading: false, msg: `Offset calibration failed: ${data.error || 'Unknown error'}`, error: true });
       }
     } catch (err) {
-      alert(`Diagnostic dump capture failed: ${err.message}`);
+      setExportStatus({ loading: false, msg: `Offset calibration error: ${err.message}`, error: true });
     } finally {
-      setIsDumping(false);
+      setIsCalibratingOffsets(false);
+      endAiWork();
     }
+  };
+
+  const handleApplyOffsetFixLocally = async () => {
+    if (!offsetCalibration) return;
+    setExportStatus({ loading: true, msg: 'Saving local EEPROM offset override & refreshing dashboard...', error: false });
+    try {
+      const res = await fetch('/api/offsets/apply_local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: capturedId || undefined,
+          override: offsetCalibration,
+          port: selectedPort,
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOffsetAppliedLocally(true);
+        if (data.bundle) setCapturedBundle(data.bundle);
+        if (data.updated_stats) setStatsData(data.updated_stats);
+        setExportStatus({
+          loading: false,
+          msg: `✓ Offset fix saved locally (${data.saved_key})! Machine readings are updated now. You can also upload below so this fix is included in the next SPECTRA update.`,
+          error: false,
+        });
+      } else {
+        setExportStatus({ loading: false, msg: `Failed to apply fix: ${data.error || 'Error'}`, error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Apply local fix error: ${err.message}`, error: true });
+    }
+  };
+
+  const handleSaveLocally = async () => {
+    if (!capturedBundle && !selectedPort) return;
+    setExportStatus({ loading: true, msg: 'Prompting file save location...', error: false });
+    try {
+      const res = await fetch('/api/export_capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: capturedId,
+          port: selectedPort,
+          joe_csv: joeCsvContent,
+          save_dialog: true,
+        })
+      });
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { success: false, error: !res.ok ? `Server error (${res.status}): ${text.slice(0, 200)}` : text };
+      }
+
+      if (data.success && data.saved_path) {
+        setExportStatus({ loading: false, msg: `✓ Saved locally: ${data.saved_path}`, error: false });
+      } else if (data.cancelled) {
+        setExportStatus({ loading: false, msg: 'Native save cancelled.', error: false });
+        setBrowserDownloadAvailable({ bundle: data.bundle || capturedBundle, filename: data.filename || capturedFilename });
+      } else if (data.dialog_unavailable) {
+        triggerBrowserDownload(data.bundle || capturedBundle, data.filename || capturedFilename);
+        setExportStatus({ loading: false, msg: `✓ Saved via browser download (${data.filename || capturedFilename})`, error: false });
+      } else {
+        setExportStatus({ loading: false, msg: `Save failed: ${data.error || 'Unknown error'}`, error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Save error: ${err.message}`, error: true });
+    }
+  };
+
+  const handleUploadToCommunity = async () => {
+    if (!capturedBundle && !capturedId) return;
+    setIsUploading(true);
+    setExportStatus({ loading: true, msg: 'Uploading capture to community repository...', error: false });
+    try {
+      const res = await fetch('/api/upload-capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capture_id: capturedId,
+          capture_data: capturedBundle,
+        })
+      });
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { success: false, error: !res.ok ? `Server error (${res.status}): ${text.slice(0, 200)}` : text };
+      }
+
+      if (data.success) {
+        setUploadResult({ success: true, url: data.url, msg: data.message });
+        setExportStatus({ loading: false, msg: `✓ Uploaded to community repository!`, error: false });
+      } else {
+        setUploadResult({ success: false, url: data.url, msg: data.message || data.error });
+        setExportStatus({ loading: false, msg: `Upload failed: ${data.message || data.error || 'Error'}`, error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Upload error: ${err.message}`, error: true });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleStartDeviceFlow = async () => {
+    setExportStatus({ loading: true, msg: 'Requesting GitHub device authorization...', error: false });
+    try {
+      const res = await fetch('/api/github/auth/device/start', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setDeviceFlow(data);
+        setExportStatus({ loading: false, msg: `Enter code ${data.user_code} on GitHub`, error: false });
+      } else {
+        setExportStatus({ loading: false, msg: data.error || 'Device flow failed', error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Device auth error: ${err.message}`, error: true });
+    }
+  };
+
+  const handleSavePat = async () => {
+    if (!patInput.trim()) return;
+    setExportStatus({ loading: true, msg: 'Validating GitHub personal access token...', error: false });
+    try {
+      const res = await fetch('/api/github/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: patInput.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setGithubAuth({ authenticated: true, login: data.login, method: 'pat', device_flow_available: githubAuth.device_flow_available });
+        setPatInput('');
+        setShowPatInput(false);
+        setExportStatus({ loading: false, msg: `✓ Connected as @${data.login}!`, error: false });
+      } else {
+        setExportStatus({ loading: false, msg: data.error || 'Invalid personal access token', error: true });
+      }
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Token auth error: ${err.message}`, error: true });
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/github/auth/logout', { method: 'POST' });
+      setGithubAuth({ authenticated: false, login: null, method: null, device_flow_available: githubAuth.device_flow_available });
+      setDeviceFlow(null);
+      setExportStatus({ loading: false, msg: 'Signed out from GitHub.', error: false });
+    } catch (err) {
+      setExportStatus({ loading: false, msg: `Logout error: ${err.message}`, error: true });
+    }
+  };
+
+  const handleCopyDeviceCode = (code) => {
+    if (!code) return;
+    navigator.clipboard?.writeText(code);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
   // Derived Telemetry Values (EMPTY until machine is read)
@@ -478,7 +999,7 @@ export default function SpectraWorkspace() {
   );
 
   return (
-    <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-colors duration-200 select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
+    <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-opacity duration-300 ${bootReady ? 'opacity-100' : 'opacity-0'} select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
       {/* ==================================================================== */}
       {/* ZONE 1: TOP BRANDING & HARDWARE CONNECTION BAR */}
       {/* ==================================================================== */}
@@ -492,7 +1013,7 @@ export default function SpectraWorkspace() {
             </span>
           </div>
           <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            BUILD 20261104.1418
+            BUILD {liveBuild || debugSummary?.build || '20261114.0020'}
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
             UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS
@@ -600,6 +1121,86 @@ export default function SpectraWorkspace() {
             <span>EXPORT</span>
           </button>
 
+          {/* Firmware Inspector Trigger Button */}
+          <button
+            onClick={() => setActiveTab('hmi_tools')}
+            className={`flex items-center space-x-1 px-2.5 py-1 font-bold rounded transition-all ${
+              activeTab === 'hmi_tools'
+                ? 'bg-cyan-600 text-black border border-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                : 'bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 text-cyan-300 cursor-pointer'
+            }`}
+            title="Firmware Inspector — ELF32, APK & MCU Binary Auditor & Lab Patcher"
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>📦 FIRMWARE INSPECTOR</span>
+          </button>
+
+          {/* Global Local AI Power Switch (Default: OFF) */}
+          <button
+            onClick={() => handleToggleAi(!aiEnabled)}
+            className={`flex items-center space-x-1.5 px-2.5 py-1 font-mono font-bold rounded text-[11px] transition-all cursor-pointer border ${
+              aiTask?.active
+                ? 'bg-purple-900/80 border-purple-400 text-purple-100 animate-pulse shadow-[0_0_10px_rgba(168,85,247,0.5)]'
+                : aiEnabled
+                ? 'bg-purple-950/70 hover:bg-purple-900/80 border-purple-500/70 text-purple-200'
+                : 'bg-black/40 hover:bg-zinc-900 border-zinc-700 text-zinc-400'
+            }`}
+            title={aiEnabled ? `Local AI is ON (${aiModel || 'auto'}) — Click to turn AI OFF and unload model` : 'Local AI is OFF (0 MB RAM) — Click to enable'}
+          >
+            <Power className={`w-3.5 h-3.5 ${aiEnabled ? 'text-emerald-400' : 'text-zinc-500'}`} />
+            <span>
+              {aiTask?.active
+                ? `AI: ${Math.round(aiTask.percent || 0)}%`
+                : aiEnabled
+                ? `AI: ON${aiModel ? ` (${aiModel})` : ''}`
+                : 'AI: OFF'}
+            </span>
+          </button>
+
+          {/* Configuration & AI Model / GitHub Manager */}
+          <button
+            onClick={() => setShowConfigModal(true)}
+            className="flex items-center space-x-1 px-2.5 py-1 font-mono font-bold rounded text-[11px] bg-black/40 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 transition-colors cursor-pointer"
+            title="Configure Default AI Model, Local AI Models, Machine Library & GitHub Account"
+          >
+            <Settings className="w-3.5 h-3.5 text-[#FCEE09]" />
+            <span>CONFIG</span>
+          </button>
+
+          {/* Dynamic Viewport Scale Indicator */}
+          <button
+            onClick={() => {
+              const modes = ['auto', 0.85, 1.0, 1.15];
+              const nextIdx = (modes.indexOf(scaleMode) + 1) % modes.length;
+              setScaleMode(modes[nextIdx]);
+            }}
+            className="flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-black/40 hover:bg-black/60 border border-zinc-700 text-zinc-300 transition-colors"
+            title={`Current UI Scale: ${Math.round(currentScale * 100)}% (${scaleMode === 'auto' ? 'Dynamic Monitor Auto-Scale' : 'Manual Override'}). Click to cycle.`}
+          >
+            <span>📐</span>
+            <span>{scaleMode === 'auto' ? `AUTO (${Math.round(currentScale * 100)}%)` : `${Math.round(currentScale * 100)}%`}</span>
+          </button>
+
+          {/* Hidden Debug & Process Monitor Trigger */}
+          <button
+            onClick={() => setIsDebugOpen(!isDebugOpen)}
+            className={`flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-all ${
+              (debugCounts?.errorCount || 0) > 0
+                ? 'bg-rose-950 text-rose-200 border border-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)] animate-pulse'
+                : (debugCounts?.warnCount || 0) > 0
+                ? 'bg-amber-950/60 text-amber-300 border border-amber-600'
+                : 'bg-black/40 text-zinc-400 hover:text-zinc-200 border border-zinc-700'
+            }`}
+            title="Toggle Debug & Process Monitor (Ctrl+Shift+D / F12)"
+          >
+            <span>🐞</span>
+            {(debugCounts?.errorCount || 0) > 0 ? (
+              <span className="font-extrabold text-rose-300">{debugCounts.errorCount}</span>
+            ) : (debugCounts?.warnCount || 0) > 0 ? (
+              <span className="text-amber-300">{debugCounts.warnCount}</span>
+            ) : null}
+          </button>
+
           {/* Hardware Online Pill */}
           <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-black/40 border border-emerald-500/30 text-emerald-400">
             <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
@@ -607,6 +1208,16 @@ export default function SpectraWorkspace() {
           </div>
         </div>
       </header>
+
+      {/* ==================================================================== */}
+      {/* GLOBAL AI PROGRESS & KILL-SWITCH STATUS BAR (VISIBLE WHENEVER WORKING) */}
+      {/* ==================================================================== */}
+      <AiStatusBar
+        aiEnabled={aiEnabled}
+        aiTask={aiTask}
+        aiDownload={aiDownload}
+        onTurnAiOff={() => handleToggleAi(false)}
+      />
 
       {/* ==================================================================== */}
       {/* HIGH-VISIBILITY PROGRESS BAR FIELD DURING MACHINE DATA PULL */}
@@ -817,6 +1428,15 @@ export default function SpectraWorkspace() {
             onOpenExport={() => setShowExportModal(true)}
             onInterrogate={runFullInterrogation}
             isInterrogating={isInterrogating}
+            aiEnabled={aiEnabled}
+            aiModel={aiModel}
+            onToggleAi={handleToggleAi}
+            beginAiWork={beginAiWork}
+            endAiWork={endAiWork}
+            aiServiceSummary={aiServiceSummary}
+            setAiServiceSummary={setAiServiceSummary}
+            onStatsUpdated={(s) => setStatsData(s)}
+            onOpenConfig={() => setShowConfigModal(true)}
           />
         )}
 
@@ -1368,12 +1988,29 @@ export default function SpectraWorkspace() {
           </div>
         )}
 
-        {/* TAB 8: MEM MAPPER [DEV ONLY] (EEPROM REGISTER MATRIX & RAW SENSORS) */}
+        {/* TAB 8: MEM MAPPER (EEPROM REGISTER MATRIX & RAW SENSORS) */}
         {activeTab === 'mem_mapper' && (
           <MemMapperTab
             theme={theme}
             selectedPort={selectedPort}
             liveData={liveData}
+            aiEnabled={aiEnabled}
+            aiModel={aiModel}
+            onToggleAi={handleToggleAi}
+            beginAiWork={beginAiWork}
+            endAiWork={endAiWork}
+          />
+        )}
+
+        {/* TAB 9: FIRMWARE INSPECTOR (ELF32, APK & MCU BINARY INSPECTOR / AUDITOR) */}
+        {activeTab === 'hmi_tools' && (
+          <HmiInspectorTab
+            theme={theme}
+            aiEnabled={aiEnabled}
+            onToggleAi={handleToggleAi}
+            onGlobalModelChange={(m) => setAiModel(m)}
+            beginAiWork={beginAiWork}
+            endAiWork={endAiWork}
           />
         )}
       </main>
@@ -1383,7 +2020,7 @@ export default function SpectraWorkspace() {
       {/* ==================================================================== */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className={`w-full max-w-md p-5 border rounded-lg shadow-2xl ${theme.panelBg} ${theme.border} space-y-4`}>
+          <div className={`w-full max-w-lg p-5 border rounded-lg shadow-2xl ${theme.panelBg} ${theme.border} space-y-4 max-h-[90vh] overflow-y-auto`}>
             <div className="flex items-center justify-between border-b border-gray-800 pb-2">
               <span className="text-sm font-bold text-white flex items-center space-x-2">
                 <Download className="w-4 h-4 text-sky-400" />
@@ -1399,9 +2036,34 @@ export default function SpectraWorkspace() {
                 Choose the export format for current interrogation telemetry and beverage statistics:
               </p>
 
+              {exportStatus.msg && (
+                <div className={`p-2.5 rounded text-xs font-mono border ${exportStatus.error ? 'bg-red-950/50 border-red-800 text-red-300' : 'bg-emerald-950/50 border-emerald-800 text-emerald-300'} flex items-center justify-between gap-2`}>
+                  <div className="flex items-center gap-2 truncate">
+                    {exportStatus.loading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-400 shrink-0" />}
+                    {!exportStatus.loading && !exportStatus.error && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                    <span className="truncate">{exportStatus.msg}</span>
+                  </div>
+                  {browserDownloadAvailable && (
+                    <button
+                      onClick={() => {
+                        if (browserDownloadAvailable.bundle) {
+                          triggerBrowserDownload(browserDownloadAvailable.bundle, browserDownloadAvailable.filename);
+                        } else if (browserDownloadAvailable.content) {
+                          triggerBrowserDownload(browserDownloadAvailable.content, browserDownloadAvailable.filename, browserDownloadAvailable.mime);
+                        }
+                      }}
+                      className="text-[10px] text-sky-300 underline font-bold shrink-0 hover:text-white cursor-pointer"
+                    >
+                      Download Now
+                    </button>
+                  )}
+                </div>
+              )}
+
               <button
                 onClick={() => handleTriggerExport('json')}
-                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 border border-gray-800 rounded text-left transition-colors"
+                disabled={exportStatus.loading || isDumping}
+                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
                   <div className="font-bold text-sky-300">Structured JSON (.json)</div>
@@ -1412,7 +2074,8 @@ export default function SpectraWorkspace() {
 
               <button
                 onClick={() => handleTriggerExport('csv')}
-                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 border border-gray-800 rounded text-left transition-colors"
+                disabled={exportStatus.loading || isDumping}
+                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
                   <div className="font-bold text-emerald-300">Spreadsheet CSV (.csv)</div>
@@ -1423,7 +2086,8 @@ export default function SpectraWorkspace() {
 
               <button
                 onClick={() => handleTriggerExport('text')}
-                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 border border-gray-800 rounded text-left transition-colors"
+                disabled={exportStatus.loading || isDumping}
+                className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
                   <div className="font-bold text-amber-300">Formatted Text Report (.txt)</div>
@@ -1433,11 +2097,29 @@ export default function SpectraWorkspace() {
               </button>
 
               <div className="pt-3 border-t border-gray-800">
-                <div className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  Remote Engineering &amp; Archetype Capture
+                <div className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    Remote Engineering &amp; Archetype Capture
+                  </span>
+                  {capturedBundle && (
+                    <button
+                      onClick={() => {
+                        setCapturedBundle(null);
+                        setCapturedId('');
+                        setCapturedFilename('');
+                        setUploadResult(null);
+                        setBrowserDownloadAvailable(null);
+                        setOffsetCalibration(null);
+                        setOffsetAppliedLocally(false);
+                      }}
+                      className="text-[10px] text-gray-500 hover:text-gray-300 underline cursor-pointer"
+                    >
+                      New Capture
+                    </button>
+                  )}
                 </div>
-                <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded-lg space-y-2.5">
+                <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded-lg space-y-3">
                   <div>
                     <div className="font-bold text-purple-300 flex items-center justify-between">
                       <span>Full Hardware Diagnostic Dump (.json)</span>
@@ -1448,38 +2130,363 @@ export default function SpectraWorkspace() {
                     </div>
                   </div>
 
-                  <div className="pt-1 border-t border-purple-900/30">
-                    <label className="block text-[11px] text-gray-300 font-medium mb-1">
-                      Attach J.O.E. App CSV Export (Optional):
-                    </label>
-                    <input
-                      type="file"
-                      accept=".csv"
-                      onChange={handleJoeFileUpload}
-                      className="w-full text-[11px] text-gray-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-medium file:bg-purple-900/50 file:text-purple-300 hover:file:bg-purple-800/60 cursor-pointer"
-                    />
-                    {joeFileName && (
-                      <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span>Attached: {joeFileName}</span>
+                  {!capturedBundle && (
+                    <>
+                      <div className="pt-1 border-t border-purple-900/30">
+                        <label className="block text-[11px] text-gray-300 font-medium mb-1">
+                          Attach J.O.E. App CSV Export (Optional):
+                        </label>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          onChange={handleJoeFileUpload}
+                          className="w-full text-[11px] text-gray-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-medium file:bg-purple-900/50 file:text-purple-300 hover:file:bg-purple-800/60 cursor-pointer"
+                        />
+                        {joeFileName && (
+                          <div className="space-y-1.5 mt-1">
+                            <div className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>Attached: {joeFileName}</span>
+                            </div>
+                            <label className="flex items-center space-x-1.5 text-[11px] text-gray-300 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={aiEnabled && useAiJoeMatch}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  if (checked && !aiEnabled) {
+                                    handleToggleAi(true);
+                                  }
+                                  setUseAiJoeMatch(checked);
+                                }}
+                                className="rounded bg-black/60 border-zinc-700 text-purple-500"
+                              />
+                              <span>Use Local AI for cross-language J.O.E. label matching (default: OFF)</span>
+                            </label>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  <button
-                    onClick={handleTriggerDumpCapture}
-                    disabled={isDumping || !selectedPort}
-                    className="w-full mt-2 py-2.5 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors shadow-sm"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>{isDumping ? 'Sweeping & Correlating Dump...' : 'Download Diagnostic Capture Bundle'}</span>
-                  </button>
+                      <button
+                        onClick={handleTriggerDumpCapture}
+                        disabled={isDumping || isCalibratingOffsets || exportStatus.loading || !selectedPort}
+                        className="w-full mt-2 py-2.5 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        <span>{isDumping ? 'Sweeping EEPROM & Gateways...' : 'Capture Diagnostic Bundle'}</span>
+                      </button>
+
+                      {joeFileName && (
+                        <button
+                          onClick={() => handleCalibrateOffsetsFromJoe(true)}
+                          disabled={isDumping || isCalibratingOffsets || exportStatus.loading || !selectedPort}
+                          className="w-full py-2 px-3 bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-500/70 disabled:opacity-50 text-cyan-300 font-bold text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{isCalibratingOffsets ? 'Analyzing Offsets...' : '🧠 Sweep & AI Auto-Fix EEPROM Offsets'}</span>
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {capturedBundle && (
+                    <div className="space-y-3 pt-1">
+                      {/* Bundle summary chip */}
+                      <div className="p-2 bg-black/40 border border-purple-800/50 rounded flex items-center justify-between text-[11px]">
+                        <div>
+                          <div className="text-purple-300 font-bold flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>{capturedBundle?.identity?.model_name || 'Machine'} Bundle Ready</span>
+                          </div>
+                          <div className="text-gray-400 font-mono text-[10px]">
+                            {Object.keys(capturedBundle?.eeprom_words || {}).length} EEPROM words • J.O.E.: {capturedBundle?.joe_ground_truth?.raw_lines?.length ? 'Attached' : 'None'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Destination Option 0: Local AI Offset Fixer & Immediate Calibration */}
+                      {(capturedBundle?.joe_ground_truth?.raw_lines?.length > 0 || joeCsvContent) && (
+                        <div className="p-2.5 bg-cyan-950/20 border border-cyan-800/50 rounded space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-cyan-300 text-xs flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>Local AI Offset Fixer (Instant Repair)</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAi(!aiEnabled)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                aiEnabled
+                                  ? 'bg-red-950/60 hover:bg-red-900/70 text-red-300 border-red-700'
+                                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+                              }`}
+                            >
+                              {aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (OFF)'}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-gray-400">
+                            Matches J.O.E. counts against EEPROM banks to fix mis-read offsets locally right now, and attaches the verified patch if you report upstream.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleCalibrateOffsetsFromJoe(false)}
+                              disabled={!aiEnabled || isCalibratingOffsets}
+                              className="flex-1 py-1.5 px-2.5 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 text-white font-bold text-[11px] rounded cursor-pointer"
+                            >
+                              {isCalibratingOffsets ? 'CALIBRATING...' : offsetCalibration ? '🔄 RE-RUN AI CALIBRATION' : '🧠 AI MATCH J.O.E. OFFSETS'}
+                            </button>
+                            {offsetCalibration && (
+                              <button
+                                type="button"
+                                onClick={handleApplyOffsetFixLocally}
+                                className={`flex-1 py-1.5 px-2.5 font-extrabold text-[11px] rounded cursor-pointer ${
+                                  offsetAppliedLocally
+                                    ? 'bg-emerald-700 text-white'
+                                    : 'bg-[#FCEE09] hover:bg-yellow-400 text-black'
+                                }`}
+                              >
+                                {offsetAppliedLocally ? '✓ FIXED LOCALLY NOW' : '🔧 FIX LOCALLY NOW'}
+                              </button>
+                            )}
+                          </div>
+
+                          {offsetCalibration && (
+                            <div className="max-h-36 overflow-y-auto bg-black/50 border border-zinc-800 rounded p-2 space-y-1 font-mono text-[10px]">
+                              <div className="text-zinc-300 font-bold">
+                                Matched {offsetCalibration.products?.length || 0} beverages, {offsetCalibration.maintenance?.length || 0} maintenance, {offsetCalibration.maintenance_pct?.length || 0} cockpit %
+                              </div>
+                              {(offsetCalibration.products || []).slice(0, 12).map((p, idx) => (
+                                <div key={idx} className="flex justify-between text-zinc-400 border-b border-zinc-800/60 py-0.5">
+                                  <span className="truncate pr-2">{p.name}{p.is_double ? ' [2x]' : ''}</span>
+                                  <span className="text-cyan-400 shrink-0">{p.addr_hex} = {p.eeprom_val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Destination Option 1: Save Locally */}
+                      <div className="p-2.5 bg-black/30 border border-gray-800 rounded space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-200 text-xs">Destination 1: Local File</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded uppercase font-mono">Default</span>
+                        </div>
+                        <p className="text-[11px] text-gray-400">Save complete JSON snapshot to your computer via native file dialog or browser download.</p>
+                        <button
+                          onClick={handleSaveLocally}
+                          disabled={exportStatus.loading}
+                          className="w-full py-2 px-3 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Save Locally (Native Dialog)</span>
+                        </button>
+                        <div className="flex justify-end pt-0.5">
+                          <button
+                            onClick={() => triggerBrowserDownload(capturedBundle, capturedFilename)}
+                            className="text-[10px] text-sky-400 hover:text-sky-300 underline cursor-pointer"
+                          >
+                            Download via browser instead
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Destination Option 2: Upload to Community Repository */}
+                      <div className="p-2.5 bg-black/30 border border-gray-800 rounded space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-200 text-xs">Destination 2: Community Repository</span>
+                          <span className="text-[10px] text-gray-400 font-mono">Pr0xyA-91/spectra-captures</span>
+                        </div>
+                        <p className="text-[11px] text-gray-400">Share telemetry with the SPECTRA project to map new registers and appliance archetypes.</p>
+
+                        {/* GitHub Auth Status Header */}
+                        <div className="p-2 bg-zinc-900/70 border border-zinc-800 rounded text-[11px] flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <Github className="w-3.5 h-3.5 text-gray-400" />
+                            {githubAuth.authenticated ? (
+                              <span className="text-emerald-400 font-mono">
+                                Signed in as <strong>@{githubAuth.login}</strong>
+                              </span>
+                            ) : (
+                              <span className="text-amber-400">Not signed in to GitHub</span>
+                            )}
+                          </div>
+                          {githubAuth.authenticated ? (
+                            <button
+                              onClick={handleLogout}
+                              className="text-[10px] text-gray-400 hover:text-rose-400 flex items-center gap-1 cursor-pointer"
+                              title="Sign out from GitHub"
+                            >
+                              <LogOut className="w-3 h-3" />
+                              <span>Sign out</span>
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {githubAuth.device_flow_available && (
+                                <button
+                                  onClick={handleStartDeviceFlow}
+                                  className="text-[10px] text-sky-400 hover:text-sky-300 font-medium underline cursor-pointer"
+                                >
+                                  Device Code
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setShowPatInput(!showPatInput)}
+                                className="text-[10px] text-sky-400 hover:text-sky-300 font-medium underline cursor-pointer"
+                              >
+                                {showPatInput ? 'Cancel' : 'Access Token'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Device Flow in Progress */}
+                        {deviceFlow && (
+                          <div className="p-2.5 bg-sky-950/40 border border-sky-800/60 rounded space-y-2 text-xs">
+                            <div className="text-[11px] text-sky-300 font-medium">1. Authorize SPECTRA on GitHub:</div>
+                            <div className="flex items-center justify-between bg-black/60 p-2 rounded border border-sky-900">
+                              <span className="font-mono text-sm font-bold text-sky-200 tracking-wider">{deviceFlow.user_code}</span>
+                              <button
+                                onClick={() => handleCopyDeviceCode(deviceFlow.user_code)}
+                                className="px-2 py-1 bg-sky-800/80 hover:bg-sky-700 text-sky-200 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                              >
+                                {copiedCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                                <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <a
+                                href={deviceFlow.verification_uri}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-sky-400 hover:text-sky-300 underline flex items-center gap-1 font-medium"
+                              >
+                                <span>2. Open github.com/login/device</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                              <button
+                                onClick={() => setDeviceFlow(null)}
+                                className="text-[10px] text-gray-400 hover:text-gray-200 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                            <div className="text-[10px] text-gray-400 flex items-center gap-1.5 animate-pulse">
+                              <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                              <span>Waiting for authorization in your browser...</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* PAT Input Box */}
+                        {showPatInput && !githubAuth.authenticated && (
+                          <div className="p-2.5 bg-black/50 border border-zinc-700 rounded space-y-2 text-xs">
+                            <label className="block text-[11px] text-gray-300 font-medium">
+                              GitHub Personal Access Token (classic or fine-grained with public_repo &amp; gist):
+                            </label>
+                            <div className="flex gap-1.5">
+                              <input
+                                type="password"
+                                value={patInput}
+                                onChange={(e) => setPatInput(e.target.value)}
+                                placeholder="ghp_... or github_pat_..."
+                                className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono placeholder:text-zinc-600 focus:outline-none focus:border-sky-500"
+                              />
+                              <button
+                                onClick={handleSavePat}
+                                disabled={!patInput.trim()}
+                                className="px-3 py-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded font-medium text-xs cursor-pointer"
+                              >
+                                Connect
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Upload Button */}
+                        <button
+                          onClick={handleUploadToCommunity}
+                          disabled={!githubAuth.authenticated || isUploading}
+                          className="w-full py-2 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed shadow-sm"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{isUploading ? 'Submitting to GitHub...' : (githubAuth.authenticated ? 'Upload to Community Repository' : 'Upload to Community Repository (Sign in above)')}</span>
+                        </button>
+
+                        {/* Upload Success Banner */}
+                        {uploadResult?.success && (
+                          <div className="p-2 bg-emerald-950/60 border border-emerald-800 rounded text-[11px] text-emerald-300 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Capture issue opened on GitHub!</span>
+                            </span>
+                            {uploadResult.url && (
+                              <a
+                                href={uploadResult.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline text-emerald-200 hover:text-white flex items-center gap-1 font-mono font-bold"
+                              >
+                                <span>View Issue</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Unauthenticated fallback link */}
+                        <div className="flex items-center justify-between pt-1 text-[10px] text-gray-500 border-t border-gray-800/50">
+                          <span>Prefer manual submission without signing in?</span>
+                          <a
+                            href="https://github.com/Pr0xyA-91/spectra-captures/issues/new"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-purple-400 hover:text-purple-300 underline flex items-center gap-1"
+                          >
+                            <span>Open submission form in browser</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* ==================================================================== */}
+      {/* ZONE 5b: CONFIGURATION & AI MODEL / GITHUB MANAGER MODAL */}
+      {/* ==================================================================== */}
+      <ConfigModal
+        isOpen={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        theme={theme}
+        aiEnabled={aiEnabled}
+        aiModel={aiModel}
+        aiSystem={aiSystem}
+        aiDownload={aiDownload}
+        autoUnload={aiAutoUnload}
+        statsData={statsData}
+        onStatsUpdated={(s) => setStatsData(s)}
+        onToggleAi={(nextEnabled) => handleToggleAi(nextEnabled)}
+        onSaveAiConfig={handleSaveAiConfig}
+        onRefreshAiStatus={fetchAiGlobalStatus}
+        githubAuth={githubAuth}
+        deviceFlow={deviceFlow}
+        patInput={patInput}
+        setPatInput={setPatInput}
+        copiedCode={copiedCode}
+        authStatusMsg={exportStatus}
+        onStartDeviceFlow={handleStartDeviceFlow}
+        onSavePat={handleSavePat}
+        onLogout={handleLogout}
+        onCancelDeviceFlow={() => setDeviceFlow(null)}
+        onCopyDeviceCode={handleCopyDeviceCode}
+      />
 
       {/* ==================================================================== */}
       {/* ZONE 6: FOOTER STATUS BAR */}

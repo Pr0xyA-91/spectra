@@ -96,22 +96,22 @@ Jura machines store serial number components in non-volatile registers. SPECTRA 
 ```mermaid
 flowchart LR
     subgraph EEPROM["Persistent EEPROM Registers"]
-        R30["Register 0x30 / 0x0030<br/>Appliance Number (e.g. 2013 / 0x07DD)"]
+        R30["Register 0x30 / 0x0030<br/>Appliance Number (e.g. 1001 / 0x03E9)"]
         R31["Register 0x31 / 0x0031<br/>Serial Word (e.g. 4 / 0x0004)"]
-        R32["Register 0x32 / 0x0032<br/>Production Date Bitfield (e.g. 0x26B9)"]
+        R32["Register 0x32 / 0x0032<br/>Production Date Bitfield (e.g. 0x282F)"]
         RART["Profile Database<br/>Article Number (e.g. 13356)"]
     end
 
     subgraph Decoding["Decoder Algorithms"]
-        DDATE["decode_jura_date()<br/>0x26B9 ⟹ 2009-05-25"]
-        DAPP["Zero-Pad Appliance No.<br/>2013 ⟹ '002013'"]
+        DDATE["decode_jura_date()<br/>0x282F ⟹ 2010-01-15"]
+        DAPP["Zero-Pad Appliance No.<br/>1001 ⟹ '001001'"]
         DEAN["GS1 Modulo-10 Check Digit<br/>0761091713356 ⟹ Check Digit '7'"]
     end
 
     subgraph Identifiers["Synthesized Industry Standards"]
-        SN["GS1 Serial Number (AI 21)<br/>'20090525002013'"]
-        AC["Appliance Code<br/>'07DD26B9'"]
-        EAN["Full GS1 Composite EAN-13 / GTIN-14<br/>(01)07610917133567(21)20090525002013"]
+        SN["GS1 Serial Number (AI 21)<br/>'20100115001001'"]
+        AC["Appliance Code<br/>'03E9282F'"]
+        EAN["Full GS1 Composite EAN-13 / GTIN-14<br/>(01)07610917133567(21)20100115001001"]
     end
 
     R32 --> DDATE

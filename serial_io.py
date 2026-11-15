@@ -32,6 +32,14 @@ try:
 except ImportError:
     HAS_PYSERIAL = False
 
+# Native Rust Core Acceleration Bridge (spectra_py)
+try:
+    import spectra_py as _rust_core
+    HAS_RUST_CORE = True
+except ImportError:
+    _rust_core = None
+    HAS_RUST_CORE = False
+
 from jura_protocol import MockJuraMachine
 
 
@@ -49,20 +57,47 @@ def list_serial_ports() -> List[str]:
             except Exception:
                 pass
         if not ports:
-            # Fallback scan COM1..COM16
-            for i in range(1, 17):
-                ports.append(f"COM{i}")
+            # Fallback scan via Windows Registry HKLM\HARDWARE\DEVICEMAP\SERIALCOMM
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM") as key:
+                    i = 0
+                    while True:
+                        try:
+                            _, port_val, _ = winreg.EnumValue(key, i)
+                            if port_val and str(port_val) not in ports:
+                                ports.append(str(port_val))
+                            i += 1
+                        except OSError:
+                            break
+                ports.sort()
+            except Exception:
+                pass
+        if HAS_RUST_CORE and _rust_core is not None:
+            try:
+                existing_bases = {p.split()[0].upper() for p in ports}
+                for r_port in _rust_core.list_serial_ports():
+                    base = r_port.split()[0].upper()
+                    if base.startswith("COM") and base not in existing_bases:
+                        ports.append(r_port)
+                        existing_bases.add(base)
+            except Exception:
+                pass
     else:
         # Linux / POSIX ports
         # High priority: USB adapters commonly used for Jura diagnostics (FTDI, CH340, CP210x)
+        # Never enumerate /dev/pts/* (active user terminal PTYs) or phantom motherboard /dev/ttyS*
         for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
             ports.extend(sorted(glob.glob(pattern)))
-        # Virtual PTYs
-        for pty_path in sorted(glob.glob("/dev/pts/[0-9]*")):
-            ports.append(pty_path)
-        # Hardware motherboard serials (usually low priority)
-        for tty in sorted(glob.glob("/dev/ttyS[0-3]")):
-            ports.append(tty)
+
+        # Query native Rust hardware discovery if active (strictly USB/ACM adapters)
+        if HAS_RUST_CORE and _rust_core is not None:
+            try:
+                for r_port in _rust_core.list_serial_ports():
+                    if r_port not in ports and (r_port.startswith("/dev/ttyUSB") or r_port.startswith("/dev/ttyACM")):
+                        ports.append(r_port)
+            except Exception:
+                pass
 
     # Always provide Demo / Simulation option
     ports.append("DEMO / SIMULATION (Jura Impressa XJ5)")
@@ -71,6 +106,7 @@ def list_serial_ports() -> List[str]:
     ports.append("DEMO / SIMULATION (Jura S8 Smart Connect)")
     ports.append("DEMO / SIMULATION (Jura WE8)")
     ports.append("DEMO / SIMULATION (Jura E8)")
+    ports.append("DEMO / SIMULATION (Jura ENA 7)")
     ports.append("DEMO / SIMULATION (Jura Z10)")
     ports.append("DEMO / SIMULATION (Nivona NICR768)")
     ports.append("DEMO / SIMULATION (Lamanti-KL X680C)")
@@ -120,6 +156,8 @@ class JuraSerialConnection:
                 self.mock_machine = MockJuraMachine(model_ef="EF529M V01.02", model_name="D4")
             elif "A1" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF509M V01.26", model_name="A1")
+            elif "ENA 7" in p_up or "ENA7" in p_up or "13500" in p_up:
+                self.mock_machine = MockJuraMachine(model_ef="EF634 V01.31", model_name="ENA 7")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
             self._init_mock_eeprom()
@@ -179,9 +217,9 @@ class JuraSerialConnection:
             self._mock_eeprom[0x0012] = 48     # Descaling agent (4.8 dl)
             self._mock_eeprom[0x0014] = 90     # Filter changes
             self._mock_eeprom[0x0015] = 5043   # Service counter (preparations since last service)
-            self._mock_eeprom[0x0030] = 45753  # Appliance Number (0xB2B9)
-            self._mock_eeprom[0x0031] = 450    # Serial Word (0x01C2)
-            self._mock_eeprom[0x0032] = 14219  # Production Date: 11.12.2017 (0x378B)
+            self._mock_eeprom[0x0030] = 1002   # Appliance Number (0x03EA)
+            self._mock_eeprom[0x0031] = 100    # Serial Word (0x0064)
+            self._mock_eeprom[0x0032] = 14383  # Production Date: 15.01.2018 (0x382F)
             self._mock_eeprom[0x007E] = 0x3B00 # Article Number High byte (0x3B)
             self._mock_eeprom[0x007F] = 0x1D00 # Article Number Low byte (0x1D) -> 15133
             self._mock_eeprom[0x00C3] = 0x027C # Water Hardness (40 °dH)
@@ -198,9 +236,9 @@ class JuraSerialConnection:
             self._mock_eeprom[0x0011] = 14     # Water hardness (°dH)
             self._mock_eeprom[0x0012] = 143    # Descaling agent (dl)
             self._mock_eeprom[0x0015] = 11851  # Service counter
-            self._mock_eeprom[0x0030] = 52772  # Appliance Number
-            self._mock_eeprom[0x0031] = 2      # Serial Word
-            self._mock_eeprom[0x0032] = 15088  # Production Date: 16.07.2019
+            self._mock_eeprom[0x0030] = 1003   # Appliance Number
+            self._mock_eeprom[0x0031] = 1      # Serial Word
+            self._mock_eeprom[0x0032] = 15407  # Production Date: 15.01.2020 (0x3C2F)
             self._mock_eeprom[0x0041] = 230    # BU Mill Target
             self._mock_eeprom[0x0047] = 1296   # BU Upper Limit
             self._mock_eeprom[0x0056] = 37     # BU Init count
@@ -211,13 +249,55 @@ class JuraSerialConnection:
             self._mock_eeprom[0x0334] = 7      # Hot water
             return
 
+        if "ENA 7" in self.port_name.upper() or "ENA7" in self.port_name.upper() or "13500" in self.port_name.upper():
+            self._mock_eeprom = {i: 0x0000 for i in range(512)}
+            self._mock_eeprom[0x0000] = 603     # 1 Espresso
+            self._mock_eeprom[0x0001] = 0       # 2 Espressi
+            self._mock_eeprom[0x0002] = 10720   # 1 Coffee
+            self._mock_eeprom[0x0003] = 7       # 2 Coffees
+            self._mock_eeprom[0x0004] = 2167    # 1 Aroma-Boost
+            self._mock_eeprom[0x0005] = 532     # Steam / Hot water valve cycles
+            self._mock_eeprom[0x0006] = 236     # Ground coffee
+            self._mock_eeprom[0x0007] = 10202   # Total Rinses
+            self._mock_eeprom[0x0008] = 28      # Total Cleanings
+            self._mock_eeprom[0x0009] = 3       # Total Descalings
+            self._mock_eeprom[0x000A] = 30855   # Operating time of grinder (sec)
+            self._mock_eeprom[0x000D] = 38      # Coffee water since last descaling (dl)
+            self._mock_eeprom[0x000F] = 203     # Preps since last cleaning
+            self._mock_eeprom[0x0010] = 25692   # Total coffee water incl. rinses (dl)
+            self._mock_eeprom[0x0011] = 112     # Rinses since last cleaning
+            self._mock_eeprom[0x0012] = 22      # Descaling agent used (dl)
+            self._mock_eeprom[0x0015] = 1224    # Number of preparations since last intervention
+            self._mock_eeprom[0x0016] = 56      # Preparations since cleaning alarm
+            self._mock_eeprom[0x001B] = 3       # Milk / froth minutes
+            self._mock_eeprom[0x001C] = 79      # Hot water minutes
+            self._mock_eeprom[0x001E] = 4       # Hot water until previous descaling (min)
+            self._mock_eeprom[0x001F] = 4244    # Coffee water until previous descaling (dl)
+            self._mock_eeprom[0x0028] = 25      # History fault bitmask (0x0019)
+            self._mock_eeprom[0x0030] = 1004    # Appliance number (0x03EC)
+            self._mock_eeprom[0x0031] = 1       # Serial number / word
+            self._mock_eeprom[0x0032] = 11311   # Date of production (15.1.2012, 0x2C2F)
+            self._mock_eeprom[0x0036] = 3       # Amount through filter (dl)
+            self._mock_eeprom[0x003D] = 20      # Water hardness (°dH)
+            self._mock_eeprom[0x003E] = 300     # Auto off timeout (300 min = 5.0 h)
+            self._mock_eeprom[0x0052] = 23      # Total filter changes
+            self._mock_eeprom[0x0056] = 44      # BU initializations
+            self._mock_eeprom[0x007E] = 0x3400  # Article Number High (0x34 -> 13500)
+            self._mock_eeprom[0x007F] = 0xBC00  # Article Number Low (0xBC -> 13500)
+            self._mock_eeprom[0x00C3] = 0x1464  # Water hardness 20 °dH (high byte 0x14)
+            self._mock_eeprom[0x00D6] = 5522    # Total machine switch-on
+            self._mock_eeprom[0x00DA] = 0x435A  # Country code 'CZ'
+            self._mock_eeprom[0x00DB] = 11025   # SPDL Download Date (17.8.2011)
+            self._mock_eeprom[0x00DC] = 10443   # SPDL Language Date (11.6.2010)
+            return
+
         self._mock_eeprom = {i: 0x0000 for i in range(512)}
-        # Block seeds matching real machine captures
+        # Block seeds with synthetic demo machine identity
         seeds = {
             0x0000: "000010A747450000025F15F500000E1900A600266DFB00000000000000000000",
             0x0010: "B0940000018700000001703A00000000000000000000000000000000000001FB",
             0x0020: "00520640000100040414780A1E04A0280B39000C0C0E1E020A0607082D64141E",
-            0x0030: "466000332EBE2996000000000000000000001E6F046E5028180F001401040276",
+            0x0030: "03E80001302F2996000000000000000000001E6F046E5028180F001401040276",
             0x0040: "050C00E6010A02080222006A01D105107803400ADD78050F0A1200C81455145C"
         }
         for blk, hex_str in seeds.items():
@@ -467,6 +547,8 @@ class JuraSerialConnection:
                     return "tl:BL_RL78 V01.30"
                 elif "A1" in self.port_name.upper():
                     return "tl:R8C Loader V1.04"
+                elif "ENA 7" in self.port_name.upper() or "ENA7" in self.port_name.upper() or "13500" in self.port_name.upper():
+                    return "tl:LOADER V5.0"
                 return "tl:R8Cx Loader V01.00"
             elif cmd_clean == "TY$:":
                 if "WE8" in self.port_name.upper():
@@ -492,6 +574,8 @@ class JuraSerialConnection:
                     return "ic:5700"
                 elif "A1" in self.port_name.upper():
                     return "ic:AC03"
+                elif "ENA 7" in self.port_name.upper() or "ENA7" in self.port_name.upper() or "13500" in self.port_name.upper():
+                    return "ic:DF01"
                 return "ic:230A"
             elif cmd_clean == "HZ:":
                 if "Z10" in self.port_name.upper():

@@ -4,16 +4,31 @@
   <img src="docs/brand/spectra_banner.svg" alt="SPECTRA Diagnostic Suite" width="100%">
 </p>
 
-[![Build: 20261102.1605](https://img.shields.io/badge/build-20261102.1605-blue.svg)](https://github.com/Pr0xyA-91/spectra)
+[![Build: 20261114.0020](https://img.shields.io/badge/build-20261114.0020-blue.svg)](https://github.com/Pr0xyA-91/spectra)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Rust: 1.80+](https://img.shields.io/badge/rust-1.80+-orange.svg)](https://www.rust-lang.org/)
-[![GUI: GTK 3 | Web](https://img.shields.io/badge/GUI-GTK%203%20%7C%20Web-green.svg)](https://www.gtk.org/)
+[![GUI: Native Shell | Web | CLI](https://img.shields.io/badge/GUI-Native%20Shell%20%7C%20Web%20%7C%20CLI-green.svg)](https://www.gtk.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://kernel.org)
+[![Platforms: Linux & Windows](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows-06B6D4.svg)](https://kernel.org)
 
 > [!NOTE]
-> **Project Status: Build 20261102.1738 (Linux Multi-Manufacturer & Rust Hybrid Suite)** — Unified Diagnostic Platform.
-> **SPECTRA** is an extensible appliance hardware telemetry and logic board diagnostic engine supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)**. Features a 3-layer Rust hybrid workspace (`spectra-hal`, `spectra-core`, `spectra-agent`, `spectra-py`), 5-paradigm web workstation, GTK 3 desktop GUI, headless CLI, dynamic model profiling, EEPROM differential mapping, and automated field capture tools.
+> **Project Status: Build 20261114.0020 (Phase 3 Rust Hybrid Gateway & Multi-Manufacturer Suite)** — Unified Diagnostic Platform.
+> **SPECTRA** is an extensible appliance hardware telemetry and logic board diagnostic platform supporting **Jura**, **Nivona**, **Lamanti-KL (Kalerm)**, and **Lamanti-JN (Jetinno)**. It combines a single-window native Rust desktop shell (`spectra-shell`), embedded Rust HTTP/1.1 gateway (`spectra-agent`), deterministic Rust protocol/math codecs (`spectra-core` + `spectra-py`), a 9-tab React workstation, an opt-in default-OFF **Local AI** engine with CSV/screenshot **EEPROM Offset Calibration**, a unified **172-machine profile library**, opt-in **GitHub community sync**, and an **ELF/APK/MCU Firmware Inspector**.
+
+---
+
+## 📖 Documentation & Illustrated Guides
+
+- **[Illustrated Operator & Field Technician Guide (`docs/USER_GUIDE.md`)](docs/USER_GUIDE.md)** — Complete visual step-by-step manual covering installation (Windows & Linux), hardware wiring, Local AI model setup, fixing EEPROM offsets from J.O.E. CSV/screenshots, Machine Library overrides, and connecting GitHub.
+- **[Jura EEPROM & Sub-Bus Memory Map (`docs/JURA_MEMORY_MAP.md`)](docs/JURA_MEMORY_MAP.md)** — Register-level hardware protocol documentation (`RT:`, `RE:`, `HZ:`, `CS:`, `AS:`, `$:` display sub-bus).
+- **[Field Capture & J.O.E. Correlation Guide (`docs/FIELD_CAPTURE_GUIDE.md`)](docs/FIELD_CAPTURE_GUIDE.md)** — Capturing anonymized dumps for new models.
+- **[Release Changelog (`CHANGELOG.md`)](CHANGELOG.md)** — Full build history and diff summary.
+
+<p align="center">
+  <a href="docs/USER_GUIDE.md">
+    <img src="docs/images/spectra_overview_workflow.svg" alt="SPECTRA Workstation Overview and 9 Diagnostic Tabs" width="100%">
+  </a>
+</p>
 
 ---
 
@@ -21,52 +36,68 @@
 
 The legacy coffee service tools (from 2016 and earlier) were built around 32-bit Windows, lacked support for modern electronic architectures, and only recognized obsolete machines with frozen databases. Newer appliances trigger protocol rejections, encrypted handshake requirements, or locked logic boards.
 
-**SPECTRA** runs natively on modern Linux systems and provides a unified, vendor-agnostic architecture:
+**SPECTRA** runs natively on both **Linux** and **Windows** (`windows` branch with offline `spectra_setup.exe` / `spectra_update.exe` installers) and provides a unified, vendor-agnostic architecture:
 1. **Jura Diagnostics Engine**:
-   - **Plain-ASCII Optical Protocol**: Interrogates machines via the official **JURA USB Scanner N 010** or direct optical serial connections. Features optical loopback echo stripping, hardware pacing calibration (~16ms/char), and full EEPROM block interrogation (`RT:0000`–`RT:0030`, `RE:`, `CS:`, `IC:`, `HZ:`).
+   - **Plain-ASCII Optical Protocol**: Interrogates machines via the official **JURA USB Scanner N 010** or direct 5V TTL optical/UART connections. Features optical loopback echo stripping, deterministic wire pacing (`8 ms` / `16 ms`), and full EEPROM block interrogation (`RT:0000`–`RT:01F0`, `RE:`, `CS:`, `IC:`, `HZ:`).
    - **Encrypted Smart Connect Protocol**: Speaks the native `@`-protocol with 4:1 wire carrier modulation (`0xDB` base byte), recovered nibble-permutation S-box cipher, and complete challenge-response handshake (`@T0` $\rightarrow$ `@T1` $\rightarrow$ `@t2` $\rightarrow$ `@T3` $\rightarrow$ `@t3`).
-2. **Nivona CafeRomatica Driver**: Native support for NICR 5xx/6xx/7xx/8xx/9xx/10xx and NIVO 810x series over Eugster/Frismag AG electronic architecture (9600 baud, 8N1).
+2. **Nivona CafeRomatica Driver**: Native support for NICR 5xx/6xx/7xx/8xx/9xx/10xx and NIVO 810x series over Eugster/Frismag AG electronic architecture (`9600 baud, 8N1`).
 3. **Lamanti-KL (Kalerm Platform) Driver**: Full diagnostics and live telemetry for Kalerm K95, KLM1601/2601, and commercial platforms.
 4. **Lamanti-JN (Jetinno Platform) Driver**: Commercial HORECA telemetry for Jetinno JLTT, JL08, JL10, JL15, JL28, and JL500 vending series via binary framing and CRC16 validation.
-5. **3-Layer Rust Hybrid Architecture**: Ultra-low-latency HAL, deterministic protocol parsing, Tauri v2 async backend, and native PyO3 C extension (`spectra_py.so`).
+5. **Phase 3 Hybrid Rust Architecture**: Single-window native `tao` + `wry` desktop shell (`spectra-shell`), embedded async Rust HTTP/1.1 gateway (`spectra-agent`), deterministic protocol codecs (`spectra-core` / `spectra-hal`), and native PyO3 C extension (`spectra_py.so` / `spectra_py.pyd`).
+
+<p align="center">
+  <img src="docs/images/spectra_architecture_phase3.svg" alt="SPECTRA Phase 3 Hybrid Rust + Python Architecture" width="100%">
+</p>
 
 ---
 
 ## ✨ Features
 
-- **5 Interactive UI Paradigms & Web Workstation**:
-  - **Engineering Telemetry**: High-density gauges, strip charts, and component state trees.
-  - **Industrial Process**: Piping & Instrumentation (P&ID) schematics with active solenoid/heater animations.
-  - **Executive KPI**: High-level maintenance readiness, beverage yields, and lifecycle summaries.
-  - **Diagnostic Scopes**: Real-time temperature oscilloscope and live hydraulic flow rate monitoring.
-  - **Memory Matrix**: Real-time EEPROM memory cell viewer with byte-by-byte differential heatmaps.
-- **Native GTK 3 Desktop Application**: Fast, dark-mode GTK 3 desktop application with KPI summary cards, sortable beverage tables, maintenance progress bars, and dedicated live sensor inspection.
-- **Full Headless CLI**: Command-line interface with colored output, progress bar, multi-format export, and rapid sensor polling.
-- **Accurate Sensor Decoding & Safety Systems**:
-  - **Tenths-of-a-Degree Celsius (°C) Decoding**: Accurately translates raw Jura NTC sensor readings into 0.1 °C precision for Coffee Thermoblock (`TB1`), Steam Thermoblock (`TB2`), and Ambient/Intake NTCs.
-  - **Dual-Heater Accommodation**: Built-in architecture detection seamlessly accommodates dual-thermoblock models (e.g. Z10, GIGA) and single-thermoblock models (e.g. E8, S8) with clean `Not Installed (Single Heater Model)` indicators.
-  - **Bean Hopper Optical Sensor (`AS:`)**: Net reflection delta ($\Delta = \text{ON} - \text{OFF}$) thermal calibration ($115 \pm 5$ counts) with hysteresis band ($110 < \Delta < 120$).
-  - **Physical Microswitches & Contacts**: Interrogates water tank level float, drip tray presence switch, machine readiness state, and CLARIS water filter configuration in real time (`HZ:`).
-  - **Trip Counters & Fault Latches**: Decodes hardware fault registers (`RE:0028`) and lifetime trip counters (`0x01B0`–`0x01B6`).
-- **170+ Machine Profiles**: Unified database recognizing all generations of Jura machines (Gen 7+, E/ENA/D/S/J/Z/C/X/W/WE/GIGA series, and classic TOP-tronic).
-- **Multi-Format Export**: Export clean diagnostic reports to formatted text (`.txt`), structured JSON (`.json`), or CSV (`.csv`).
-- **Hardware Simulation Modes**: Built-in mock devices allow full testing across all vendors without physical hardware.
+- **Single-Window Native Desktop App (`spectra-shell`)**: Launches cleanly with zero stray console or duplicate windows, native window & taskbar branding, focused OS Save/Open file dialogs, and persistent maximized/window geometry (`window_state.json`). Includes `--pure-rust` standalone mode for lightweight inspection without spawning a Python sidecar.
+- **9-Tab Diagnostic Workstation**:
+  - `01 // OVERVIEW`: Machine health scorecard, beverage mix analytics, opt-in Local AI Triage & Customer Summary, and inline CSV/screenshot Offset Calibrator.
+  - `02 // SENSORS & OSCILLOSCOPE`: Live P&ID Digital Twin schematic, `TB1`/`TB2` temperature strip-chart oscilloscope, hydraulic flow meter, and `AS:` NTC shunt self-test.
+  - `03 // BEVERAGES`: Complete decoded preparation counters, `[2x]` flags, and share percentages.
+  - `04 // MAINTENANCE`: Cleanings, descalings, CLARIS filter status, grinder cycles, and interval gauges.
+  - `05 // ALERTS`: Clean separation between active physical lockouts and historical EEPROM fault latches (`RE:0028`, `0x01B0`–`0x01B6`).
+  - `06 // IDENTITY`: 14-digit factory barcode/serial number, production date, article number, country code, and Display Sub-MCU (`EF518D` / `FlashDisplayZeta`) detection.
+  - `07 // COMMAND INJECTOR`: Serialized read-safe UART command terminal.
+  - `08 // MEM MAPPER`: Read-only 512/1024-word EEPROM register matrix, differential snapshot scope, raw sensor bitfield mapper, and inline model JSON updater.
+  - `09 // FIRMWARE INSPECTOR`: Multi-format `ELF32`, `APK`, and `MCU .bin` analyzer, 3-tier localization auditor, and non-destructive lab patcher.
+- **Default-OFF Local AI & Adaptive Engine (`CONFIG -> Local AI & Models`)**:
+  - Consumes `0 MB RAM` / `0% CPU` until explicitly enabled.
+  - Auto-installs a user-space portable AI runtime (`127.0.0.1:11434`) on demand with native OS TLS / Windows SChannel support (`tls_utils.py`) and pulls models such as `qwen2.5:0.5b`, `gemma3:1b`, `gemma2:2b`, or vision-capable `gemma3:4b`.
+- **CSV / Screenshot EEPROM Offset Calibrator & 172-Machine Library (`machine_library.py`)**:
+  - Upload a J.O.E. CSV, legacy Jura diagnostic CSV, or screenshot (`.png`/`.jpg`) to match counters (`16-bit BE` and `32-bit CDAB`) via Rust (`correlate_with_joe_ranked`) + Local AI.
+  - Save instant local overrides (`eeprom_overrides.json` with strict precedence: `Local Override > Verified Model Spec > Built-in Profile`), export/import portable `.spectra-offset.json` patches, or contribute directly to `Pr0xyA-91/spectra-captures`.
+- **Opt-In GitHub Account Sync (`CONFIG -> GitHub Connection`)**:
+  - Connects via OAuth 2.0 Device Flow, Personal Access Token (`public_repo` + `gist`), or CLI environment tokens (`SPECTRA_GITHUB_TOKEN`, `GITHUB_TOKEN`, `gh auth token`).
+- **Multi-Format Export & Hardware Simulation**: Export `.txt`, `.json`, or `.csv` via focused native OS Save As dialogs, and test safely offline with built-in Demo/Simulation profiles.
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Launch Next-Gen Web Workstation (Recommended)
-```bash
-./run_ui.sh
-```
-Opens the 5-paradigm interface automatically at `http://127.0.0.1:8080`.
+### 1. Launch Native Desktop Workstation (Recommended)
+- **Linux**:
+  ```bash
+  ./run_ui.sh
+  # (Or ./run.sh — launches native spectra-shell desktop app)
+  ```
+- **Windows**: Double-click **`spectra.exe`** (installed via **`spectra_setup.exe`**, or upgraded via **`spectra_update.exe`**).
 
-### 2. Launch Native GTK 3 Desktop GUI
+### 2. Alternate Launch Modes
 ```bash
-./run.sh
+# Linux: Browser tab mode or Vite interactive hot-reload dev workspace
+./run_ui.sh --browser
+./run_ui.sh --dev
+
+# Standalone Pure-Rust Shell (no Python sidecar)
+cargo run -p spectra-shell -- --pure-rust
+
+# Legacy GTK 3 Desktop GUI (Linux)
+./run.sh --legacy-gtk
 ```
-*(Or launch **SPECTRA** from your desktop application launcher / menu).*
 
 ### 3. Run from the Command Line (CLI)
 ```bash
@@ -84,38 +115,41 @@ Opens the 5-paradigm interface automatically at `http://127.0.0.1:8080`.
 ./run.sh --cli -p /dev/ttyUSB0 -o telemetry.json --format json
 ./run.sh --cli -p /dev/ttyUSB0 -o counters.csv --format csv
 
-# List detected serial ports
+# List detected serial ports or supported machine models
 ./run.sh --cli --list-ports
-
-# List all supported machine models
 ./run.sh --cli --list-models
 ```
 
 ---
 
-## 🏗️ 3-Layer Rust Hybrid Architecture
+## 🏗️ Phase 3 Hybrid Rust Architecture
 
-SPECTRA features a high-performance native Rust core integrated via PyO3:
+SPECTRA combines a multi-crate Rust workspace with Python domain orchestrators:
 
 | Crate | Purpose | Core Responsibilities |
 |---|---|---|
-| [`crates/spectra-hal`](crates/spectra-hal) | Hardware Abstraction Layer | POSIX termios serial driver, `tokio-serial` async UART transport, cross-platform port discovery, Android ADB `/dev/ttyS*` bridge. |
-| [`crates/spectra-core`](crates/spectra-core) | Protocol & Memory Core | Zero-allocation byte-level state machine, optical loopback echo stripper, `@`-cipher encoder/decoder, differential EEPROM mapper, bean hopper thermal calibration. |
-| [`crates/spectra-agent`](crates/spectra-agent) | IPC & WebSocket Daemon | High-speed telemetry broadcaster and Tauri v2 async backend. |
-| [`crates/spectra-py`](crates/spectra-py) | PyO3 Native Extension | Bridges high-performance Rust parsing directly into Python (`spectra_py.so`). |
+| [`crates/spectra-shell`](crates/spectra-shell) | Native Desktop Shell | `tao` + `wry` single-window WebView2 / WebKitGTK host, `.ico` RGBA window & taskbar icon loader, persistent `window_state.json`, Python sidecar supervisor & `--pure-rust` launcher. |
+| [`crates/spectra-agent`](crates/spectra-agent) | Embedded HTTP Gateway & Daemon | Async Rust HTTP/1.1 control plane (`http_gateway.rs`) serving `web/dist/`, `/api/version`, `/api/app/heartbeat`, `/api/debug/*`, native `--pure-rust` routes (`/api/ports`, `/api/machines`, `/api/command`), and loopback sidecar reverse-proxy. |
+| [`crates/spectra-core`](crates/spectra-core) | Protocol & Calibration Core | Zero-allocation byte-level state machine, 4:1 UART codec, `@`-cipher encoder/decoder, 0.1 °C NTC/date decoders, `correlate_with_joe_ranked`, machine matching, and differential EEPROM mapper. |
+| [`crates/spectra-hal`](crates/spectra-hal) | Hardware Abstraction Layer | POSIX/Win32 serial driver, `tokio-serial` async UART transport, cross-platform port discovery, and Android ADB `/dev/ttyS*` bridge. |
+| [`crates/spectra-py`](crates/spectra-py) | PyO3 Native Extension | Bridges deterministic Rust core parsers & codecs directly into Python (`spectra_py.so` on Linux, `spectra_py.pyd` on Windows). |
 
-To verify and compile the Rust workspace:
+To verify and compile the Rust workspace and tests:
 ```bash
 cargo check --workspace
 cargo test --workspace
+python3 -m unittest discover -s .
 ```
 
 ---
 
 ## 🔌 Hardware Connection Guide
 
+> [!CAUTION]
+> **Galvanic Isolation Required on Direct UART Connections**: Legacy coffee appliance boards often run capacitive/non-isolated Mains dropper power supplies, leaving serial `GND` live relative to Earth. Always use an optical transceiver (`JURA USB Scanner N 010`) or insert an **`ADuM3160` / `ADuM4160` USB isolator** between your computer and any 5V USB-to-UART adapter.
+
 ### Option A: Official JURA USB Scanner (N 010)
-Connect the USB scanner to any USB port. The FTDI chip is recognized automatically on Linux as `/dev/ttyUSB0`. Attach the optical head to the machine's front optical port.
+Connect the USB scanner to any USB port (`COMx` on Windows, `/dev/ttyUSB0` on Linux). Attach the optical head to the machine's front optical port.
 
 ### Option B: 5V USB-to-UART Adapter (FTDI FT232R, CP2102, CH340)
 For machines with internal or external 4-pin service ports:
@@ -128,7 +162,6 @@ For machines with internal or external 4-pin service ports:
   - Pin 4: `+5V VCC` $\rightarrow$ *(Leave disconnected if using USB adapter to prevent ground loops)*.
 
 ### Option C: Dangerous Prototypes Bus Pirate v3.6
-The Bus Pirate v3.6 can be used as a transparent 5V-tolerant UART bridge:
 1. Jura Pin 1 (`GND`) $\rightarrow$ Bus Pirate `GND`
 2. Jura Pin 2 (`TX`) $\rightarrow$ Bus Pirate `MISO` (BP RX)
 3. Jura Pin 3 (`RX`) $\rightarrow$ Bus Pirate `MOSI` (BP TX)
@@ -141,10 +174,10 @@ The Bus Pirate v3.6 can be used as a transparent 5V-tolerant UART bridge:
 Serial adapters (`/dev/ttyUSB*`) belong to the `uucp` group on Arch Linux (or `dialout` on Debian/Ubuntu):
 ```bash
 # Arch / Omarchy
-sudo usermod -aG uucp $USER
+sudo usermod -aG uucp "$USER"
 
 # Ubuntu / Debian
-sudo usermod -aG dialout $USER
+sudo usermod -aG dialout "$USER"
 ```
 *(Log out and log back in for group membership to take effect).*
 
@@ -154,40 +187,48 @@ sudo usermod -aG dialout $USER
 
 ```
 .
-├── Cargo.toml              # Rust 3-layer workspace manifest
+├── Cargo.toml                  # Rust hybrid workspace manifest
 ├── crates/
-│   ├── spectra-hal/        # Serial POSIX & tokio async transport
-│   ├── spectra-core/       # Jura protocol state machine & cipher
-│   ├── spectra-agent/      # Tauri v2 async backend & WS broadcaster
-│   └── spectra-py/         # PyO3 native spectra_py.so extension
-├── drivers/                # Unified multi-manufacturer driver suite
-│   ├── base.py             # Common appliance driver abstraction
-│   ├── jura/               # Jura optical & Smart Connect driver
-│   ├── nivona/             # Nivona CafeRomatica driver
-│   ├── lamanti_kl/         # Lamanti Kalerm platform driver
-│   └── lamanti_jn/         # Lamanti Jetinno HORECA driver
-├── web/                    # 5-Paradigm React + Vite Web UI
-│   ├── src/                # Modern telemetry & P&ID components
-│   └── dist/               # Production compiled UI bundle
-├── run.sh                  # GTK 3 GUI & CLI launcher script
-├── run_ui.sh               # 5-Paradigm Web UI & API server launcher
-├── SPECTRA.desktop         # Linux desktop entry launcher
-├── icon.png                # Desktop icon
-├── gui.py                  # GTK 3 desktop application
-├── gui_web.py              # Lightweight fallback web dashboard
-├── web_server.py           # 5-paradigm API & static file web server
-├── cli.py                  # Command-line interface runner
-├── stats_collector.py      # Telemetry orchestrator & report exporters
-├── memory_mapper.py        # Differential EEPROM memory mapper & logic scope
-├── spectra_probe.py        # J.O.E. auto-correlator & diagnostic probe
-├── profiles_db.py          # Machine profile resolver & database engine
-├── profiles_data.json      # Database of 170+ machine profiles & memory maps
-├── docs/                   # Reverse-engineering protocol & memory documentation
-│   ├── JURA_MEMORY_MAP.md  # Master EEPROM & telemetry register map
-│   └── models/             # Verified model-specific hardware specifications
-├── DEPENDENCIES.md         # Runtime requirements & dependency reference
-├── LICENSE                 # MIT License
-└── README.md               # Unified platform documentation
+│   ├── spectra-shell/          # Native WebView2 / WebKitGTK desktop shell
+│   ├── spectra-agent/          # Embedded HTTP/1.1 gateway & WS broadcaster
+│   ├── spectra-core/           # Protocol state machine, cipher & J.O.E. correlator
+│   ├── spectra-hal/            # Serial & tokio async transport HAL
+│   └── spectra-py/             # PyO3 native extension (spectra_py.so / .pyd)
+├── drivers/                    # Unified multi-manufacturer driver suite
+│   ├── base.py                 # Common appliance driver abstraction
+│   ├── jura/                   # Jura optical & Smart Connect driver
+│   ├── nivona/                 # Nivona CafeRomatica driver
+│   ├── lamanti_kl/             # Lamanti Kalerm platform driver
+│   └── lamanti_jn/             # Lamanti Jetinno HORECA driver
+├── web/                        # 9-Tab React + Vite Workstation UI
+│   ├── src/                    # Components (Workstation, ConfigModal, MemMapper, HMI)
+│   └── dist/                   # Production compiled UI bundle
+├── run.sh                      # Native desktop app & CLI launcher (Linux)
+├── run_ui.sh                   # Desktop app, browser & Vite dev launcher (Linux)
+├── SPECTRA.desktop             # Portable Linux desktop entry launcher
+├── spectra_app.py              # Standalone desktop supervisor & window launcher
+├── web_server.py               # Python domain backend API server (ThreadingHTTPServer)
+├── cli.py                      # Command-line interface runner
+├── stats_collector.py          # Telemetry orchestrator & report exporters
+├── spectra_ai.py               # Default-OFF Local AI triage, summary & Vision OCR
+├── machine_library.py          # Unified 172-machine catalog & offset patch resolver
+├── profiles_db.py              # Machine profile database & local override store
+├── profiles_data.json          # Built-in database of 172 machine profiles
+├── hmi_inspector.py            # Universal ELF/APK/MCU firmware auditor & AI runtime installer
+├── github_auth.py              # GitHub Device Flow, PAT & keyring/0600 credential manager
+├── tls_utils.py                # Cross-platform TLS root cert & Windows SChannel resolver
+├── memory_mapper.py            # Differential EEPROM memory mapper & logic scope
+├── spectra_probe.py            # Field capture & J.O.E. auto-correlator
+├── docs/                       # Operator manual, diagrams & protocol documentation
+│   ├── USER_GUIDE.md           # Illustrated operator & technician guide
+│   ├── images/                 # SVG architectural & workflow diagrams
+│   ├── JURA_MEMORY_MAP.md      # Master EEPROM & telemetry register map
+│   ├── FIELD_CAPTURE_GUIDE.md  # Field telemetry capture workflow
+│   └── models/                 # Verified model-specific hardware specifications
+├── CHANGELOG.md                # Release changelog (tracked by Build YYYYMMDD.HHMM)
+├── DEPENDENCIES.md             # Runtime requirements & dependency reference
+├── LICENSE                     # MIT License
+└── README.md                   # Platform overview
 ```
 
 ---

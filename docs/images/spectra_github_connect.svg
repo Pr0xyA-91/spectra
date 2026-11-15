@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 580" width="1200" height="580" font-family="'JetBrains Mono', 'Fira Code', 'Consolas', monospace">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07090F"/>
+      <stop offset="100%" stop-color="#0D1420"/>
+    </linearGradient>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,1 L6,4 L0,7 Z" fill="#38BDF8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,1 L6,4 L0,7 Z" fill="#10B981"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="580" fill="url(#bg3)"/>
+  <rect x="16" y="16" width="1168" height="548" rx="10" fill="#0B0F19" stroke="#1E293B" stroke-width="1.5"/>
+
+  <text x="40" y="50" fill="#FCEE09" font-size="18" font-weight="bold" letter-spacing="1.2">CONNECTING GITHUB &amp; COMMUNITY CONTRIBUTION WORKFLOW</text>
+  <text x="40" y="70" fill="#94A3B8" font-size="11.5">Opt-In Submission of Verified Offset Fixes &amp; Hardware Captures to Pr0xyA-91/spectra-captures</text>
+
+  <!-- Card A: Device Flow -->
+  <rect x="40" y="96" width="356" height="270" rx="8" fill="#0F172A" stroke="#38BDF8" stroke-width="1.3"/>
+  <text x="58" y="122" fill="#7DD3FC" font-size="13" font-weight="bold">METHOD A: OAUTH DEVICE FLOW</text>
+  <text x="58" y="142" fill="#94A3B8" font-size="10">Requires SPECTRA_GITHUB_CLIENT_ID</text>
+  <text x="58" y="156" fill="#94A3B8" font-size="10">or config.json -&gt; github_client_id</text>
+
+  <rect x="58" y="172" width="320" height="32" rx="5" fill="#0369A1" stroke="#38BDF8"/>
+  <text x="218" y="192" fill="#FFFFFF" font-size="10.5" font-weight="bold" text-anchor="middle">Sign in via GitHub Device Code (Browser)</text>
+
+  <rect x="58" y="216" width="320" height="68" rx="5" fill="#090D16" stroke="#0284C7"/>
+  <text x="72" y="236" fill="#94A3B8" font-size="10">1. Copy 8-character Device Code:</text>
+  <text x="72" y="256" fill="#7DD3FC" font-size="15" font-weight="bold" letter-spacing="2">ABCD-1234</text>
+  <text x="72" y="274" fill="#38BDF8" font-size="10">2. Open github.com/login/device &amp; approve</text>
+
+  <text x="58" y="308" fill="#CBD5E1" font-size="10">Scopes: public_repo + gist (user opt-in)</text>
+  <text x="58" y="326" fill="#6EE7B7" font-size="10">Auto-polls until GitHub grants token.</text>
+  <text x="58" y="344" fill="#94A3B8" font-size="10">Never opens unexpected server tabs.</text>
+
+  <!-- Card B: PAT -->
+  <rect x="422" y="96" width="356" height="270" rx="8" fill="#0F172A" stroke="#FCEE09" stroke-width="1.3"/>
+  <text x="440" y="122" fill="#FCEE09" font-size="13" font-weight="bold">METHOD B: PERSONAL ACCESS TOKEN</text>
+  <text x="440" y="142" fill="#94A3B8" font-size="10">Recommended when Device Flow ID is unset</text>
+
+  <text x="440" y="172" fill="#E2E8F0" font-size="10.5">1. GitHub Settings -&gt; Developer settings</text>
+  <text x="440" y="190" fill="#E2E8F0" font-size="10.5">   -&gt; Personal access tokens (classic)</text>
+  <text x="440" y="212" fill="#67E8F9" font-size="10.5">2. Check scopes: [x] public_repo  [x] gist</text>
+  <text x="440" y="234" fill="#E2E8F0" font-size="10.5">3. Paste ghp_... in CONFIG -&gt; GitHub:</text>
+
+  <rect x="440" y="248" width="232" height="30" rx="4" fill="#04070D" stroke="#475569"/>
+  <text x="452" y="267" fill="#94A3B8" font-size="11">ghp_••••••••••••••••••••</text>
+  <rect x="680" y="248" width="80" height="30" rx="4" fill="#FCEE09"/>
+  <text x="720" y="267" fill="#000000" font-size="11" font-weight="bold" text-anchor="middle">Connect</text>
+
+  <text x="440" y="308" fill="#6EE7B7" font-size="10">Validated immediately via GitHub /user API.</text>
+  <text x="440" y="326" fill="#CBD5E1" font-size="10">Never exposed to Web UI JS or console logs.</text>
+  <text x="440" y="344" fill="#94A3B8" font-size="10">Sign out anytime via [Sign Out] button.</text>
+
+  <!-- Card C: CLI / Env -->
+  <rect x="784" y="96" width="376" height="270" rx="8" fill="#0F172A" stroke="#10B981" stroke-width="1.3"/>
+  <text x="802" y="122" fill="#6EE7B7" font-size="13" font-weight="bold">METHOD C: ENV / GH CLI FALLBACK</text>
+  <text x="802" y="142" fill="#94A3B8" font-size="10">Zero-click headless / developer workflow</text>
+
+  <text x="802" y="172" fill="#E2E8F0" font-size="10.5" font-weight="bold">Automatic Resolution Priority Order:</text>
+  <rect x="802" y="186" width="340" height="106" rx="5" fill="#090D16" stroke="#1E293B"/>
+  <text x="816" y="206" fill="#6EE7B7" font-size="10.5">1. OS Keyring / github_auth.json (0600)</text>
+  <text x="816" y="226" fill="#7DD3FC" font-size="10.5">2. $SPECTRA_GITHUB_TOKEN env var</text>
+  <text x="816" y="246" fill="#7DD3FC" font-size="10.5">3. $GITHUB_TOKEN env var</text>
+  <text x="816" y="266" fill="#C084FC" font-size="10.5">4. `gh auth token` (GitHub CLI)</text>
+  <text x="816" y="284" fill="#94A3B8" font-size="9.5">    (Stored dir: ~/.config/spectra/)</text>
+
+  <text x="802" y="314" fill="#CBD5E1" font-size="10">Windows config dir: %APPDATA%\SPECTRA\</text>
+  <text x="802" y="332" fill="#CBD5E1" font-size="10">Linux config dir:   ~/.config/spectra/</text>
+  <text x="802" y="350" fill="#94A3B8" font-size="10">Fallback mode creates manual GitHub issue URL.</text>
+
+  <!-- Converging Arrows -->
+  <line x1="218" y1="366" x2="540" y2="416" stroke="#38BDF8" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <line x1="600" y1="366" x2="600" y2="414" stroke="#10B981" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="972" y1="366" x2="660" y2="416" stroke="#10B981" stroke-width="2" marker-end="url(#arrowGreen)"/>
+
+  <!-- Bottom Destination Box -->
+  <rect x="140" y="422" width="920" height="118" rx="8" fill="#091512" stroke="#10B981" stroke-width="1.5"/>
+  <text x="600" y="450" fill="#6EE7B7" font-size="14" font-weight="bold" text-anchor="middle">AUTHENTICATED COMMUNITY CONTRIBUTION OUTPUT (USER OPT-IN ONLY)</text>
+
+  <rect x="165" y="468" width="275" height="54" rx="5" fill="#0B0F19" stroke="#334155"/>
+  <text x="302" y="490" fill="#FCD34D" font-size="11" font-weight="bold" text-anchor="middle">1. Offset Fix Patch JSON</text>
+  <text x="302" y="508" fill="#94A3B8" font-size="10" text-anchor="middle">CONTRIBUTE TO PUBLIC REPO</text>
+
+  <rect x="462" y="468" width="275" height="54" rx="5" fill="#0B0F19" stroke="#334155"/>
+  <text x="599" y="490" fill="#7DD3FC" font-size="11" font-weight="bold" text-anchor="middle">2. Full Diagnostic Capture</text>
+  <text x="599" y="508" fill="#94A3B8" font-size="10" text-anchor="middle">EXPORT -&gt; Capture Bundle</text>
+
+  <rect x="760" y="468" width="275" height="54" rx="5" fill="#0B0F19" stroke="#334155"/>
+  <text x="897" y="490" fill="#C084FC" font-size="11" font-weight="bold" text-anchor="middle">3. Large Payload Auto-Gist</text>
+  <text x="897" y="508" fill="#94A3B8" font-size="10" text-anchor="middle">&gt;64 KB auto-linked to Issue</text>
+</svg>

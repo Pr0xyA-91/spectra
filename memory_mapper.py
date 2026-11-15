@@ -37,7 +37,7 @@ import datetime
 try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1605"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 import threading
 import argparse
@@ -50,6 +50,14 @@ if SCRIPT_DIR not in sys.path:
 
 import serial_io
 import profiles_db
+
+# Native Rust Core Acceleration Bridge (spectra_py)
+try:
+    import spectra_py as _rust_core
+    HAS_RUST_CORE = True
+except ImportError:
+    _rust_core = None
+    HAS_RUST_CORE = False
 
 # Status constants
 STATUS_MAPPED = "mapped"
@@ -365,13 +373,23 @@ class MemoryMapperEngine:
             if ans and ans.lower().startswith("rt:"):
                 raw_hex = ans[3:].strip()
                 if len(raw_hex) >= 64:
-                    for i in range(16):
-                        w_hex = raw_hex[i * 4: i * 4 + 4]
+                    if HAS_RUST_CORE and _rust_core is not None:
                         try:
-                            self.current_eeprom[blk + i] = int(w_hex, 16)
-                        except ValueError:
-                            self.current_eeprom[blk + i] = 0x0000
-                    block_success = True
+                            words = _rust_core.parse_rt_block(ans)
+                            if len(words) == 16:
+                                for i, w in enumerate(words):
+                                    self.current_eeprom[blk + i] = w
+                                block_success = True
+                        except Exception:
+                            pass
+                    if not block_success:
+                        for i in range(16):
+                            w_hex = raw_hex[i * 4: i * 4 + 4]
+                            try:
+                                self.current_eeprom[blk + i] = int(w_hex, 16)
+                            except ValueError:
+                                self.current_eeprom[blk + i] = 0x0000
+                        block_success = True
 
             if not block_success:
                 # Fallback to single word queries

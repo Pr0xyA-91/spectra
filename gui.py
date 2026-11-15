@@ -36,7 +36,7 @@ import gui_widgets
 try:
     from version import __version__, __build__
 except ImportError:
-    __build__ = "20261102.1605"
+    __build__ = "20261112.1820"
     __version__ = f"Build {__build__}"
 
 
@@ -100,6 +100,20 @@ class JuraDiagApp(Gtk.Window):
             workarea = mon.get_workarea()
             default_w = max(760, min(1080, int(workarea.width * 0.85)))
             default_h = max(520, min(740, int(workarea.height * 0.85)))
+        elif sys.platform.startswith("win"):
+            try:
+                import ctypes
+                from ctypes import wintypes
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+                    ww = rect.right - rect.left
+                    wh = rect.bottom - rect.top
+                    default_w = max(760, min(1080, int(ww * 0.85)))
+                    default_h = max(520, min(740, int(wh * 0.85)))
+                else:
+                    default_w, default_h = 1020, 680
+            except Exception:
+                default_w, default_h = 1020, 680
         else:
             default_w, default_h = 1020, 680
 
@@ -490,6 +504,13 @@ class JuraDiagApp(Gtk.Window):
         self.btn_mapper.set_valign(Gtk.Align.CENTER)
         self.btn_mapper.connect("clicked", lambda w: self._on_mapper_clicked())
 
+        # Kalerm HMI Firmware & Translation Tools Button
+        self.btn_hmi_tools = Gtk.Button(label="📦 HMI Tools")
+        self.btn_hmi_tools.get_style_context().add_class("action-btn")
+        self.btn_hmi_tools.set_tooltip_text("Kalerm Linux HMI Firmware & Translation Inspector / Auditor")
+        self.btn_hmi_tools.set_valign(Gtk.Align.CENTER)
+        self.btn_hmi_tools.connect("clicked", lambda w: self._on_hmi_tools_clicked())
+
         # Service Report Button
         self.btn_service_report = Gtk.Button(label="🖨️ Service Receipt")
         self.btn_service_report.get_style_context().add_class("action-btn")
@@ -521,17 +542,21 @@ class JuraDiagApp(Gtk.Window):
 
         for w in [self.brand_box, self.lbl_mfr, self.mfr_combo, self.status_pill, self.lbl_port,
                   self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read,
-                  self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about, self.actions_row_box]:
+                  self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about, self.actions_row_box]:
             p = w.get_parent()
             if p:
                 p.remove(w)
-        for btn in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
+        for btn in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about]:
             p = btn.get_parent()
             if p:
                 p.remove(btn)
 
         if not is_compact:
             # Single-row desktop layout (wide displays >= 1580px)
+            self.btn_read.set_label("⚡ Read Statistics")
+            self.btn_mapper.set_label("🔬 Memory Mapper")
+            self.btn_hmi_tools.set_label("📦 HMI Tools")
+            self.btn_service_report.set_label("🖨️ Service Receipt")
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.lbl_mfr, 2, 0, 1, 1)
@@ -542,12 +567,17 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.header_spacer, 7, 0, 1, 1)
             self.header_grid.attach(self.btn_read, 8, 0, 1, 1)
             self.header_grid.attach(self.btn_mapper, 9, 0, 1, 1)
-            self.header_grid.attach(self.btn_service_report, 10, 0, 1, 1)
-            self.header_grid.attach(self.btn_export, 11, 0, 1, 1)
-            self.header_grid.attach(self.btn_about, 12, 0, 1, 1)
+            self.header_grid.attach(self.btn_hmi_tools, 10, 0, 1, 1)
+            self.header_grid.attach(self.btn_service_report, 11, 0, 1, 1)
+            self.header_grid.attach(self.btn_export, 12, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 13, 0, 1, 1)
             self.sub_title.show()
         else:
-            # 2-row layout: Row 0 Title + Status + Ports, Row 1 Brand + Actions Toolbar (min_w=942px)
+            # 2-row layout: Row 0 Title + Status + Ports, Row 1 Brand + Actions Toolbar (<= 960px)
+            self.btn_read.set_label("⚡ Read")
+            self.btn_mapper.set_label("🔬 Mapper")
+            self.btn_hmi_tools.set_label("📦 HMI")
+            self.btn_service_report.set_label("🖨️ Receipt")
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 2, 0, 1, 1)
@@ -555,7 +585,7 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.port_combo, 4, 0, 1, 1)
             self.header_grid.attach(self.btn_refresh, 5, 0, 1, 1)
 
-            for item in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_service_report, self.btn_export, self.btn_about]:
+            for item in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about]:
                 self.actions_row_box.pack_start(item, False, False, 0)
             self.header_grid.attach(self.actions_row_box, 0, 1, 6, 1)
             self.sub_title.hide()
@@ -591,6 +621,22 @@ class JuraDiagApp(Gtk.Window):
             self.sub_title.set_visible(False)
 
         self.header_grid.show_all()
+
+    def _on_hmi_tools_clicked(self):
+        try:
+            import hmi_inspector
+            hmi_inspector.launch_hmi_inspector_gui(parent=self)
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Failed to launch HMI Tools"
+            )
+            dialog.format_secondary_text(str(e))
+            dialog.run()
+            dialog.destroy()
 
     def _on_about_clicked(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True)

@@ -9,3 +9,4 @@ Terminal=false
 Categories=Utility;HardwareSettings;
 Keywords=SPECTRA;Jura;Nivona;Kalerm;Jetinno;Diagnostics;Telemetry;Statistics;EEPROM;
 StartupNotify=true
+StartupWMClass=spectra

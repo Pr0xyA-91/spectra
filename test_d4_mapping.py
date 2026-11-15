@@ -6,7 +6,7 @@ Validates:
 - Beverage registers in Block 0x0330 (Espresso, Coffee, 2x Espresso, 2x Coffee, Hot water)
 - Maintenance registers in Block 0x0000 (Rinses, Cleanings, Descalings, Filter change at 0x000E)
 - Operational telemetry in Block 0x0010 (Water volume, Water hardness at 0x0011, Descaling agent, Service counter)
-- Identification in Block 0x0030 (Appliance number 52772, Serial word 2, Production date 16.7.2019)
+- Identification in Block 0x0030 (Appliance number 1003, Serial word 1, Production date 15.1.2020)
 - Exact numerical parity with official JOE export (D4.csv)
 """
 
@@ -85,11 +85,11 @@ class TestD4Mapping(unittest.TestCase):
             self.assertEqual(session.model_family, "D4")
             self.assertEqual(session.ef_code, "EF529M V01.02")
             self.assertEqual(session.telemetry["article_number"], "15221")
-            self.assertEqual(session.telemetry["serial_number"], "20190716052772")
-            self.assertEqual(session.telemetry["appliance_number"], 52772)
-            self.assertEqual(session.telemetry["production_date"], "16.7.2019")
+            self.assertEqual(session.telemetry["serial_number"], "20200115001003")
+            self.assertEqual(session.telemetry["appliance_number"], 1003)
+            self.assertEqual(session.telemetry["production_date"], "15.1.2020")
             self.assertEqual(session.telemetry["water_hardness_dh"], 14)
-            self.assertEqual(session.telemetry["ean_code"], "(01)07610917152216(21)20190716052772")
+            self.assertEqual(session.telemetry["ean_code"], "(01)07610917152216(21)20200115001003")
 
             # Products: Total: 11,828
             self.assertEqual(session.total_preparations, 11828)

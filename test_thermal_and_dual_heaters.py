@@ -647,16 +647,16 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
             if c == "RT:20":
                 return "rt:00000000003F0000000000000000000000000000000000000000000000000000"
             if c == "RT:30":
-                return "rt:07DD000426B90000000000000000000000000000000000000000000000000000"
+                return "rt:03E90004282F0000000000000000000000000000000000000000000000000000"
             if c == "RT:E0":
                 # Doubles: 0xE0=91, 0xE1=345, 0xE2=11, 0xE3=1, 0xE4=6, 0xE5=3, 0xE9=0, 0xEA=9957 (0x26E5)
                 return "rt:005B0159000B000100060003000000000000000026E500000000000000000000"
             if c == "RE:30":
-                return "re:07DD"
+                return "re:03E9"
             if c == "RE:31":
                 return "re:0004"
             if c == "RE:32":
-                return "re:26B9"
+                return "re:282F"
             if c == "RE:15":
                 return "re:13B7"
             if c == "RE:E9":
@@ -681,12 +681,12 @@ class TestJuraThermalAndDualHeaters(unittest.TestCase):
 
         self.assertEqual(summary["machine_model"], "IMPRESSA Z5 Generation II")
         self.assertEqual(telem["article_number"], "13356")
-        self.assertEqual(telem["serial_number"], "20090525002013")
+        self.assertEqual(telem["serial_number"], "20100115001001")
         self.assertEqual(telem["serial_number_word"], 4)
-        self.assertEqual(telem["appliance_number"], 2013)
-        self.assertEqual(telem["production_date"], "25.5.2009")
-        self.assertEqual(telem["appliance_code"], "07DD26B9")
-        self.assertEqual(telem["ean_code"], "(01)07610917133567(21)20090525002013")
+        self.assertEqual(telem["appliance_number"], 1001)
+        self.assertEqual(telem["production_date"], "15.1.2010")
+        self.assertEqual(telem["appliance_code"], "03E9282F")
+        self.assertEqual(telem["ean_code"], "(01)07610917133567(21)20100115001001")
         self.assertEqual(telem["software_version_display"], "EF642D V01.04")
         self.assertEqual(telem["total_preparations"], 14562)
         self.assertEqual(telem["total_cups"], 15019)

@@ -34139,10 +34139,16 @@
     ]
   },
   "EF634": {
-    "model_family": "ENA 7 Aroma+",
+    "model_family": "ENA 7",
     "ef_code": "EF634",
-    "article_number": "13760",
-    "series": "Jura Consumer",
+    "article_number": "13500",
+    "article_numbers": [
+      "13500",
+      "13760",
+      "13501",
+      "13524"
+    ],
+    "series": "ENA-Line",
     "products": [
       {
         "code": 1,
@@ -34152,32 +34158,38 @@
       },
       {
         "code": 2,
-        "name": "1 Coffee",
-        "is_double": false,
-        "active": true
-      },
-      {
-        "code": 3,
-        "name": "1 Special Coffee / Ristretto",
-        "is_double": false,
-        "active": true
-      },
-      {
-        "code": 4,
         "name": "2 Espressi",
         "is_double": true,
         "active": true
       },
       {
-        "code": 5,
+        "code": 3,
+        "name": "1 Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 4,
         "name": "2 Coffees",
         "is_double": true,
         "active": true
       },
       {
+        "code": 5,
+        "name": "1 Aroma-Boost",
+        "is_double": false,
+        "active": true
+      },
+      {
         "code": 6,
-        "name": "2 Special Coffees",
-        "is_double": true,
+        "name": "Ground Coffee",
+        "is_double": false,
+        "active": true
+      },
+      {
+        "code": 13,
+        "name": "Hot Water",
+        "is_double": false,
         "active": true
       }
     ],

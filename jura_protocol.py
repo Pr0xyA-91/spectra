@@ -21,6 +21,14 @@ import time
 import re
 from typing import Optional, Tuple, Dict, List, Any
 
+# Native Rust Core Acceleration Bridge (spectra_py)
+try:
+    import spectra_py as _rust_core
+    HAS_RUST_CORE = True
+except ImportError:
+    _rust_core = None
+    HAS_RUST_CORE = False
+
 # Recovered S-Boxes from reverse-engineering of Jura Smart Connect protocol
 SBOX_N1 = [8, 14, 12, 4, 3, 13, 10, 11, 0, 15, 6, 7, 2, 5, 1, 9]
 SBOX_N2 = [4, 11, 13, 10, 0, 7, 15, 5, 9, 8, 3, 1, 14, 2, 12, 6]
@@ -42,6 +50,11 @@ def encode_wire_byte(val: int) -> bytes:
 
 def encode_wire(data: bytes) -> bytes:
     """Encode a sequence of bytes into 4:1 UART wire format."""
+    if HAS_RUST_CORE and _rust_core is not None and hasattr(_rust_core, "encode_jura_wire_bytes"):
+        try:
+            return bytes(_rust_core.encode_jura_wire_bytes(data))
+        except Exception:
+            pass
     out = bytearray()
     for b in data:
         out.extend(encode_wire_byte(b))
@@ -52,6 +65,12 @@ def decode_wire(raw: bytes) -> Tuple[bytes, bytes]:
     Decode 4:1 UART carrier bytes into payload bytes.
     Returns (decoded_bytes, remaining_unprocessed_raw_bytes).
     """
+    if HAS_RUST_CORE and _rust_core is not None and hasattr(_rust_core, "decode_jura_wire_bytes"):
+        try:
+            dec, rem = _rust_core.decode_jura_wire_bytes(raw)
+            return bytes(dec), bytes(rem)
+        except Exception:
+            pass
     decoded = bytearray()
     num_complete_groups = len(raw) // 4
     for g in range(num_complete_groups):
@@ -82,6 +101,11 @@ def _shuffle(nib: int, pos: int, key: int) -> int:
 
 def crypt(data: bytes, key: int) -> bytes:
     """Self-inverse per-nibble transform (crypt(crypt(m, k), k) == m)."""
+    if HAS_RUST_CORE and _rust_core is not None:
+        try:
+            return bytes(_rust_core.smart_connect_crypt(data, key & 0xFF))
+        except Exception:
+            pass
     out = bytearray(len(data))
     for i, b in enumerate(data):
         high = _shuffle(b >> 4, 2 * i, key)

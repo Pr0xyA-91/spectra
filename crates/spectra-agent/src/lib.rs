@@ -1,5 +1,7 @@
 //! Tauri v2 IPC Command Backend and Async Agent Runtime for SPECTRA Diagnostics
 
+pub mod http_gateway;
+
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;

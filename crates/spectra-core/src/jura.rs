@@ -39,6 +39,44 @@ pub enum JuraCommand {
 }
 
 /// Real-time subsystem telemetry decoded from `HZ:` CSV frames (all metric units: °C, ml/s)
+/// Converts a Jura NTC integer reading into Celsius (0.1 °C precision).
+pub fn decode_jura_temperature_word(num: i64) -> Option<f64> {
+    if num <= 0 || num >= 1900 {
+        return None;
+    }
+    if (150..=1850).contains(&num) {
+        return Some((num as f64) / 10.0);
+    }
+    if (15..150).contains(&num) {
+        return Some(num as f64);
+    }
+    None
+}
+
+/// Decodes a packed 16-bit Jura EEPROM production/service date word into `(year, month, day)`.
+pub fn decode_jura_date_word(val: u16) -> Option<(u16, u8, u8)> {
+    if val == 0 || val == 0xFFFF {
+        return None;
+    }
+    let day = (val & 0x1F) as u8;
+    let month = ((val >> 5) & 0x0F) as u8;
+    let year = 1990u16 + ((val >> 9) & 0x7F);
+    if !(1..=12).contains(&month) || day < 1 {
+        return None;
+    }
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap { 29 } else { 28 },
+        _ => return None,
+    };
+    if day > max_day {
+        return None;
+    }
+    Some((year, month, day))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HzTelemetryFrame {
     pub coffee_temp_c: f32,
@@ -292,11 +330,35 @@ impl JuraProtocol {
 
     /// Encodes a full ASCII command string into 4:1 Jura wire bytes (`4 * N` bytes)
     pub fn encode_wire_frame(ascii_cmd: &str) -> Vec<u8> {
-        let mut wire = Vec::with_capacity(ascii_cmd.len() * 4);
-        for b in ascii_cmd.as_bytes() {
-            wire.extend_from_slice(&jura_codec::encode_byte(*b));
+        Self::encode_wire_bytes(ascii_cmd.as_bytes())
+    }
+
+    /// Encodes raw payload bytes into 4:1 Jura wire carrier bytes (`4 * N` bytes)
+    pub fn encode_wire_bytes(data: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(data.len() * 4);
+        for &b in data {
+            wire.extend_from_slice(&jura_codec::encode_byte(b));
         }
         wire
+    }
+
+    /// Decodes complete 4-byte 4:1 Jura carrier groups into raw payload bytes,
+    /// returning `(decoded_bytes, remaining_tail_bytes)`.
+    pub fn decode_wire_bytes(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let complete_groups = raw.len() / 4;
+        let mut decoded = Vec::with_capacity(complete_groups);
+        for chunk in raw[..complete_groups * 4].chunks_exact(4) {
+            let mut b = 0u8;
+            for (i, &r) in chunk.iter().enumerate() {
+                let bit0 = (r >> 2) & 1;
+                let bit1 = (r >> 5) & 1;
+                let nibble = bit0 | (bit1 << 1);
+                b |= nibble << (2 * i);
+            }
+            decoded.push(b);
+        }
+        let remainder = raw[complete_groups * 4..].to_vec();
+        (decoded, remainder)
     }
 
     /// Decodes a 4:1 Jura wire buffer (`4 * N` bytes) back into an ASCII string
@@ -1157,5 +1219,28 @@ mod tests {
         assert!(!evaluate_commercial_hopper_state(false, 0x0000));
         assert!(!evaluate_commercial_hopper_state(true, 0x3FF0));
         assert!(evaluate_commercial_hopper_state(true, 0x0000));
+    }
+
+    #[test]
+    fn test_wire_bytes_and_scalar_decoders() {
+        let payload = b"\x26TY:\r\n";
+        let encoded = JuraProtocol::encode_wire_bytes(payload);
+        assert_eq!(encoded.len(), payload.len() * 4);
+        let mut with_tail = encoded.clone();
+        with_tail.extend_from_slice(&[0xDB, 0xDF]);
+        let (decoded, rem) = JuraProtocol::decode_wire_bytes(&with_tail);
+        assert_eq!(decoded, payload);
+        assert_eq!(rem, vec![0xDB, 0xDF]);
+
+        assert_eq!(decode_jura_temperature_word(0x03C4), Some(96.4));
+        assert_eq!(decode_jura_temperature_word(0x0802), None);
+        assert_eq!(decode_jura_temperature_word(92), Some(92.0));
+
+        // 2024-02-29 => ((34 << 9) | (2 << 5) | 29)
+        let leap_word = ((2024u16 - 1990) << 9) | (2 << 5) | 29;
+        assert_eq!(decode_jura_date_word(leap_word), Some((2024, 2, 29)));
+        let bad_date = ((2023u16 - 1990) << 9) | (2 << 5) | 29;
+        assert_eq!(decode_jura_date_word(bad_date), None);
+        assert_eq!(decode_jura_date_word(0xFFFF), None);
     }
 }
