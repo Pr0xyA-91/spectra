@@ -3,11 +3,26 @@ import SpectraWorkspace from './components/SpectraWorkspace';
 import DebugConsoleModal from './components/DebugConsoleModal';
 
 export default function App() {
+  const [lang, setLang] = useState(() => {
+    try {
+      const saved = localStorage.getItem('spectra_lang');
+      return saved === 'cs' ? 'cs' : 'en';
+    } catch {
+      return 'en';
+    }
+  });
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [debugCounts, setDebugCounts] = useState({ errorCount: 0, warnCount: 0 });
   const [debugSummary, setDebugSummary] = useState(null);
   const [scaleMode, setScaleMode] = useState('auto'); // 'auto' | 0.85 | 1.0 | 1.15
   const [currentScale, setCurrentScale] = useState(1.0);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('spectra_lang', lang);
+    } catch {}
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   // 1. Native Desktop App mode lifecycle: heartbeat & window_closed / close beacon
   useEffect(() => {
@@ -158,6 +173,8 @@ export default function App() {
   return (
     <>
       <SpectraWorkspace
+        lang={lang}
+        setLang={setLang}
         isDebugOpen={isDebugOpen}
         setIsDebugOpen={setIsDebugOpen}
         debugCounts={debugCounts}
@@ -166,7 +183,7 @@ export default function App() {
         setScaleMode={setScaleMode}
         currentScale={currentScale}
       />
-      <DebugConsoleModal isOpen={isDebugOpen} onClose={() => setIsDebugOpen(false)} />
+      <DebugConsoleModal isOpen={isDebugOpen} onClose={() => setIsDebugOpen(false)} lang={lang} />
     </>
   );
 }

@@ -19,8 +19,10 @@ import {
   AlertTriangle,
   Info,
 } from 'lucide-react';
+import { createTranslator } from '../i18n/translations';
 
-export default function DebugConsoleModal({ isOpen, onClose }) {
+export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
+  const t = createTranslator(lang);
   const [diagnostics, setDiagnostics] = useState(null);
   const [logs, setLogs] = useState([]);
   const [errorCount, setErrorCount] = useState(0);
@@ -156,23 +158,23 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <div>
               <div className="flex items-center space-x-2">
                 <span className="font-mono font-black text-sm tracking-wide text-zinc-100 uppercase">
-                  SPECTRA Process &amp; Diagnostics Monitor
+                  {t('dbgTitle')}
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
                   PID {proc.pid || '-'}
                 </span>
               </div>
               <div className="text-[11px] text-zinc-400 font-mono flex items-center space-x-3 mt-0.5">
-                <span>Uptime: <strong className="text-zinc-200">{proc.uptime_sec || 0}s</strong></span>
+                <span>{t('dbgUptime')} <strong className="text-zinc-200">{proc.uptime_sec || 0}s</strong></span>
                 <span>•</span>
                 <span>RAM: <strong className="text-zinc-200">{proc.rss_mb || 0} MB</strong></span>
                 <span>•</span>
                 <span className={errorCount > 0 ? 'text-rose-400 font-bold' : ''}>
-                  Errors: {errorCount}
+                  {t('dbgErrors')} {errorCount}
                 </span>
                 <span>•</span>
                 <span className={warnCount > 0 ? 'text-amber-400 font-bold' : ''}>
-                  Warnings: {warnCount}
+                  {t('dbgWarnings')} {warnCount}
                 </span>
               </div>
             </div>
@@ -187,44 +189,44 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
                   ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-400'
               }`}
-              title="Toggle Live 1.5s Auto-Refresh"
+              title={t('dbgAutoRefresh')}
             >
               <Activity className={`w-3 h-3 ${autoRefresh ? 'animate-pulse text-emerald-400' : ''}`} />
-              <span>{autoRefresh ? 'AUTO-REFRESH (1.5s)' : 'PAUSED'}</span>
+              <span>{autoRefresh ? t('dbgAutoRefresh') : t('dbgPaused')}</span>
             </button>
 
             <button
               onClick={fetchStatus}
               disabled={isRefreshing}
               className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 flex items-center space-x-1 text-[11px] font-bold"
-              title="Refresh Diagnostics Now"
+              title={t('btnRefresh')}
             >
               <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>REFRESH</span>
+              <span>{t('btnRefresh')}</span>
             </button>
 
             <button
               onClick={handleCopyReport}
               className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 flex items-center space-x-1 text-[11px] font-bold"
-              title="Copy Full Diagnostic Snapshot to Clipboard"
+              title={t('dbgCopyReport')}
             >
               {copiedNotice ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              <span>{copiedNotice ? 'COPIED!' : 'COPY REPORT'}</span>
+              <span>{copiedNotice ? t('dbgCopied') : t('dbgCopyReport')}</span>
             </button>
 
             <button
               onClick={handleClear}
               className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-rose-950/40 border border-zinc-700 hover:border-rose-700 text-zinc-300 hover:text-rose-300 flex items-center space-x-1 text-[11px] font-bold"
-              title="Clear Event Ring Buffer"
+              title={t('btnClear')}
             >
               <Trash2 className="w-3 h-3" />
-              <span>CLEAR</span>
+              <span>{t('btnClear')}</span>
             </button>
 
             <button
               onClick={onClose}
               className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-400 hover:text-white"
-              title="Close (Esc)"
+              title={t('dbgClose')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -238,7 +240,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <div className="flex items-center justify-between text-zinc-400 text-[11px] mb-1">
               <span className="flex items-center space-x-1 text-sky-400 font-bold">
                 <Cpu className="w-3.5 h-3.5" />
-                <span>CORE PROCESS</span>
+                <span>{t('dbgCoreProcess')}</span>
               </span>
               <span className="text-[10px] text-zinc-500 uppercase">{proc.platform || '-'}</span>
             </div>
@@ -247,17 +249,17 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex justify-between">
               <span>Python: {proc.python_version || '-'}</span>
-              <span>Uptime: {proc.uptime_sec || 0}s</span>
+              <span>{t('dbgUptime')} {proc.uptime_sec || 0}s</span>
             </div>
             <div className="mt-1.5 pt-1.5 border-t border-zinc-800/80 flex items-center justify-between text-[10px]">
               <span className="text-zinc-500">ACCEL</span>
               {proc.rust_core_active ? (
                 <span className="px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  ⚡ RUST CORE: ACTIVE
+                  {t('dbgRustActive')}
                 </span>
               ) : (
                 <span className="px-1.5 py-0.5 rounded text-zinc-500 bg-zinc-800/60 border border-zinc-800">
-                  PYTHON FALLBACK
+                  {t('dbgPythonFallback')}
                 </span>
               )}
             </div>
@@ -268,7 +270,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <div className="flex items-center justify-between text-zinc-400 text-[11px] mb-1">
               <span className="flex items-center space-x-1 text-emerald-400 font-bold">
                 <Radio className="w-3.5 h-3.5" />
-                <span>HARDWARE SERIAL</span>
+                <span>{t('dbgHwSerial')}</span>
               </span>
               <span
                 className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
@@ -281,10 +283,10 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
               </span>
             </div>
             <div className="text-zinc-200 font-bold text-xs truncate" title={serial.port}>
-              Port: {serial.port || 'None'}
+              Port: {serial.port || t('dbgNone')}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex justify-between">
-              <span>Driver: {serial.driver || 'None'}</span>
+              <span>{t('dbgDriver')} {serial.driver || t('dbgNone')}</span>
               {serial.error_state && (
                 <span className="text-rose-400 font-bold">Err: {serial.consecutive_errors}</span>
               )}
@@ -296,7 +298,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <div className="flex items-center justify-between text-zinc-400 text-[11px] mb-1">
               <span className="flex items-center space-x-1 text-purple-400 font-bold">
                 <Terminal className="w-3.5 h-3.5" />
-                <span>LOCAL AI ENGINE</span>
+                <span>{t('dbgLocalAiEngine')}</span>
               </span>
               <span
                 className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
@@ -305,14 +307,14 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
                     : 'bg-zinc-800 text-zinc-500'
                 }`}
               >
-                {ollama.running ? 'RUNNING' : 'STOPPED'}
+                {ollama.running ? t('dbgRunning') : t('dbgStopped')}
               </span>
             </div>
             <div className="text-zinc-200 font-bold text-xs truncate">
               {ollama.running ? `PID ${ollama.pid || 'External'} (${ollama.active_model || 'Idle'})` : '0 MB (Offline)'}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-              <span>Managed: {ollama.managed_by_spectra ? 'Yes' : 'No'}</span>
+              <span>{t('dbgManaged')} {ollama.managed_by_spectra ? t('dbgYes') : t('dbgNo')}</span>
               {ollama.running && (
                 <button
                   onClick={handleStopAi}
@@ -320,7 +322,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
                   className="px-1.5 py-0.5 rounded bg-rose-950/60 hover:bg-rose-900 border border-rose-700 text-[10px] text-rose-300 font-bold flex items-center space-x-1"
                 >
                   <Square className="w-2.5 h-2.5 fill-current" />
-                  <span>{stoppingAi ? 'STOPPING...' : 'STOP AI'}</span>
+                  <span>{stoppingAi ? t('dbgStopping') : t('dbgStopAi')}</span>
                 </button>
               )}
             </div>
@@ -334,15 +336,15 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <div className="flex items-center justify-between text-zinc-400 text-[11px] mb-1">
               <span className="flex items-center space-x-1 text-amber-400 font-bold">
                 <Layers className="w-3.5 h-3.5" />
-                <span>THREADS &amp; CHILDREN</span>
+                <span>{t('dbgThreadsChildren')}</span>
               </span>
               <span className="text-[10px] text-zinc-500 flex items-center space-x-1">
-                <span>{showThreads ? 'COLLAPSE' : 'EXPAND'}</span>
+                <span>{showThreads ? t('dbgCollapse') : t('dbgExpand')}</span>
                 {showThreads ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               </span>
             </div>
             <div className="text-zinc-200 font-bold text-sm">
-              {threads.length} Threads • {children.length} Children
+              {t('dbgThreadsCount', { threads: threads.length, children: children.length })}
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 truncate">
               HTTP: {diagnostics?.http_daemon?.bind || '127.0.0.1:8080'}
@@ -357,7 +359,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
               <div>
                 <h4 className="font-bold text-zinc-400 mb-1.5 text-xs flex items-center space-x-1">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span>ACTIVE PYTHON THREADS ({threads.length})</span>
+                  <span>{t('dbgActiveThreads', { count: threads.length })}</span>
                 </h4>
                 <div className="space-y-1">
                   {threads.map((t, idx) => (
@@ -383,11 +385,11 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
               <div>
                 <h4 className="font-bold text-zinc-400 mb-1.5 text-xs flex items-center space-x-1">
                   <span className="w-2 h-2 rounded-full bg-purple-400" />
-                  <span>OS CHILD SUBPROCESSES ({children.length})</span>
+                  <span>{t('dbgChildProcesses', { count: children.length })}</span>
                 </h4>
                 {children.length === 0 ? (
                   <div className="text-zinc-500 italic p-2 bg-[#14141d] rounded border border-zinc-800">
-                    No active OS child processes spawned.
+                    {t('dbgNoChildren')}
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -416,8 +418,8 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
           {/* Filters */}
           <div className="flex items-center space-x-1">
             {[
-              { id: 'ALL', label: `ALL (${logs.length})` },
-              { id: 'ERRORS', label: `ERRORS & WARN (${errorCount + warnCount})` },
+              { id: 'ALL', label: t('dbgFilterAll', { count: logs.length }) },
+              { id: 'ERRORS', label: t('dbgFilterErrors', { count: errorCount + warnCount }) },
               { id: 'API', label: 'API / HTTP' },
               { id: 'BACKEND', label: 'BACKEND' },
               { id: 'FRONTEND', label: 'FRONTEND' },
@@ -441,7 +443,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
             <Search className="w-3.5 h-3.5 text-zinc-500" />
             <input
               type="text"
-              placeholder="Search events or stack traces..."
+              placeholder={t('dbgSearchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="bg-transparent text-zinc-200 placeholder-zinc-500 text-[11px] outline-none w-full font-mono"
@@ -462,7 +464,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
           {filteredLogs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-44 text-zinc-500 italic">
               <Terminal className="w-8 h-8 text-zinc-700 mb-2" />
-              <span>No log events match the current filter.</span>
+              <span>{t('dbgNoLogMatch')}</span>
             </div>
           ) : (
             filteredLogs.map((item) => {
@@ -522,7 +524,7 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
                         onClick={() => setExpandedLogId(isExpanded ? null : item.id)}
                         className="text-zinc-400 hover:text-zinc-100 flex items-center space-x-1 text-[10px] shrink-0 font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700"
                       >
-                        <span>{isExpanded ? 'Hide Trace' : 'Show Trace'}</span>
+                        <span>{isExpanded ? t('dbgHideTrace') : t('dbgShowTrace')}</span>
                         {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                       </button>
                     )}
@@ -545,12 +547,12 @@ export default function DebugConsoleModal({ isOpen, onClose }) {
         {/* Footer Bar */}
         <div className="px-4 py-2 bg-[#101017] border-t border-zinc-800 flex items-center justify-between text-zinc-400 text-[11px] font-mono shrink-0">
           <div className="flex items-center space-x-3">
-            <span>Buffer: <strong>{logs.length}</strong> / 500 lines</span>
+            <span>{t('dbgBuffer', { count: logs.length })}</span>
             <span>•</span>
-            <span>Showing: <strong>{filteredLogs.length}</strong></span>
+            <span>{t('dbgShowing', { count: filteredLogs.length })}</span>
           </div>
           <div className="flex items-center space-x-2 text-zinc-500 text-[10px]">
-            <span>Press <kbd className="px-1 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-bold">Ctrl+Shift+D</kbd> or <kbd className="px-1 py-0.5 bg-zinc-800 text-zinc-300 rounded border border-zinc-700 font-bold">F12</kbd> to toggle</span>
+            <span>{t('dbgShortcutHint')}</span>
           </div>
         </div>
       </div>

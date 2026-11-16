@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__build__ = "20261114.0020"
+__build__ = "20261116.1634"
 __version__ = f"Build {__build__}"
 BUILD_NUMBER = __build__
 VERSION = __version__
@@ -46,7 +46,7 @@ def update_build(new_build: str = None) -> str:
 
     updated = re.sub(
         r'__build__\s*=\s*"[^"]*"',
-        f'__build__ = "{new_build}"',
+        f'__build__ = "20261116.1634"',
         content
     )
     file_path.write_text(updated, encoding="utf-8")

@@ -220,7 +220,8 @@ sudo usermod -aG dialout "$USER"
 ├── memory_mapper.py            # Differential EEPROM memory mapper & logic scope
 ├── spectra_probe.py            # Field capture & J.O.E. auto-correlator
 ├── docs/                       # Operator manual, diagrams & protocol documentation
-│   ├── USER_GUIDE.md           # Illustrated operator & technician guide
+│   ├── USER_GUIDE.md           # Illustrated operator & technician guide (English)
+│   ├── USER_GUIDE_CS.md        # Simple operator user guide (Czech / Čeština)
 │   ├── images/                 # SVG architectural & workflow diagrams
 │   ├── JURA_MEMORY_MAP.md      # Master EEPROM & telemetry register map
 │   ├── FIELD_CAPTURE_GUIDE.md  # Field telemetry capture workflow

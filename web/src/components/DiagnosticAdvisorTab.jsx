@@ -18,6 +18,7 @@ import {
   Send,
   Sliders,
 } from 'lucide-react';
+import { createTranslator, txAdvisorCard, txBeverageName, txVal } from '../i18n/translations';
 
 /**
  * Overview Tab: AI Diagnostic Health Advisor & Beverage Recipe Analytics
@@ -31,6 +32,7 @@ import {
  */
 export default function DiagnosticAdvisorTab({
   theme,
+  lang = 'en',
   statsData,
   liveData,
   selectedPort,
@@ -48,6 +50,7 @@ export default function DiagnosticAdvisorTab({
   onStatsUpdated = null,
   onOpenConfig = null,
 }) {
+  const t = createTranslator(lang);
   const [checklist, setChecklist] = useState({
     chk1: true, // Visual inspection of silicone pressure lines & brass fittings
     chk2: true, // Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)
@@ -82,6 +85,7 @@ export default function DiagnosticAdvisorTab({
           telemetry: liveData || {},
           stats: statsData || {},
           model: aiModel || undefined,
+          lang,
         }),
       });
       const contentType = res.headers.get('content-type') || '';
@@ -113,6 +117,7 @@ export default function DiagnosticAdvisorTab({
         body: JSON.stringify({
           stats: statsData || {},
           model: aiModel || undefined,
+          lang,
         }),
       });
       const contentType = res.headers.get('content-type') || '';
@@ -162,7 +167,7 @@ export default function DiagnosticAdvisorTab({
   const handleCalibrateUploadedRef = async () => {
     if (!aiEnabled) return;
     if (!refCsvText && !refImageB64) {
-      setCalNotice({ msg: 'Choose a J.O.E. / legacy CSV export or diagnostic screenshot first.', error: true, url: '' });
+      setCalNotice({ msg: t('msgSelectRefFirst'), error: true, url: '' });
       return;
     }
     setIsCalibrating(true);
@@ -187,7 +192,7 @@ export default function DiagnosticAdvisorTab({
       } else {
         setCalResult(data);
         setCalNotice({
-          msg: `Matched ${data.matched_products} beverage + ${data.matched_maintenance} maintenance offsets cleanly.`,
+          msg: t('msgMatchedOffsets', { products: data.matched_products, maintenance: data.matched_maintenance }),
           error: false,
           url: '',
         });
@@ -217,7 +222,7 @@ export default function DiagnosticAdvisorTab({
         setAppliedLocal(true);
         if (data.updated_stats && onStatsUpdated) onStatsUpdated(data.updated_stats);
         setCalNotice({
-          msg: `Applied & saved (${data.saved_key}). Statistical counters refreshed immediately.`,
+          msg: t('msgAppliedSaved', { key: data.saved_key }),
           error: false,
           url: '',
         });
@@ -231,7 +236,7 @@ export default function DiagnosticAdvisorTab({
 
   const handleContributeOffsetFix = async () => {
     if (!calResult?.override) return;
-    setCalNotice({ msg: 'Submitting verified offset fix to community repository...', error: false, url: '' });
+    setCalNotice({ msg: t('msgSubmittingFix'), error: false, url: '' });
     try {
       const res = await fetch('/api/offsets/contribute', {
         method: 'POST',
@@ -244,13 +249,13 @@ export default function DiagnosticAdvisorTab({
       const data = await res.json();
       if (data.success) {
         setCalNotice({
-          msg: data.message || 'Contributed successfully to Pr0xyA-91/spectra-captures.',
+          msg: data.message || t('msgContributedSuccess'),
           error: false,
           url: data.url || '',
         });
       } else {
         setCalNotice({
-          msg: data.error || 'GitHub upload unavailable — use Export File (.json) to submit manually.',
+          msg: data.error || t('msgGithubUnavailable'),
           error: true,
           url: data.url || '',
         });
@@ -303,10 +308,10 @@ export default function DiagnosticAdvisorTab({
         </div>
         <div className="space-y-1">
           <h3 className="text-base font-black text-white uppercase tracking-wider">
-            MACHINE DATA NOT YET READ
+            {t('machineNotReadTitle')}
           </h3>
           <p className="text-xs text-zinc-400 max-w-lg mx-auto">
-            Diagnostic counters, maintenance cycles, and the automated AI health scorecard require interrogating the machine's EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and click below to read all parameters.
+            {t('machineNotReadDesc', { port: selectedPort || t('serialPortFallback') })}
           </p>
         </div>
         <div className="pt-2">
@@ -315,7 +320,7 @@ export default function DiagnosticAdvisorTab({
             disabled={isInterrogating || !selectedPort}
             className="px-4 py-2 bg-[#FCEE09] hover:bg-yellow-400 text-black font-extrabold text-xs rounded tracking-wider shadow-[0_0_12px_rgba(252,238,9,0.4)] transition-all font-mono disabled:opacity-50"
           >
-            {isInterrogating ? 'READING MACHINE DATA...' : '⚡ INTERROGATE MACHINE & READ DATA'}
+            {isInterrogating ? t('btnReadingData') : t('btnInterrogateFull')}
           </button>
         </div>
       </div>
@@ -347,13 +352,13 @@ export default function DiagnosticAdvisorTab({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                EXECUTIVE APPLIANCE HEALTH SCORECARD
+                {t('scorecardTitle')}
               </div>
               <div className="text-lg font-black font-mono text-gray-200">
                 {statsData?.machine_model || 'Jura IMPRESSA XJ5 Pro'}
               </div>
               <div className="text-xs text-gray-400">
-                Protocol: <span className="font-mono text-sky-400">{statsData?.protocol_mode || 'Plain ASCII'}</span> | Power: <span className="font-mono text-gray-300">{statsData?.power_spec || '230V / 50Hz'}</span>
+                {t('protocolLabel')} <span className="font-mono text-sky-400">{statsData?.protocol_mode || 'Plain ASCII'}</span> | {t('powerLabel')} <span className="font-mono text-gray-300">{statsData?.power_spec || '230V / 50Hz'}</span>
               </div>
             </div>
 
@@ -365,10 +370,10 @@ export default function DiagnosticAdvisorTab({
               </div>
               <div>
                 <div className={`text-xs font-bold uppercase ${healthScore >= 90 ? 'text-emerald-400' : (healthScore >= 75 ? 'text-amber-400' : 'text-rose-400')}`}>
-                  {healthScore >= 90 ? 'EXCELLENT HEALTH' : (healthScore >= 75 ? 'ATTENTION REQUIRED' : 'CRITICAL SERVICE')}
+                  {healthScore >= 90 ? t('healthExcellent') : (healthScore >= 75 ? t('healthAttention') : t('healthCritical'))}
                 </div>
                 <div className="text-[10px] text-gray-500">
-                  {healthScore >= 90 ? 'All parameters within DIN-ISO tolerances.' : 'Review recommended maintenance actions below.'}
+                  {healthScore >= 90 ? t('healthExcellentDesc') : t('healthAttentionDesc')}
                 </div>
               </div>
             </div>
@@ -381,7 +386,7 @@ export default function DiagnosticAdvisorTab({
               className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-950/60 hover:bg-sky-900 border border-sky-600/60 text-sky-200 font-bold text-xs rounded transition-colors cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>📄 VIEW / PRINT SERVICE CERTIFICATE</span>
+              <span>{t('btnViewCertificate')}</span>
             </button>
 
             {aiEnabled && aiServiceSummary?.customer_summary && (
@@ -390,7 +395,7 @@ export default function DiagnosticAdvisorTab({
                 className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/70 text-emerald-200 font-bold text-xs rounded transition-colors cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>📄 CERTIFICATE + AI SUMMARY</span>
+                <span>{t('btnCertificateWithAi')}</span>
               </button>
             )}
 
@@ -399,7 +404,7 @@ export default function DiagnosticAdvisorTab({
               className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900 border border-purple-600/60 text-purple-200 font-bold text-xs rounded transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>💾 EXPORT DIAGNOSTIC DATA</span>
+              <span>{t('btnExportData')}</span>
             </button>
           </div>
         </div>
@@ -409,15 +414,16 @@ export default function DiagnosticAdvisorTab({
           <div className="flex items-center justify-between mb-3 border-b border-gray-800 pb-2">
             <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
               <ShieldCheck className="w-4 h-4 text-sky-400" />
-              <span>AUTOMATED DIAGNOSTIC HEALTH ADVISOR</span>
+              <span>{t('advisorTitle')}</span>
             </span>
             <span className="text-[10px] font-mono text-gray-400">
-              {advisorCards.length} CHECKS EVALUATED
+              {t('advisorChecksCount', { count: advisorCards.length })}
             </span>
           </div>
 
           <div className="space-y-2.5">
-            {advisorCards.map((card, idx) => {
+            {advisorCards.map((rawCard, idx) => {
+              const card = txAdvisorCard(lang, rawCard);
               const borderCol =
                 card.severity === 'ok'
                   ? 'border-emerald-900/60 bg-emerald-950/20'
@@ -458,7 +464,7 @@ export default function DiagnosticAdvisorTab({
         <div className={`p-4 border rounded ${theme.surfaceClass}`}>
           <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2 flex items-center space-x-1.5 border-b border-gray-800 pb-2">
             <Wrench className="w-4 h-4 text-purple-400" />
-            <span>TECHNICIAN FIELD SERVICE CHECKLIST</span>
+            <span>{t('checklistTitle')}</span>
           </div>
           <div className="space-y-2 text-xs">
             <label className="flex items-start space-x-2.5 cursor-pointer text-gray-300 hover:text-white">
@@ -468,7 +474,7 @@ export default function DiagnosticAdvisorTab({
                 onChange={(e) => setChecklist({ ...checklist, chk1: e.target.checked })}
                 className="mt-0.5 rounded accent-sky-500"
               />
-              <span>Visual inspection of silicone pressure lines &amp; brass fittings</span>
+              <span>{t('chk1')}</span>
             </label>
             <label className="flex items-start space-x-2.5 cursor-pointer text-gray-300 hover:text-white">
               <input
@@ -477,7 +483,7 @@ export default function DiagnosticAdvisorTab({
                 onChange={(e) => setChecklist({ ...checklist, chk2: e.target.checked })}
                 className="mt-0.5 rounded accent-sky-500"
               />
-              <span>Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)</span>
+              <span>{t('chk2')}</span>
             </label>
             <label className="flex items-start space-x-2.5 cursor-pointer text-gray-300 hover:text-white">
               <input
@@ -486,7 +492,7 @@ export default function DiagnosticAdvisorTab({
                 onChange={(e) => setChecklist({ ...checklist, chk3: e.target.checked })}
                 className="mt-0.5 rounded accent-sky-500"
               />
-              <span>Descaling cycle execution &amp; flowmeter impulse verification</span>
+              <span>{t('chk3')}</span>
             </label>
             <label className="flex items-start space-x-2.5 cursor-pointer text-gray-300 hover:text-white">
               <input
@@ -495,7 +501,7 @@ export default function DiagnosticAdvisorTab({
                 onChange={(e) => setChecklist({ ...checklist, chk4: e.target.checked })}
                 className="mt-0.5 rounded accent-sky-500"
               />
-              <span>Clean microswitch contact leaf springs on rear chassis with IPA</span>
+              <span>{t('chk4')}</span>
             </label>
           </div>
         </div>
@@ -505,7 +511,7 @@ export default function DiagnosticAdvisorTab({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2">
             <div className="flex items-center space-x-1.5 text-xs font-bold text-purple-300 uppercase tracking-wider">
               <Sparkles className="w-4 h-4 text-purple-400" />
-              <span>LOCAL AI BENCH TRIAGE, SUMMARY &amp; OFFSET CALIBRATOR</span>
+              <span>{t('aiPanelTitle')}</span>
             </div>
             {onToggleAi && (
               <button
@@ -517,14 +523,14 @@ export default function DiagnosticAdvisorTab({
                 }`}
               >
                 <Power className="w-3 h-3" />
-                <span>{aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (DEFAULT OFF)'}</span>
+                <span>{aiEnabled ? t('btnTurnAiOff') : t('btnEnableAiDefaultOff')}</span>
               </button>
             )}
           </div>
 
           {!aiEnabled ? (
             <p className="text-[11px] text-zinc-400 font-mono">
-              Local AI is currently <strong>OFF</strong> (0 MB RAM used). Enable it when you want on-demand bench fault triage or a plain-language customer summary.
+              {t('aiOffNotice')}
             </p>
           ) : (
             <div className="space-y-2.5">
@@ -535,7 +541,7 @@ export default function DiagnosticAdvisorTab({
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white font-bold text-xs rounded cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isRunningTriage ? 'animate-spin' : ''}`} />
-                  <span>{isRunningTriage ? 'RUNNING TRIAGE...' : '🧠 RUN AI BENCH TRIAGE'}</span>
+                  <span>{isRunningTriage ? t('btnRunningTriage') : t('btnRunTriage')}</span>
                 </button>
                 <button
                   onClick={handleGenerateServiceSummary}
@@ -543,7 +549,7 @@ export default function DiagnosticAdvisorTab({
                   className="flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-800 hover:bg-cyan-700 disabled:opacity-50 text-white font-bold text-xs rounded cursor-pointer"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>{isGeneratingSummary ? 'GENERATING NOTE...' : '📝 GENERATE CUSTOMER SUMMARY'}</span>
+                  <span>{isGeneratingSummary ? t('btnGeneratingSummary') : t('btnGenerateSummary')}</span>
                 </button>
               </div>
 
@@ -556,7 +562,7 @@ export default function DiagnosticAdvisorTab({
               {aiTriage && (
                 <div className="p-3 bg-black/50 border border-purple-800/60 rounded space-y-2 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-purple-300">Bench Diagnosis ({aiTriage.model})</span>
+                    <span className="font-bold text-purple-300">{t('benchDiagnosisTitle', { model: aiTriage.model })}</span>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
                       aiTriage.urgency === 'HIGH'
                         ? 'bg-rose-950 text-rose-300 border border-rose-600'
@@ -564,13 +570,13 @@ export default function DiagnosticAdvisorTab({
                         ? 'bg-amber-950 text-amber-300 border border-amber-600'
                         : 'bg-emerald-950 text-emerald-300 border border-emerald-600'
                     }`}>
-                      URGENCY: {aiTriage.urgency}
+                      {t('urgencyLabel', { urgency: aiTriage.urgency })}
                     </span>
                   </div>
                   <p className="text-gray-200 leading-relaxed">{aiTriage.summary}</p>
                   {aiTriage.probable_causes?.length > 0 && (
                     <div>
-                      <div className="text-[10px] font-bold text-zinc-400 uppercase">Probable Causes:</div>
+                      <div className="text-[10px] font-bold text-zinc-400 uppercase">{t('probableCauses')}</div>
                       <ul className="list-disc list-inside text-zinc-300 text-[11px]">
                         {aiTriage.probable_causes.map((c, i) => <li key={i}>{c}</li>)}
                       </ul>
@@ -578,7 +584,7 @@ export default function DiagnosticAdvisorTab({
                   )}
                   {aiTriage.bench_checks?.length > 0 && (
                     <div>
-                      <div className="text-[10px] font-bold text-zinc-400 uppercase">Recommended Bench Checks:</div>
+                      <div className="text-[10px] font-bold text-zinc-400 uppercase">{t('benchChecks')}</div>
                       <ul className="list-disc list-inside text-cyan-300 text-[11px]">
                         {aiTriage.bench_checks.map((c, i) => <li key={i}>{c}</li>)}
                       </ul>
@@ -589,10 +595,10 @@ export default function DiagnosticAdvisorTab({
 
               {aiServiceSummary?.customer_summary && (
                 <div className="p-3 bg-black/50 border border-cyan-800/60 rounded space-y-1.5 text-xs">
-                  <div className="font-bold text-cyan-300 text-[11px] uppercase">Customer Handoff Summary Preview</div>
+                  <div className="font-bold text-cyan-300 text-[11px] uppercase">{t('customerSummaryPreview')}</div>
                   <p className="text-gray-200 leading-relaxed">{aiServiceSummary.customer_summary}</p>
                   {aiServiceSummary.recommended_next_service && (
-                    <p className="text-[11px] text-amber-300 font-mono">Next Service: {aiServiceSummary.recommended_next_service}</p>
+                    <p className="text-[11px] text-amber-300 font-mono">{t('nextServiceLabel')} {aiServiceSummary.recommended_next_service}</p>
                   )}
                 </div>
               )}
@@ -602,7 +608,7 @@ export default function DiagnosticAdvisorTab({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center space-x-1.5 text-[11px] font-bold text-amber-300 uppercase">
                     <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Wrong Counters? Fix Machine Offsets (J.O.E. / Legacy CSV or Screenshot)</span>
+                    <span>{t('offsetPanelTitle')}</span>
                   </div>
                   {onOpenConfig && (
                     <button
@@ -610,7 +616,7 @@ export default function DiagnosticAdvisorTab({
                       onClick={onOpenConfig}
                       className="text-[10px] font-mono text-cyan-400 hover:underline cursor-pointer"
                     >
-                      Models &amp; Machine Library
+                      {t('btnModelsLibrary')}
                     </button>
                   )}
                 </div>
@@ -618,7 +624,7 @@ export default function DiagnosticAdvisorTab({
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="flex items-center space-x-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 rounded text-xs font-mono cursor-pointer">
                     <Upload className="w-3.5 h-3.5 text-amber-400" />
-                    <span>{refFileName ? refFileName : 'Upload CSV / Screenshot (.csv, .png, .jpg)'}</span>
+                    <span>{refFileName ? refFileName : t('uploadRefLabel')}</span>
                     <input
                       type="file"
                       accept=".csv,.txt,.png,.jpg,.jpeg,.webp,image/*"
@@ -634,13 +640,13 @@ export default function DiagnosticAdvisorTab({
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-bold text-xs rounded cursor-pointer"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isCalibrating ? 'animate-spin' : ''}`} />
-                    <span>{isCalibrating ? 'CALIBRATING...' : 'CALIBRATE OFFSETS'}</span>
+                    <span>{isCalibrating ? t('btnCalibrating') : t('btnCalibrateOffsets')}</span>
                   </button>
                 </div>
 
                 {refIsImage && (
                   <p className="text-[10px] font-mono text-zinc-400">
-                    Screenshot detected: requires a Vision-capable model (e.g. <span className="text-purple-300">gemma3:4b</span>) or Tesseract OCR.
+                    {t('screenshotDetectedTip')}
                   </p>
                 )}
 
@@ -660,7 +666,7 @@ export default function DiagnosticAdvisorTab({
                         rel="noreferrer"
                         className="underline text-cyan-300 font-bold"
                       >
-                        View Submission
+                        {t('viewSubmission')}
                       </a>
                     )}
                   </div>
@@ -670,10 +676,14 @@ export default function DiagnosticAdvisorTab({
                   <div className="p-3 bg-black/60 border border-amber-700/60 rounded space-y-2.5 text-xs font-mono">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       <span className="text-amber-300 font-bold">
-                        Calibrated {calResult.matched_products} Beverages • {calResult.matched_maintenance} Maintenance ({calResult.extraction_source})
+                        {t('calibratedSummary', {
+                          products: calResult.matched_products,
+                          maintenance: calResult.matched_maintenance,
+                          source: calResult.extraction_source,
+                        })}
                       </span>
                       <span className="text-zinc-400">
-                        Total Preps: <strong className="text-rose-400">{calResult.preview_before?.total_preps ?? '—'}</strong> →{' '}
+                        {t('totalPrepsPreview')} <strong className="text-rose-400">{calResult.preview_before?.total_preps ?? '—'}</strong> →{' '}
                         <strong className="text-emerald-400">{calResult.preview_after?.total_preps ?? '—'}</strong>
                       </span>
                     </div>
@@ -700,7 +710,7 @@ export default function DiagnosticAdvisorTab({
                         className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded text-[11px] cursor-pointer"
                       >
                         <Check className="w-3.5 h-3.5" />
-                        <span>{appliedLocal ? 'APPLIED LOCALLY ✓' : 'APPLY LOCALLY NOW'}</span>
+                        <span>{appliedLocal ? t('btnAppliedLocally') : t('btnApplyLocallyNow')}</span>
                       </button>
                       <button
                         type="button"
@@ -708,7 +718,7 @@ export default function DiagnosticAdvisorTab({
                         className="flex items-center space-x-1 px-2.5 py-1 bg-sky-700 hover:bg-sky-600 text-white font-bold rounded text-[11px] cursor-pointer"
                       >
                         <Send className="w-3.5 h-3.5" />
-                        <span>CONTRIBUTE TO PUBLIC REPO</span>
+                        <span>{t('btnContributeRepo')}</span>
                       </button>
                       <button
                         type="button"
@@ -716,7 +726,7 @@ export default function DiagnosticAdvisorTab({
                         className="flex items-center space-x-1 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 text-zinc-200 font-bold rounded text-[11px] cursor-pointer"
                       >
                         <Download className="w-3.5 h-3.5" />
-                        <span>EXPORT FILE (.JSON)</span>
+                        <span>{t('btnExportPatchJson')}</span>
                       </button>
                     </div>
                   </div>
@@ -735,10 +745,10 @@ export default function DiagnosticAdvisorTab({
           <div className="flex items-center justify-between mb-3 border-b border-gray-800 pb-2">
             <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
               <Coffee className="w-4 h-4 text-amber-400" />
-              <span>BEVERAGE RECIPE ANALYTICS</span>
+              <span>{t('bevAnalyticsTitle')}</span>
             </span>
             <span className="text-xs font-mono font-bold text-sky-400">
-              {totalPreps} PREPS ({totalCups} CUPS)
+              {t('bevPrepsCups', { preps: totalPreps, cups: totalCups })}
             </span>
           </div>
 
@@ -749,7 +759,7 @@ export default function DiagnosticAdvisorTab({
               return (
                 <div key={bev.code} className="space-y-1">
                   <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="font-bold text-gray-200">{bev.name}</span>
+                    <span className="font-bold text-gray-200">{txBeverageName(lang, bev.name)}</span>
                     <span className="text-gray-400">
                       <strong className="text-white">{count}</strong> ({pct.toFixed(1)}%)
                     </span>
@@ -777,15 +787,15 @@ export default function DiagnosticAdvisorTab({
           <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between text-[11px] font-mono text-gray-400">
             <span className="flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
-              <span>Coffee / Espresso</span>
+              <span>{t('legendCoffee')}</span>
             </span>
             <span className="flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block" />
-              <span>Milk Specialties</span>
+              <span>{t('legendMilk')}</span>
             </span>
             <span className="flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 inline-block" />
-              <span>Hot Water</span>
+              <span>{t('legendWater')}</span>
             </span>
           </div>
         </div>

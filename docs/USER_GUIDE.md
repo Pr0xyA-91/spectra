@@ -2,6 +2,7 @@
 
 > **Applies to**: SPECTRA Build `20261114.0020` (Windows & Linux Multi-Manufacturer + Rust Hybrid Suite)
 > **Supported Platforms**: Jura (Plain-ASCII Optical & Encrypted `@` Smart Connect), Nivona CafeRomatica, Lamanti-KL (Kalerm), Lamanti-JN (Jetinno)
+> **Česká verze / Czech Guide**: [Jednoduchá uživatelská příručka v češtině](USER_GUIDE_CS.md)
 
 <p align="center">
   <img src="images/spectra_architecture_phase3.svg" alt="SPECTRA Phase 3 Hybrid Rust + Python Architecture" width="100%">
@@ -119,7 +120,7 @@ Select **`DEMO / SIMULATION`** in the top-left port selector to explore all tabs
   - Inside **EXPORT**, you can also sweep and save a full **Diagnostic Bundle**, run the **Local AI Offset Fixer**, or submit anonymized captures to the community repo.
 - **`FIRMWARE INSPECTOR`**: Shortcut button jumping directly to Tab 09 (`09 // FIRMWARE INSPECTOR`).
 - **`AI: OFF / ON`**: Master opt-in switch for the **Local AI** engine. Remains **OFF (`0 MB RAM`)** by default until clicked.
-- **`CONFIG`**: Opens **SPECTRA Configuration & AI Engine**, containing four tabs:
+- **`CONFIG`**: Opens **SPECTRA Configuration & AI Engine**, featuring a top **Language / Jazyk (`English` / `Čeština`)** toggle, an **Interactive Guide** relaunch reminder/button in the footer (also shown automatically on first startup), and four tabs:
   1. `Local AI & Models`
   2. `Machine Library (172)` *(count grows with imported/verified profiles)*
   3. `GitHub Connection`

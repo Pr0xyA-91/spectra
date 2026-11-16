@@ -1,5 +1,6 @@
 import React from 'react';
 import { Cpu, Power, AlertTriangle } from 'lucide-react';
+import { createTranslator } from '../i18n/translations';
 
 /**
  * Global AI Progress & Kill-Switch Status Bar.
@@ -7,11 +8,13 @@ import { Cpu, Power, AlertTriangle } from 'lucide-react';
  * Always gives the user a 1-click button to turn AI OFF immediately.
  */
 export default function AiStatusBar({
+  lang = 'en',
   aiEnabled,
   aiTask,
   aiDownload,
   onTurnAiOff,
 }) {
+  const t = createTranslator(lang);
   const isTaskActive = Boolean(aiTask?.active);
   const isDlActive = Boolean(aiDownload?.active);
 
@@ -20,12 +23,12 @@ export default function AiStatusBar({
   }
 
   const label = isTaskActive
-    ? aiTask.task_label || 'Local AI Task'
-    : aiDownload.phase_label || 'Downloading Local AI Model';
+    ? aiTask.task_label || t('aiTaskDefault')
+    : aiDownload.phase_label || t('aiDownloadDefault');
 
   const detail = isTaskActive
-    ? aiTask.detail || aiTask.step || 'Processing...'
-    : aiDownload.status_text || 'Downloading...';
+    ? aiTask.detail || aiTask.step || t('aiWorkingDefault')
+    : aiDownload.status_text || t('aiDownloadingDefault');
 
   const model = isTaskActive ? aiTask.model : aiDownload.model;
   const percent = isTaskActive
@@ -70,10 +73,10 @@ export default function AiStatusBar({
           <button
             onClick={onTurnAiOff}
             className="flex items-center space-x-1 px-2.5 py-0.5 rounded bg-rose-950 hover:bg-rose-800 border border-rose-500 text-rose-200 font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
-            title="Stop active AI task, unload model, and turn Local AI OFF"
+            title={t('btnTurnAiOffTitle')}
           >
             <Power className="w-3 h-3" />
-            <span>TURN AI OFF</span>
+            <span>{t('btnTurnAiOff')}</span>
           </button>
         </div>
       </div>
@@ -88,7 +91,7 @@ export default function AiStatusBar({
       {!aiEnabled && isTaskActive && (
         <div className="mt-1 flex items-center space-x-1 text-[10px] text-amber-300">
           <AlertTriangle className="w-3 h-3" />
-          <span>Stopping AI task and unloading model...</span>
+          <span>{t('aiStopping')}</span>
         </div>
       )}
     </div>

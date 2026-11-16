@@ -533,6 +533,7 @@ def analyze_fault_triage(
     telemetry: Dict[str, Any],
     stats_summary: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    lang: str = "en",
 ) -> Dict[str, Any]:
     """
     Use local Ollama to produce a structured technician bench triage summary & check list
@@ -542,12 +543,13 @@ def analyze_fault_triage(
     if not ok:
         return {"success": False, "error": err}
 
+    is_cs = str(lang).lower().startswith("cs")
     update_task_progress(
         active=True,
         task_id="fault_triage",
-        task_label="AI Bench Fault Triage",
+        task_label="AI servisní diagnostika" if is_cs else "AI Bench Fault Triage",
         step="ANALYZING_TELEMETRY",
-        detail=f"Evaluating live sensors & fault latch with {active_model}...",
+        detail=f"Vyhodnocuji senzory a historii chyb pomocí {active_model}..." if is_cs else f"Evaluating live sensors & fault latch with {active_model}...",
         current=1,
         total=2,
         percent=35,
@@ -574,6 +576,7 @@ def analyze_fault_triage(
             "last_fault_raw": telemetry.get("last_fault_str") or telemetry.get("fault_latch"),
         }
 
+        lang_note = " Write all text values (summary, probable_causes, bench_checks) in natural Czech (čeština)." if is_cs else ""
         prompt = (
             "You are a senior espresso machine bench technician. Analyze this telemetry snapshot and provide practical diagnostic triage.\n"
             f"Telemetry JSON:\n{json.dumps(compact_ctx, ensure_ascii=False)}\n\n"
@@ -582,6 +585,7 @@ def analyze_fault_triage(
             "\"urgency\" (\"LOW\"|\"MEDIUM\"|\"HIGH\"), "
             "\"probable_causes\" (array of up to 3 short strings), "
             "\"bench_checks\" (array of up to 4 actionable technician check steps)."
+            f"{lang_note}"
         )
 
         parsed, q_err = _query_ollama_json(prompt, active_model)
@@ -608,6 +612,7 @@ def generate_customer_service_summary(
     summary: Dict[str, Any],
     health_score: int,
     model: Optional[str] = None,
+    lang: str = "en",
 ) -> Dict[str, Any]:
     """
     Generate a concise, jargon-free customer handoff summary for the service inspection certificate.
@@ -616,12 +621,13 @@ def generate_customer_service_summary(
     if not ok:
         return {"success": False, "error": err}
 
+    is_cs = str(lang).lower().startswith("cs")
     update_task_progress(
         active=True,
         task_id="service_summary",
-        task_label="Customer Service Summary",
+        task_label="Zpráva pro zákazníka" if is_cs else "Customer Service Summary",
         step="GENERATING_NOTE",
-        detail=f"Writing plain-language handoff summary with {active_model}...",
+        detail=f"Píši srozumitelný souhrn pomocí {active_model}..." if is_cs else f"Writing plain-language handoff summary with {active_model}...",
         current=1,
         total=2,
         percent=40,
@@ -638,12 +644,14 @@ def generate_customer_service_summary(
             "maintenance": summary.get("maintenance", [])[:6],
             "alerts": summary.get("alerts", [])[:5],
         }
+        lang_note = " Write all text values in natural, polite Czech (čeština)." if is_cs else ""
         prompt = (
             "Write a friendly, concise customer service handoff note (no raw hex codes) for an espresso machine inspection certificate.\n"
             f"Inspection data:\n{json.dumps(compact, ensure_ascii=False)}\n\n"
             "Respond in JSON only with keys:\n"
             "\"customer_summary\" (3-4 plain-language sentences), "
             "\"recommended_next_service\" (1 short sentence)."
+            f"{lang_note}"
         )
         parsed, q_err = _query_ollama_json(prompt, active_model)
         if not parsed:

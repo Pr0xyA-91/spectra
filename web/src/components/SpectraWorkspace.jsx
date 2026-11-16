@@ -55,6 +55,13 @@ import MemMapperTab from './MemMapperTab';
 import HmiInspectorTab from './HmiInspectorTab';
 import AiStatusBar from './AiStatusBar';
 import ConfigModal from './ConfigModal';
+import InteractiveGuideModal from './InteractiveGuideModal';
+import {
+  createTranslator,
+  txVal,
+  txBeverageName,
+  txMaintenanceLabel,
+} from '../i18n/translations';
 
 // ============================================================================
 // 1. THEME DEFINITION
@@ -89,19 +96,9 @@ export const THEMES = {
 // ============================================================================
 // WORKSPACE NAVIGATION TABS (EXACT MATCH FOR SPECTRA GTK TABS + MEM MAPPER)
 // ============================================================================
-const WORKSPACE_TABS = [
-  { id: 'overview', label: '01 // OVERVIEW', desc: 'Health Scorecard & AI Advisor' },
-  { id: 'sensors', label: '02 // SENSORS & OSCILLOSCOPE', desc: 'Digital Twin, Temp-over-Time & Event Stream' },
-  { id: 'beverages', label: '03 // BEVERAGES', desc: 'Preparation Counters & Share %' },
-  { id: 'maintenance', label: '04 // MAINTENANCE', desc: 'Cycles, Intervals & Overdue' },
-  { id: 'alerts', label: '05 // ALERTS', desc: 'Active Lockouts & System Flags' },
-  { id: 'system', label: '06 // IDENTITY', desc: 'EEPROM String, Power & Barcode' },
-  { id: 'bus_log', label: '07 // COMMAND INJECTOR', desc: 'Safe UART Wire Injection' },
-  { id: 'mem_mapper', label: '08 // MEM MAPPER', desc: 'EEPROM Register Matrix, Differential Scope & Raw Sensor Mapping' },
-  { id: 'hmi_tools', label: '09 // FIRMWARE INSPECTOR', desc: 'ELF32, APK & MCU Firmware Inspector, Localization Auditor & Lab Patcher' },
-];
-
 export default function SpectraWorkspace({
+  lang = 'en',
+  setLang = () => {},
   isDebugOpen = false,
   setIsDebugOpen = () => {},
   debugCounts = { errorCount: 0, warnCount: 0 },
@@ -110,13 +107,27 @@ export default function SpectraWorkspace({
   setScaleMode = () => {},
   currentScale = 1.0,
 } = {}) {
+  const t = createTranslator(lang);
+  const langRef = useRef(lang);
+  langRef.current = lang;
   const theme = THEMES.cyberpunk;
+  const WORKSPACE_TABS = [
+    { id: 'overview', label: t('tabOverview') },
+    { id: 'sensors', label: t('tabSensors') },
+    { id: 'beverages', label: t('tabBeverages') },
+    { id: 'maintenance', label: t('tabMaintenance') },
+    { id: 'alerts', label: t('tabAlerts') },
+    { id: 'system', label: t('tabSystem') },
+    { id: 'bus_log', label: t('tabBusLog') },
+    { id: 'mem_mapper', label: t('tabMemMapper') },
+    { id: 'hmi_tools', label: t('tabHmiTools') },
+  ];
   const [liveBuild, setLiveBuild] = useState(debugSummary?.build || '');
   const [bootReady, setBootReady] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setBootReady(true), 150);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setBootReady(true), 150);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -142,7 +153,7 @@ export default function SpectraWorkspace({
   const [isPolling, setIsPolling] = useState(true);
   const [isInterrogating, setIsInterrogating] = useState(false);
   const [hardwareError, setHardwareError] = useState(null);
-  const [connectionStatusText, setConnectionStatusText] = useState('Detecting hardware serial ports...');
+  const [connectionStatusText, setConnectionStatusText] = useState(() => createTranslator(lang)('detectingPorts'));
   const [lastTimestamp, setLastTimestamp] = useState('---');
 
   // Live Telemetry from Hardware API
@@ -210,6 +221,54 @@ export default function SpectraWorkspace({
   const [aiAutoUnload, setAiAutoUnload] = useState(true);
   const [aiBusyCount, setAiBusyCount] = useState(0);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configInitialSection, setConfigInitialSection] = useState('ai');
+  const [showGuideOnStartup, setShowGuideOnStartup] = useState(() => {
+    try {
+      return localStorage.getItem('spectra_onboarding_seen') !== '1';
+    } catch {
+      return false;
+    }
+  });
+  const [showGuideModal, setShowGuideModal] = useState(() => {
+    try {
+      return localStorage.getItem('spectra_onboarding_seen') !== '1';
+    } catch {
+      return false;
+    }
+  });
+  const [startupGuideCheckbox, setStartupGuideCheckbox] = useState(false);
+
+  const handleSetGuideOnStartup = useCallback((shouldShow) => {
+    const val = Boolean(shouldShow);
+    setShowGuideOnStartup(val);
+    setStartupGuideCheckbox(val);
+    try {
+      if (val) {
+        localStorage.removeItem('spectra_onboarding_seen');
+      } else {
+        localStorage.setItem('spectra_onboarding_seen', '1');
+      }
+    } catch {}
+  }, []);
+
+  const handleCloseGuide = useCallback(() => {
+    setShowGuideModal(false);
+    const keepForNextStartup = Boolean(startupGuideCheckbox);
+    setShowGuideOnStartup(keepForNextStartup);
+    try {
+      if (keepForNextStartup) {
+        localStorage.removeItem('spectra_onboarding_seen');
+      } else {
+        localStorage.setItem('spectra_onboarding_seen', '1');
+      }
+    } catch {}
+  }, [startupGuideCheckbox]);
+
+  const handleLaunchGuideFromConfig = useCallback(() => {
+    setStartupGuideCheckbox(showGuideOnStartup);
+    setShowGuideModal(true);
+  }, [showGuideOnStartup]);
+
   const [useAiJoeMatch, setUseAiJoeMatch] = useState(false);
   const [aiServiceSummary, setAiServiceSummary] = useState(null);
   const [isCalibratingOffsets, setIsCalibratingOffsets] = useState(false);
@@ -335,7 +394,7 @@ export default function SpectraWorkspace({
       if (data.error) {
         pollFailCountRef.current += 1;
         if (!silent || pollFailCountRef.current >= 3) {
-          setConnectionStatusText(`Hardware Warning: ${data.error}`);
+          setConnectionStatusText(createTranslator(langRef.current)('connWarning', { err: data.error }));
           setHardwareError(data.error);
         }
         return;
@@ -346,7 +405,7 @@ export default function SpectraWorkspace({
       setLiveData(data);
       setIsConnected(true);
       setLastTimestamp(data.timestamp || new Date().toLocaleTimeString());
-      setConnectionStatusText(`Connected to ${port} [Nominal Telemetry]`);
+      setConnectionStatusText(createTranslator(langRef.current)('connConnected', { port }));
 
       // Append to live bus event stream if not paused
       if (!isStreamPaused) {
@@ -358,7 +417,7 @@ export default function SpectraWorkspace({
     } catch (err) {
       pollFailCountRef.current += 1;
       if (!silent || pollFailCountRef.current >= 3) {
-        setConnectionStatusText(`Connection Error: ${err.message}`);
+        setConnectionStatusText(createTranslator(langRef.current)('connError', { err: err.message }));
         setHardwareError(err.message);
       }
     } finally {
@@ -424,27 +483,27 @@ export default function SpectraWorkspace({
     if (!selectedPort) return;
     setIsInterrogating(true);
     setInterrogationProgress(8);
-    setInterrogationStage('Probing appliance hardware identity (TY:)...');
-    setConnectionStatusText(`Reading complete EEPROM & statistics from ${selectedPort}...`);
+    setInterrogationStage(t('stageProbeIdentity'));
+    setConnectionStatusText(t('connInterrogating', { port: selectedPort }));
 
     const t1 = setTimeout(() => {
       setInterrogationProgress(28);
-      setInterrogationStage('Reading identification gateways & firmware version (TL:, TY$, CS$)...');
+      setInterrogationStage(t('stageReadGateways'));
     }, 600);
 
     const t2 = setTimeout(() => {
       setInterrogationProgress(55);
-      setInterrogationStage('Sweeping beverage preparation registers (RE:0001..0020)...');
+      setInterrogationStage(t('stageSweepBeverages'));
     }, 1400);
 
     const t3 = setTimeout(() => {
       setInterrogationProgress(78);
-      setInterrogationStage('Interrogating maintenance cycles & descaling wear bars...');
+      setInterrogationStage(t('stageReadMaintenance'));
     }, 2400);
 
     const t4 = setTimeout(() => {
       setInterrogationProgress(92);
-      setInterrogationStage('Evaluating AI health scorecard & DIN-ISO tolerance checks...');
+      setInterrogationStage(t('stageEvalHealth'));
     }, 3400);
 
     try {
@@ -452,19 +511,19 @@ export default function SpectraWorkspace({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.error) {
-        setConnectionStatusText(`Interrogation Failed: ${data.error}`);
+        setConnectionStatusText(t('connInterrogateFailed', { err: data.error }));
         setHardwareError(data.error);
-        setInterrogationStage(`Error: ${data.error}`);
+        setInterrogationStage(t('stageError', { err: data.error }));
       } else {
         setInterrogationProgress(100);
-        setInterrogationStage('Machine read complete!');
+        setInterrogationStage(t('stageComplete'));
         setStatsData(data);
-        setConnectionStatusText(`Interrogation Complete: ${data.machine_model || 'Appliance'} (${data.total_preparations || 0} preparations)`);
+        setConnectionStatusText(t('connInterrogateComplete', { model: data.machine_model || 'Appliance', preps: data.total_preparations || 0 }));
       }
     } catch (err) {
-      setConnectionStatusText(`Interrogation Error: ${err.message}`);
+      setConnectionStatusText(t('connInterrogateError', { err: err.message }));
       setHardwareError(err.message);
-      setInterrogationStage(`Error: ${err.message}`);
+      setInterrogationStage(t('stageError', { err: err.message }));
     } finally {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -646,7 +705,7 @@ export default function SpectraWorkspace({
   const handleOpenServiceReport = (includeAiSummary = false) => {
     if (!selectedPort) return;
     const aiParam = includeAiSummary && aiEnabled ? '&ai_summary=1' : '';
-    window.open(`/api/service_report?port=${encodeURIComponent(selectedPort)}${aiParam}`, '_blank');
+    window.open(`/api/service_report?port=${encodeURIComponent(selectedPort)}&lang=${encodeURIComponent(lang)}${aiParam}`, '_blank');
   };
 
   const handleTriggerExport = async (fmt) => {
@@ -1013,10 +1072,10 @@ export default function SpectraWorkspace({
             </span>
           </div>
           <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            BUILD {liveBuild || debugSummary?.build || '20261114.0020'}
+            BUILD {liveBuild || debugSummary?.build || '20261116.1639'}
           </span>
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
-            UNIVERSAL HARDWARE TELEMETRY &amp; LOGIC BOARD DIAGNOSTICS
+            {t('appSubtitle')}
           </span>
         </div>
 
@@ -1041,7 +1100,7 @@ export default function SpectraWorkspace({
                 </option>
               ))}
             </select>
-            <button onClick={fetchPorts} title="Refresh Serial Ports" className="text-gray-400 hover:text-white ml-1">
+            <button onClick={fetchPorts} title={t('refreshPortsTitle')} className="text-gray-400 hover:text-white ml-1">
               <RefreshCw className="w-3 h-3" />
             </button>
           </div>
@@ -1052,7 +1111,7 @@ export default function SpectraWorkspace({
             className="flex items-center space-x-1 px-2.5 py-1 bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/60 text-sky-300 font-bold rounded"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>REFRESH</span>
+            <span>{t('btnRefresh')}</span>
           </button>
 
           <button
@@ -1064,7 +1123,7 @@ export default function SpectraWorkspace({
             }`}
           >
             {isPolling ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            <span>{isPolling ? 'POLLING' : 'START POLL'}</span>
+            <span>{isPolling ? t('btnPolling') : t('btnStartPoll')}</span>
           </button>
 
           {/* Interrogate Button with Integrated Progress Fill */}
@@ -1076,7 +1135,7 @@ export default function SpectraWorkspace({
                 ? 'bg-purple-950/80 text-purple-200 border border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.4)]'
                 : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/60'
             } disabled:opacity-50`}
-            title="Read complete EEPROM, beverage history, and maintenance stats"
+            title={t('btnInterrogateTitle')}
           >
             {isInterrogating && (
               <div
@@ -1085,22 +1144,22 @@ export default function SpectraWorkspace({
               />
             )}
             <Sparkles className="w-3.5 h-3.5 text-purple-400 z-10" />
-            <span className="z-10">{isInterrogating ? `READING (${interrogationProgress}%)` : '⚡ INTERROGATE'}</span>
+            <span className="z-10">{isInterrogating ? t('btnReadingPct', { pct: interrogationProgress }) : t('btnInterrogate')}</span>
           </button>
 
           {/* Service Report Trigger Button (Enabled ONLY when read) */}
           <button
-            onClick={handleOpenServiceReport}
+            onClick={() => handleOpenServiceReport(false)}
             disabled={!statsData || isInterrogating}
             className={`flex items-center space-x-1 px-2.5 py-1 font-bold rounded transition-all ${
               statsData
                 ? 'bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/60 text-amber-300 cursor-pointer'
                 : 'bg-zinc-900/40 border border-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
             }`}
-            title={statsData ? 'Generate Branded Service Inspection Certificate' : 'Interrogate machine first before generating certificate'}
+            title={statsData ? t('btnReportTitleReady') : t('btnReportTitleDisabled')}
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>REPORT</span>
+            <span>{t('btnReport')}</span>
           </button>
 
           {/* Export Trigger Button (Enabled ONLY when read) */}
@@ -1115,10 +1174,10 @@ export default function SpectraWorkspace({
                 ? 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300 cursor-pointer'
                 : 'bg-zinc-900/40 border border-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
             }`}
-            title={statsData ? 'Export Diagnostic Data (JSON, CSV, Text)' : 'Interrogate machine first before exporting data'}
+            title={statsData ? t('btnExportTitleReady') : t('btnExportTitleDisabled')}
           >
             <Download className="w-3.5 h-3.5" />
-            <span>EXPORT</span>
+            <span>{t('btnExport')}</span>
           </button>
 
           {/* Firmware Inspector Trigger Button */}
@@ -1129,10 +1188,10 @@ export default function SpectraWorkspace({
                 ? 'bg-cyan-600 text-black border border-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
                 : 'bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 text-cyan-300 cursor-pointer'
             }`}
-            title="Firmware Inspector — ELF32, APK & MCU Binary Auditor & Lab Patcher"
+            title={t('btnFirmwareInspectorTitle')}
           >
             <Box className="w-3.5 h-3.5" />
-            <span>📦 FIRMWARE INSPECTOR</span>
+            <span>{t('btnFirmwareInspector')}</span>
           </button>
 
           {/* Global Local AI Power Switch (Default: OFF) */}
@@ -1145,15 +1204,15 @@ export default function SpectraWorkspace({
                 ? 'bg-purple-950/70 hover:bg-purple-900/80 border-purple-500/70 text-purple-200'
                 : 'bg-black/40 hover:bg-zinc-900 border-zinc-700 text-zinc-400'
             }`}
-            title={aiEnabled ? `Local AI is ON (${aiModel || 'auto'}) — Click to turn AI OFF and unload model` : 'Local AI is OFF (0 MB RAM) — Click to enable'}
+            title={aiEnabled ? t('aiTitleOn', { model: aiModel || 'auto' }) : t('aiTitleOff')}
           >
             <Power className={`w-3.5 h-3.5 ${aiEnabled ? 'text-emerald-400' : 'text-zinc-500'}`} />
             <span>
               {aiTask?.active
                 ? `AI: ${Math.round(aiTask.percent || 0)}%`
                 : aiEnabled
-                ? `AI: ON${aiModel ? ` (${aiModel})` : ''}`
-                : 'AI: OFF'}
+                ? t('aiStatusOn', { model: aiModel ? ` (${aiModel})` : '' })
+                : t('aiStatusOff')}
             </span>
           </button>
 
@@ -1161,10 +1220,10 @@ export default function SpectraWorkspace({
           <button
             onClick={() => setShowConfigModal(true)}
             className="flex items-center space-x-1 px-2.5 py-1 font-mono font-bold rounded text-[11px] bg-black/40 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 transition-colors cursor-pointer"
-            title="Configure Default AI Model, Local AI Models, Machine Library & GitHub Account"
+            title={t('btnConfigTitle')}
           >
             <Settings className="w-3.5 h-3.5 text-[#FCEE09]" />
-            <span>CONFIG</span>
+            <span>{t('btnConfig')}</span>
           </button>
 
           {/* Dynamic Viewport Scale Indicator */}
@@ -1175,10 +1234,13 @@ export default function SpectraWorkspace({
               setScaleMode(modes[nextIdx]);
             }}
             className="flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-black/40 hover:bg-black/60 border border-zinc-700 text-zinc-300 transition-colors"
-            title={`Current UI Scale: ${Math.round(currentScale * 100)}% (${scaleMode === 'auto' ? 'Dynamic Monitor Auto-Scale' : 'Manual Override'}). Click to cycle.`}
+            title={t('scaleTitle', {
+              pct: Math.round(currentScale * 100),
+              mode: scaleMode === 'auto' ? t('scaleModeAuto') : t('scaleModeManual'),
+            })}
           >
             <span>📐</span>
-            <span>{scaleMode === 'auto' ? `AUTO (${Math.round(currentScale * 100)}%)` : `${Math.round(currentScale * 100)}%`}</span>
+            <span>{scaleMode === 'auto' ? t('scaleAuto', { pct: Math.round(currentScale * 100) }) : `${Math.round(currentScale * 100)}%`}</span>
           </button>
 
           {/* Hidden Debug & Process Monitor Trigger */}
@@ -1191,7 +1253,7 @@ export default function SpectraWorkspace({
                 ? 'bg-amber-950/60 text-amber-300 border border-amber-600'
                 : 'bg-black/40 text-zinc-400 hover:text-zinc-200 border border-zinc-700'
             }`}
-            title="Toggle Debug & Process Monitor (Ctrl+Shift+D / F12)"
+            title={t('debugTitle')}
           >
             <span>🐞</span>
             {(debugCounts?.errorCount || 0) > 0 ? (
@@ -1204,7 +1266,7 @@ export default function SpectraWorkspace({
           {/* Hardware Online Pill */}
           <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-black/40 border border-emerald-500/30 text-emerald-400">
             <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
-            <span>{isConnected ? 'ONLINE' : 'STANDBY'}</span>
+            <span>{isConnected ? t('statusOnline') : t('statusStandby')}</span>
           </div>
         </div>
       </header>
@@ -1213,6 +1275,7 @@ export default function SpectraWorkspace({
       {/* GLOBAL AI PROGRESS & KILL-SWITCH STATUS BAR (VISIBLE WHENEVER WORKING) */}
       {/* ==================================================================== */}
       <AiStatusBar
+        lang={lang}
         aiEnabled={aiEnabled}
         aiTask={aiTask}
         aiDownload={aiDownload}
@@ -1227,7 +1290,7 @@ export default function SpectraWorkspace({
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center space-x-2 text-[#FCEE09]">
               <Zap className="w-4 h-4 text-[#FCEE09]" />
-              <span className="font-extrabold uppercase tracking-wider">READING MACHINE DATA:</span>
+              <span className="font-extrabold uppercase tracking-wider">{t('readingMachineData')}</span>
               <span className="text-zinc-300 font-bold">{interrogationStage}</span>
             </div>
             <span className="font-extrabold text-[#FCEE09] text-sm">{interrogationProgress}%</span>
@@ -1247,7 +1310,7 @@ export default function SpectraWorkspace({
           <div className="flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
             <span>
-              <strong>Hardware Status:</strong> {hardwareError}
+              <strong>{t('hardwareStatusLabel')}</strong> {hardwareError}
             </span>
           </div>
           <button
@@ -1258,7 +1321,7 @@ export default function SpectraWorkspace({
             }}
             className="px-2.5 py-0.5 bg-rose-800 hover:bg-rose-700 text-white font-bold rounded text-[11px] transition-colors"
           >
-            RETRY
+            {t('btnRetry')}
           </button>
         </div>
       )}
@@ -1271,115 +1334,115 @@ export default function SpectraWorkspace({
           {/* 1. Total Preps */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              ☕ TOTAL PREPS
+              {t('kpiTotalPreps')}
             </div>
             <div className="text-xs font-bold font-mono my-1 text-white">
               {totalPreps != null ? totalPreps : '---'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {totalCups != null ? `${totalCups} Total Cups` : 'Awaiting Read'}
+              {totalCups != null ? t('kpiTotalCups', { cups: totalCups }) : t('kpiAwaitingRead')}
             </div>
           </div>
 
           {/* 2. Thermoblock TB1 */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              🔥 TB1 HEATER
+              {t('kpiTb1Heater')}
             </div>
             <div className={`text-xs font-bold font-mono my-1 ${theme.textPrimary}`}>
               {coffeeTemp != null ? `${coffeeTemp.toFixed(1)} °C` : '--- °C'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {hasTelem ? (telem.heater_coffee_status || 'Ready to Brew') : 'Standby'}
+              {hasTelem ? (telem.heater_coffee_status ? txVal(lang, telem.heater_coffee_status) : t('kpiReadyToBrew')) : t('kpiStandby')}
             </div>
           </div>
 
           {/* 3. Brew Unit Encoder */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              ⚙️ BU ENCODER
+              {t('kpiBuEncoder')}
             </div>
             <div className="text-xs font-bold font-mono my-1 text-purple-400">
               {buPos != null ? `${buPos} / ${buUpper ?? '---'}` : '--- / ---'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {hasTelem ? (telem.bu_position_state || 'Optical Quadrature') : 'Standby'}
+              {hasTelem ? (telem.bu_position_state || t('kpiOpticalQuad')) : t('kpiStandby')}
             </div>
           </div>
 
           {/* 4. Water Flow */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              🌊 WATER FLOW
+              {t('kpiWaterFlow')}
             </div>
             <div className="text-xs font-bold font-mono my-1 text-cyan-400">
               {flowRate != null ? `${flowRate.toFixed(1)} ml/s` : '--- ml/s'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {hasTelem ? `${(telem.flow_volume_ml ?? 0).toFixed(1)} ml vol` : 'Standby'}
+              {hasTelem ? t('kpiFlowVol', { vol: (telem.flow_volume_ml ?? 0).toFixed(1) }) : t('kpiStandby')}
             </div>
           </div>
 
           {/* 5. Water Tank */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              💧 WATER TANK
+              {t('kpiWaterTank')}
             </div>
             <div className={`text-xs font-bold font-mono my-1 ${tankSw ? (tankSw.ok ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
-              {tankSw ? (tankSw.ok ? 'WATER OK' : 'EMPTY / TANK') : '---'}
+              {tankSw ? (tankSw.ok ? t('kpiWaterOk') : t('kpiWaterEmpty')) : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? 'Float Switch' : 'Standby'}</div>
+            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? t('kpiFloatSwitch') : t('kpiStandby')}</div>
           </div>
 
           {/* 6. Drip Tray */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              📥 DRIP TRAY
+              {t('kpiDripTray')}
             </div>
             <div className={`text-xs font-bold font-mono my-1 ${traySw ? (traySw.ok ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
-              {traySw ? (traySw.ok ? 'INSERTED' : 'MISSING') : '---'}
+              {traySw ? (traySw.ok ? t('kpiInserted') : t('kpiMissing')) : '---'}
             </div>
-            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? 'Contact Switch' : 'Standby'}</div>
+            <div className="text-[10px] text-gray-500 truncate">{hasTelem ? t('kpiContactSwitch') : t('kpiStandby')}</div>
           </div>
 
           {/* 7. Bean Hopper */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`} title={beansSw?.details || beansSw?.status || ''}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              🫘 BEAN HOPPER
+              {t('kpiBeanHopper')}
             </div>
             <div className={`text-xs font-bold font-mono my-1 ${beansSw ? (beansSw.ok ? 'text-emerald-400' : 'text-rose-400') : (beansOk != null ? (beansOk ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500')}`}>
               {beansSw?.details?.includes('Monitored Locally')
-                ? 'LOCAL (EF518D)'
-                : (beansSw ? (beansSw.ok ? 'BEANS OK' : 'FILL BEANS') : (beansOk != null ? (beansOk ? 'BEANS OK' : 'FILL BEANS') : '---'))}
+                ? t('kpiLocalEf518d')
+                : (beansSw ? (beansSw.ok ? t('kpiBeansOk') : t('kpiFillBeans')) : (beansOk != null ? (beansOk ? t('kpiBeansOk') : t('kpiFillBeans')) : '---'))}
             </div>
             <div className="text-[10px] text-gray-500 truncate" title={beansSw?.details || beansSw?.status || ''}>
-              {beansSw?.details || (beansOk != null ? (beansOk ? 'Hopper Charged' : 'Fill Beans') : 'Standby')}
+              {beansSw?.details ? txVal(lang, beansSw.details) : (beansOk != null ? (beansOk ? t('kpiHopperCharged') : t('kpiFillBeans')) : t('kpiStandby'))}
             </div>
           </div>
 
           {/* 8. Cleanings */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              🧼 CLEANINGS
+              {t('kpiCleanings')}
             </div>
             <div className="text-xs font-bold font-mono my-1 text-sky-400">
-              {cleanCount != null ? `${cleanCount} cycles` : '---'}
+              {cleanCount != null ? t('kpiCyclesCount', { count: cleanCount }) : '---'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {statsData ? 'Maintenance Record' : 'Awaiting Read'}
+              {statsData ? t('kpiMaintRecord') : t('kpiAwaitingRead')}
             </div>
           </div>
 
           {/* 9. Descalings */}
           <div className={`p-2 bg-black/40 border border-gray-800 rounded ${theme.clipClass}`}>
             <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
-              🧪 DECALCS
+              {t('kpiDecalcs')}
             </div>
             <div className="text-xs font-bold font-mono my-1 text-amber-400">
-              {decalcCount != null ? `${decalcCount} cycles` : '---'}
+              {decalcCount != null ? t('kpiCyclesCount', { count: decalcCount }) : '---'}
             </div>
             <div className="text-[10px] text-gray-500 truncate">
-              {statsData ? 'Maintenance Record' : 'Awaiting Read'}
+              {statsData ? t('kpiMaintRecord') : t('kpiAwaitingRead')}
             </div>
           </div>
         </div>
@@ -1421,6 +1484,7 @@ export default function SpectraWorkspace({
         {activeTab === 'overview' && (
           <DiagnosticAdvisorTab
             theme={theme}
+            lang={lang}
             statsData={statsData}
             liveData={liveData}
             selectedPort={selectedPort}
@@ -1449,6 +1513,7 @@ export default function SpectraWorkspace({
               <div className="lg:col-span-6 space-y-3">
                 <DigitalTwinSchematic
                   theme={theme}
+                  lang={lang}
                   liveData={liveData}
                   statsData={statsData}
                 />
@@ -1458,23 +1523,23 @@ export default function SpectraWorkspace({
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 mb-2">
                     <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
                       <SlidersHorizontal className="w-3.5 h-3.5" />
-                      <span>COFFEE HEATER NTC DIAGNOSTIC SENSOR (AS:)</span>
+                      <span>{t('ntcSensorCardTitle')}</span>
                     </span>
                     <span className="text-[11px] font-mono text-gray-400">
-                      SHUNT: <strong className="text-amber-400">{telem.heater_ntc_shunt_ratio ? `${telem.heater_ntc_shunt_ratio} (+${telem.heater_ntc_shunt_gain_pct}%)` : (opticalDelta != null ? `Delta: ${opticalDelta}` : 'Standby')}</strong>
+                      {t('shuntLabel')} <strong className="text-amber-400">{telem.heater_ntc_shunt_ratio ? `${telem.heater_ntc_shunt_ratio} (+${telem.heater_ntc_shunt_gain_pct}%)` : (opticalDelta != null ? `Delta: ${opticalDelta}` : t('kpiStandby'))}</strong>
                     </span>
                   </div>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between font-mono text-[11px]">
-                      <span className="text-gray-400">Self-Test: <strong className={telem.heater_ntc_self_test_ok ? "text-emerald-400" : "text-amber-400"}>{telem.heater_ntc_self_test_ok ? "NOMINAL (+6.0% OK)" : (telem.heater_ntc_self_test_ok === false ? "OUT OF RANGE" : "Standby")}</strong></span>
-                      <span className="text-amber-400">P518 String #251 Valid: 180..17000</span>
+                      <span className="text-gray-400">{t('selfTestLabel')} <strong className={telem.heater_ntc_self_test_ok ? "text-emerald-400" : "text-amber-400"}>{telem.heater_ntc_self_test_ok ? t('nominalShuntOk') : (telem.heater_ntc_self_test_ok === false ? t('outOfRange') : t('kpiStandby'))}</strong></span>
+                      <span className="text-amber-400">{t('p518ValidRange')}</span>
                     </div>
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-[11px] font-mono text-gray-400">
-                        Ambient OFF: {telem.bean_adcs?.[0] ?? '--'} | Shunt ON: {telem.bean_adcs?.[1] ?? '--'}
+                        {t('ambientOffOn', { off: telem.bean_adcs?.[0] ?? '--', on: telem.bean_adcs?.[1] ?? '--' })}
                       </span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${beansOk ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
-                        {beansOk ? 'BEANS OK' : 'FILL BEANS'}
+                        {beansOk ? t('kpiBeansOk') : t('kpiFillBeans')}
                       </span>
                     </div>
                   </div>
@@ -1486,6 +1551,7 @@ export default function SpectraWorkspace({
                 {/* 1. Real-Time Oscilloscope Strip Chart (Exact parity with old UI OscilloscopeWidget) */}
                 <OscilloscopeStripChart
                   theme={theme}
+                  lang={lang}
                   liveData={liveData}
                   maxSamples={60}
                 />
@@ -1495,7 +1561,7 @@ export default function SpectraWorkspace({
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 text-xs">
                     <span className="font-bold text-gray-200 uppercase tracking-wider flex items-center space-x-1.5">
                       <Terminal className="w-4 h-4 text-emerald-400" />
-                      <span>REAL-TIME BUS EVENT STREAM &amp; SAFETY LOG</span>
+                      <span>{t('busStreamTitle')}</span>
                     </span>
                     <div className="flex items-center space-x-1.5">
                       <button
@@ -1505,14 +1571,14 @@ export default function SpectraWorkspace({
                         }`}
                       >
                         {isStreamPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-                        <span>{isStreamPaused ? 'RESUME' : 'PAUSE'}</span>
+                        <span>{isStreamPaused ? t('btnResume') : t('btnPause')}</span>
                       </button>
                       <button
                         onClick={() => setBusEvents([])}
                         className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center space-x-1"
                       >
                         <Trash2 className="w-3 h-3" />
-                        <span>CLEAR</span>
+                        <span>{t('btnClear')}</span>
                       </button>
                     </div>
                   </div>
@@ -1520,7 +1586,7 @@ export default function SpectraWorkspace({
                   {/* Scrolling Log Box */}
                   <div className="h-44 bg-black/60 border border-gray-800 rounded p-2 overflow-y-auto font-mono text-[11px] space-y-1 text-gray-300 select-text">
                     {busEvents.length === 0 ? (
-                      <div className="text-gray-600 italic">Awaiting hardware bus telemetry events...</div>
+                      <div className="text-gray-600 italic">{t('busStreamEmpty')}</div>
                     ) : (
                       busEvents.map((evt, idx) => (
                         <div key={idx} className="hover:bg-white/5 py-0.5 px-1 rounded truncate">
@@ -1538,20 +1604,20 @@ export default function SpectraWorkspace({
               {/* Microswitches */}
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
                 <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
-                  <span>LIVE PHYSICAL MICROSWITCHES &amp; INTERLOCKS</span>
-                  <span className="text-[10px] font-mono text-emerald-400">7 SENSORS</span>
+                  <span>{t('microswitchesTitle')}</span>
+                  <span className="text-[10px] font-mono text-emerald-400">{t('microswitchesCount')}</span>
                 </div>
                 <div className="space-y-1.5">
                   {liveData.switches.map((sw) => (
                     <div key={sw.id} className="flex items-center justify-between p-2 bg-black/40 border border-gray-800/80 rounded text-xs font-mono">
                       <div className="flex items-center space-x-2">
                         <span>{sw.icon}</span>
-                        <span className="font-bold text-gray-200">{sw.name}</span>
+                        <span className="font-bold text-gray-200">{txVal(lang, sw.name)}</span>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <span className="text-gray-400">{sw.status}</span>
+                        <span className="text-gray-400">{txVal(lang, sw.status)}</span>
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sw.ok ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
-                          {sw.badge}
+                          {txVal(lang, sw.badge)}
                         </span>
                       </div>
                     </div>
@@ -1562,17 +1628,17 @@ export default function SpectraWorkspace({
               {/* Component Fault & Safety Diagnostic Registers */}
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
                 <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
-                  <span>COMPONENT FAULT &amp; SAFETY TEST REGISTERS</span>
-                  <span className="text-[10px] font-mono text-sky-400">15 TESTS NOMINAL</span>
+                  <span>{t('faultRegistersTitle')}</span>
+                  <span className="text-[10px] font-mono text-sky-400">{t('faultRegistersCount')}</span>
                 </div>
                 <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-1">
                   {liveData.sensors.map((s) => (
                     <div key={s.id} className="flex items-center justify-between p-1.5 bg-black/40 border border-gray-800/60 rounded text-xs font-mono">
-                      <span className="text-gray-300">{s.name}</span>
+                      <span className="text-gray-300">{txVal(lang, s.name)}</span>
                       <div className="flex items-center space-x-2">
-                        <span className="text-[11px] text-gray-400">{s.status}</span>
+                        <span className="text-[11px] text-gray-400">{txVal(lang, s.status)}</span>
                         <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${s.ok ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
-                          {s.badge}
+                          {txVal(lang, s.badge)}
                         </span>
                       </div>
                     </div>
@@ -1589,7 +1655,7 @@ export default function SpectraWorkspace({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-2">
               <span className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
                 <Coffee className="w-4 h-4 text-amber-400" />
-                <span>BEVERAGE PREPARATION REGISTRY</span>
+                <span>{t('bevRegistryTitle')}</span>
               </span>
               <div className="flex items-center space-x-2">
                 <div className="relative">
@@ -1598,13 +1664,13 @@ export default function SpectraWorkspace({
                     type="text"
                     value={bevSearch}
                     onChange={(e) => setBevSearch(e.target.value)}
-                    placeholder="Search specialty..."
+                    placeholder={t('bevSearchPlaceholder')}
                     disabled={!statsData}
                     className="pl-8 pr-3 py-1 bg-black/40 border border-gray-800 rounded text-xs text-white placeholder-gray-500 outline-none w-48 font-mono disabled:opacity-40"
                   />
                 </div>
                 <span className="text-xs font-mono text-gray-400">
-                  {statsData ? `${filteredBeverages.length} SPECIALTIES` : 'AWAITING READ'}
+                  {statsData ? t('bevSpecialtiesCount', { count: filteredBeverages.length }) : t('bevAwaitingRead')}
                 </span>
               </div>
             </div>
@@ -1616,10 +1682,10 @@ export default function SpectraWorkspace({
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    BEVERAGE DATA NOT YET READ
+                    {t('bevEmptyTitle')}
                   </h3>
                   <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                    Beverage preparation counters and recipes require querying the appliance EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                    {t('bevEmptyDesc', { port: selectedPort || t('serialPortFallback') })}
                   </p>
                 </div>
                 <div className="pt-1">
@@ -1628,31 +1694,31 @@ export default function SpectraWorkspace({
                     disabled={isInterrogating || !selectedPort}
                     className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
                   >
-                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                    {isInterrogating ? t('btnReadingEeprom') : t('btnInterrogateShort')}
                   </button>
                 </div>
               </div>
             ) : filteredBeverages.length === 0 ? (
               <div className="p-8 text-center text-xs text-zinc-500 font-mono">
-                No beverage preparation records found.
+                {t('bevNoRecords')}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs font-mono">
                   <thead>
                     <tr className="border-b border-gray-800 text-gray-500 text-[10px] uppercase">
-                      <th className="py-2 px-3">Code</th>
-                      <th className="py-2 px-3">Beverage Specialty</th>
-                      <th className="py-2 px-3">Quantity Prepared</th>
-                      <th className="py-2 px-3">Share of Total</th>
-                      <th className="py-2 px-3">Category / Serving</th>
+                      <th className="py-2 px-3">{t('colCode')}</th>
+                      <th className="py-2 px-3">{t('colSpecialty')}</th>
+                      <th className="py-2 px-3">{t('colQty')}</th>
+                      <th className="py-2 px-3">{t('colShare')}</th>
+                      <th className="py-2 px-3">{t('colCategory')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-800/60">
                     {filteredBeverages.map((bev) => (
                       <tr key={bev.code} className="hover:bg-white/5 transition-colors">
                         <td className="py-2 px-3 text-gray-500">0x{bev.code.toString(16).padStart(2, '0').toUpperCase()}</td>
-                        <td className="py-2 px-3 font-bold text-white">{bev.name}</td>
+                        <td className="py-2 px-3 font-bold text-white">{txBeverageName(lang, bev.name)}</td>
                         <td className="py-2 px-3 text-amber-400 font-bold">{bev.count.toLocaleString()}</td>
                         <td className="py-2 px-3 text-gray-300">
                           {bev.share || (totalPreps > 0 ? `${((bev.count / totalPreps) * 100).toFixed(1)}%` : '0.0%')}
@@ -1667,7 +1733,7 @@ export default function SpectraWorkspace({
                               ? 'bg-amber-950 text-amber-300 border border-amber-800'
                               : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
                           }`}>
-                            {bev.type || (bev.is_double ? 'Double' : 'Single')}
+                            {txVal(lang, bev.type || (bev.is_double ? 'Double' : 'Single'))}
                           </span>
                         </td>
                       </tr>
@@ -1684,7 +1750,7 @@ export default function SpectraWorkspace({
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-4`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
               <Wrench className="w-4 h-4 text-sky-400" />
-              <span>MAINTENANCE CYCLES &amp; WEAR PERCENTAGES</span>
+              <span>{t('maintTitle')}</span>
             </div>
 
             {!statsData ? (
@@ -1694,10 +1760,10 @@ export default function SpectraWorkspace({
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    MAINTENANCE DATA NOT YET READ
+                    {t('maintEmptyTitle')}
                   </h3>
                   <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                    Cleaning cycles, descaling counters, filter wear, and rinse logs require interrogating the appliance EEPROM. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                    {t('maintEmptyDesc', { port: selectedPort || t('serialPortFallback') })}
                   </p>
                 </div>
                 <div className="pt-1">
@@ -1706,7 +1772,7 @@ export default function SpectraWorkspace({
                     disabled={isInterrogating || !selectedPort}
                     className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
                   >
-                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                    {isInterrogating ? t('btnReadingEeprom') : t('btnInterrogateShort')}
                   </button>
                 </div>
               </div>
@@ -1715,15 +1781,15 @@ export default function SpectraWorkspace({
                 {/* Wear Percentages */}
                 <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-3">
                   <div className="text-xs font-bold text-gray-400 uppercase font-mono">
-                    CYCLE LIFE PROGRESS (WEAR BARS)
+                    {t('maintWearBarsTitle')}
                   </div>
 
                   {/* Cleaning */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs font-mono">
-                      <span className="text-gray-300">Coffee Cleaning Cycle</span>
+                      <span className="text-gray-300">{t('maintCoffeeClean')}</span>
                       <span className="text-emerald-400 font-bold">
-                        {cleanCount != null ? `${cleanCount} Total Cycles` : 'Nominal'}
+                        {cleanCount != null ? t('maintTotalCycles', { count: cleanCount }) : t('maintNominal')}
                       </span>
                     </div>
                     <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -1737,9 +1803,9 @@ export default function SpectraWorkspace({
                   {/* Descaling */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs font-mono">
-                      <span className="text-gray-300">Thermoblock Descaling</span>
+                      <span className="text-gray-300">{t('maintTbDescaling')}</span>
                       <span className="text-amber-400 font-bold">
-                        {decalcCount != null ? `${decalcCount} Total Cycles` : 'Nominal'}
+                        {decalcCount != null ? t('maintTotalCycles', { count: decalcCount }) : t('maintNominal')}
                       </span>
                     </div>
                     <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -1753,9 +1819,9 @@ export default function SpectraWorkspace({
                   {/* Filter */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs font-mono">
-                      <span className="text-gray-300">CLARIS Filter Cartridge</span>
+                      <span className="text-gray-300">{t('maintClarisFilter')}</span>
                       <span className="text-sky-400 font-bold">
-                        {filterSw?.ok ? 'Active (Inserted)' : 'Bypass / Inactive'}
+                        {filterSw?.ok ? t('maintFilterActive') : t('maintFilterBypass')}
                       </span>
                     </div>
                     <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -1767,18 +1833,18 @@ export default function SpectraWorkspace({
                 {/* Maintenance Counters */}
                 <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
                   <div className="text-xs font-bold text-gray-400 uppercase font-mono mb-2">
-                    EXECUTION COUNTER AUDIT
+                    {t('maintCounterAuditTitle')}
                   </div>
                   <div className="space-y-1.5 font-mono text-xs">
                     {statsData.maintenance && statsData.maintenance.length > 0 ? (
                       statsData.maintenance.map((m, idx) => (
                         <div key={idx} className="flex justify-between py-1 border-b border-gray-800/60 last:border-0">
-                          <span className="text-gray-400">{m.label || m.name}:</span>
-                          <strong className="text-white">{m.count?.toLocaleString() ?? 0} cycles</strong>
+                          <span className="text-gray-400">{txMaintenanceLabel(lang, m.label || m.name)}:</span>
+                          <strong className="text-white">{m.count?.toLocaleString() ?? 0} {t('maintCyclesSuffix')}</strong>
                         </div>
                       ))
                     ) : (
-                      <div className="text-zinc-500 text-xs py-2">No maintenance records found.</div>
+                      <div className="text-zinc-500 text-xs py-2">{t('maintNoRecords')}</div>
                     )}
                   </div>
                 </div>
@@ -1792,7 +1858,7 @@ export default function SpectraWorkspace({
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
               <AlertTriangle className="w-4 h-4 text-rose-400" />
-              <span>ACTIVE APPLIANCE SYSTEM NOTIFICATIONS &amp; LOCKOUT FLAGS</span>
+              <span>{t('alertsTitle')}</span>
             </div>
 
             {!statsData ? (
@@ -1802,10 +1868,10 @@ export default function SpectraWorkspace({
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    ALERTS &amp; LOCKOUT FLAGS NOT YET READ
+                    {t('alertsEmptyTitle')}
                   </h3>
                   <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                    Appliance alarm status, lockout registers, and fault codes require interrogating the appliance. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                    {t('alertsEmptyDesc', { port: selectedPort || t('serialPortFallback') })}
                   </p>
                 </div>
                 <div className="pt-1">
@@ -1814,7 +1880,7 @@ export default function SpectraWorkspace({
                     disabled={isInterrogating || !selectedPort}
                     className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
                   >
-                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                    {isInterrogating ? t('btnReadingEeprom') : t('btnInterrogateShort')}
                   </button>
                 </div>
               </div>
@@ -1836,18 +1902,18 @@ export default function SpectraWorkspace({
                   <div className="flex items-center justify-between p-3 bg-black/40 border border-emerald-900/60 rounded">
                     <div className="flex items-center space-x-2">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <span className="font-bold text-emerald-300">Coffee Ready / Nominal Operation</span>
+                      <span className="font-bold text-emerald-300">{t('alertsReadyNominal')}</span>
                     </div>
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-700">
-                      READY
+                      {t('alertsReadyBadge')}
                     </span>
                   </div>
                 )}
 
                 <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-1">
-                  <div className="text-gray-400 font-bold">Historical Register Interrogation:</div>
+                  <div className="text-gray-400 font-bold">{t('alertsHistTitle')}</div>
                   <div className="text-gray-500 text-[11px]">
-                    Hardware fault registers nominal on {statsData.machine_model || 'Appliance'}. No unhandled thermal cutoffs or motor drive faults currently latching appliance lockout.
+                    {t('alertsHistDesc', { model: statsData.machine_model || 'Appliance' })}
                   </div>
                 </div>
               </div>
@@ -1860,7 +1926,7 @@ export default function SpectraWorkspace({
           <div className={`p-4 border rounded ${theme.surfaceClass} space-y-4`}>
             <div className="text-xs font-bold text-gray-300 uppercase tracking-wider border-b border-gray-800 pb-2 flex items-center space-x-1.5">
               <Info className="w-4 h-4 text-sky-400" />
-              <span>APPLIANCE IDENTITY &amp; HARDWARE ARCHITECTURE</span>
+              <span>{t('identityTitle')}</span>
             </div>
 
             {!statsData ? (
@@ -1870,10 +1936,10 @@ export default function SpectraWorkspace({
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    IDENTITY DATA NOT YET READ
+                    {t('identityEmptyTitle')}
                   </h3>
                   <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                    Appliance model, firmware string (TY), EF code, and serial specifications require interrogating the machine. Connect to <strong>{selectedPort || 'serial port'}</strong> and interrogate the machine.
+                    {t('identityEmptyDesc', { port: selectedPort || t('serialPortFallback') })}
                   </p>
                 </div>
                 <div className="pt-1">
@@ -1882,48 +1948,48 @@ export default function SpectraWorkspace({
                     disabled={isInterrogating || !selectedPort}
                     className="px-5 py-2.5 bg-[#FCEE09] hover:bg-yellow-300 text-black font-mono font-bold text-xs uppercase tracking-wider rounded transition-colors disabled:opacity-50"
                   >
-                    {isInterrogating ? 'Reading EEPROM...' : '⚡ Interrogate Machine & Read Data'}
+                    {isInterrogating ? t('btnReadingEeprom') : t('btnInterrogateShort')}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
                 <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
-                  <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRONIC IDENTITY</div>
+                  <div className="text-gray-500 font-bold uppercase text-[10px]">{t('electronicIdentity')}</div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Machine Model:</span>
+                    <span className="text-gray-400">{t('lblMachineModel')}</span>
                     <strong className="text-white">{statsData?.machine_model || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Firmware String (TY):</span>
+                    <span className="text-gray-400">{t('lblFirmwareString')}</span>
                     <strong className="text-sky-400">{statsData?.firmware_string || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">EF Code:</span>
+                    <span className="text-gray-400">{t('lblEfCode')}</span>
                     <strong className="text-amber-400">{statsData?.ef_code || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-gray-400">Protocol Mode:</span>
+                    <span className="text-gray-400">{t('lblProtocolMode')}</span>
                     <strong className="text-emerald-400">{statsData?.protocol_mode || '---'}</strong>
                   </div>
                 </div>
 
                 <div className="p-3 bg-black/40 border border-gray-800 rounded space-y-2">
-                  <div className="text-gray-500 font-bold uppercase text-[10px]">ELECTRICAL &amp; ARTICLE SPECIFICATIONS</div>
+                  <div className="text-gray-500 font-bold uppercase text-[10px]">{t('electricalSpecs')}</div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Power Rating:</span>
+                    <span className="text-gray-400">{t('lblPowerRating')}</span>
                     <strong className="text-white">{statsData?.power_spec || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Serial / EAN:</span>
+                    <span className="text-gray-400">{t('lblSerialEan')}</span>
                     <strong className="text-white">{statsData?.serial_number || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1 border-b border-gray-800/60">
-                    <span className="text-gray-400">Raw HZ Telemetry:</span>
+                    <span className="text-gray-400">{t('lblRawHz')}</span>
                     <strong className="text-gray-400 truncate max-w-[200px]">{liveData?.raw_status || '---'}</strong>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-gray-400">Active Port:</span>
+                    <span className="text-gray-400">{t('lblActivePort')}</span>
                     <strong className="text-white">{selectedPort}</strong>
                   </div>
                 </div>
@@ -1938,7 +2004,7 @@ export default function SpectraWorkspace({
             <div className={`p-4 border rounded ${theme.surfaceClass} space-y-3`}>
               <div className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
                 <Send className="w-4 h-4 text-sky-400" />
-                <span>SAFE DIAGNOSTIC COMMAND INJECTOR (UART WIRE INJECTION)</span>
+                <span>{t('injectorTitle')}</span>
               </div>
 
               {/* Quick Preset Buttons */}
@@ -1960,21 +2026,21 @@ export default function SpectraWorkspace({
                   type="text"
                   value={txCommand}
                   onChange={(e) => setTxCommand(e.target.value)}
-                  placeholder="Enter safe command (e.g. HZ:, TY:, RE:0028)"
+                  placeholder={t('injectorPlaceholder')}
                   className="flex-1 px-3 py-1.5 bg-black/40 border border-gray-800 rounded text-xs text-white font-mono outline-none"
                 />
                 <button
                   onClick={() => handleTransmitCommand()}
                   className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded font-mono"
                 >
-                  SEND WIRE CMD
+                  {t('btnSendWireCmd')}
                 </button>
               </div>
 
               {/* Response Log */}
               {txResponseHistory.length > 0 && (
                 <div className="space-y-1 pt-2 border-t border-gray-800 font-mono text-xs">
-                  <div className="text-gray-500 text-[10px] uppercase font-bold">TRANSACTION HISTORY:</div>
+                  <div className="text-gray-500 text-[10px] uppercase font-bold">{t('txHistoryTitle')}</div>
                   {txResponseHistory.map((h, i) => (
                     <div key={i} className="flex justify-between p-1.5 bg-black/40 border border-gray-800/60 rounded">
                       <span className="text-sky-300">TX: <strong>{h.cmd}</strong></span>
@@ -2006,6 +2072,7 @@ export default function SpectraWorkspace({
         {activeTab === 'hmi_tools' && (
           <HmiInspectorTab
             theme={theme}
+            lang={lang}
             aiEnabled={aiEnabled}
             onToggleAi={handleToggleAi}
             onGlobalModelChange={(m) => setAiModel(m)}
@@ -2024,7 +2091,7 @@ export default function SpectraWorkspace({
             <div className="flex items-center justify-between border-b border-gray-800 pb-2">
               <span className="text-sm font-bold text-white flex items-center space-x-2">
                 <Download className="w-4 h-4 text-sky-400" />
-                <span>EXPORT SPECTRA DIAGNOSTIC DATA</span>
+                <span>{t('exportModalTitle')}</span>
               </span>
               <button onClick={() => setShowExportModal(false)} className="text-gray-400 hover:text-white">
                 <X className="w-4 h-4" />
@@ -2033,7 +2100,7 @@ export default function SpectraWorkspace({
 
             <div className="space-y-2 text-xs">
               <p className="text-gray-300">
-                Choose the export format for current interrogation telemetry and beverage statistics:
+                {t('exportModalDesc')}
               </p>
 
               {exportStatus.msg && (
@@ -2054,7 +2121,7 @@ export default function SpectraWorkspace({
                       }}
                       className="text-[10px] text-sky-300 underline font-bold shrink-0 hover:text-white cursor-pointer"
                     >
-                      Download Now
+                      {t('downloadNow')}
                     </button>
                   )}
                 </div>
@@ -2066,8 +2133,8 @@ export default function SpectraWorkspace({
                 className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
-                  <div className="font-bold text-sky-300">Structured JSON (.json)</div>
-                  <div className="text-[11px] text-gray-500">Full telemetry, beverage registry &amp; maintenance payload</div>
+                  <div className="font-bold text-sky-300">{t('exportJsonTitle')}</div>
+                  <div className="text-[11px] text-gray-500">{t('exportJsonDesc')}</div>
                 </div>
                 <Download className="w-4 h-4 text-gray-400" />
               </button>
@@ -2078,8 +2145,8 @@ export default function SpectraWorkspace({
                 className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
-                  <div className="font-bold text-emerald-300">Spreadsheet CSV (.csv)</div>
-                  <div className="text-[11px] text-gray-500">Comma-separated beverage counts and maintenance audit table</div>
+                  <div className="font-bold text-emerald-300">{t('exportCsvTitle')}</div>
+                  <div className="text-[11px] text-gray-500">{t('exportCsvDesc')}</div>
                 </div>
                 <Download className="w-4 h-4 text-gray-400" />
               </button>
@@ -2090,8 +2157,8 @@ export default function SpectraWorkspace({
                 className="w-full flex items-center justify-between p-3 bg-black/40 hover:bg-white/5 disabled:opacity-50 border border-gray-800 rounded text-left transition-colors cursor-pointer"
               >
                 <div>
-                  <div className="font-bold text-amber-300">Formatted Text Report (.txt)</div>
-                  <div className="text-[11px] text-gray-500">Human-readable ASCII diagnostic service report</div>
+                  <div className="font-bold text-amber-300">{t('exportTxtTitle')}</div>
+                  <div className="text-[11px] text-gray-500">{t('exportTxtDesc')}</div>
                 </div>
                 <Download className="w-4 h-4 text-gray-400" />
               </button>
@@ -2100,7 +2167,7 @@ export default function SpectraWorkspace({
                 <div className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                    Remote Engineering &amp; Archetype Capture
+                    {t('remoteCaptureTitle')}
                   </span>
                   {capturedBundle && (
                     <button
@@ -2115,18 +2182,18 @@ export default function SpectraWorkspace({
                       }}
                       className="text-[10px] text-gray-500 hover:text-gray-300 underline cursor-pointer"
                     >
-                      New Capture
+                      {t('btnNewCapture')}
                     </button>
                   )}
                 </div>
                 <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded-lg space-y-3">
                   <div>
                     <div className="font-bold text-purple-300 flex items-center justify-between">
-                      <span>Full Hardware Diagnostic Dump (.json)</span>
-                      {isDumping && <span className="text-[10px] text-purple-400 animate-pulse font-mono">Sweeping EEPROM...</span>}
+                      <span>{t('fullDumpTitle')}</span>
+                      {isDumping && <span className="text-[10px] text-purple-400 animate-pulse font-mono">{t('sweepingEeprom')}</span>}
                     </div>
                     <div className="text-[11px] text-gray-400 mt-0.5">
-                      Sweeps raw EEPROM memory and bus gateways so engineers can reproduce and fix new machines offline.
+                      {t('fullDumpDesc')}
                     </div>
                   </div>
 
@@ -2134,7 +2201,7 @@ export default function SpectraWorkspace({
                     <>
                       <div className="pt-1 border-t border-purple-900/30">
                         <label className="block text-[11px] text-gray-300 font-medium mb-1">
-                          Attach J.O.E. App CSV Export (Optional):
+                          {t('attachJoeCsv')}
                         </label>
                         <input
                           type="file"
@@ -2146,7 +2213,7 @@ export default function SpectraWorkspace({
                           <div className="space-y-1.5 mt-1">
                             <div className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono">
                               <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Attached: {joeFileName}</span>
+                              <span>{t('attachedFile', { file: joeFileName })}</span>
                             </div>
                             <label className="flex items-center space-x-1.5 text-[11px] text-gray-300 cursor-pointer">
                               <input
@@ -2161,7 +2228,7 @@ export default function SpectraWorkspace({
                                 }}
                                 className="rounded bg-black/60 border-zinc-700 text-purple-500"
                               />
-                              <span>Use Local AI for cross-language J.O.E. label matching (default: OFF)</span>
+                              <span>{t('useAiJoeMatchLabel')}</span>
                             </label>
                           </div>
                         )}
@@ -2173,7 +2240,7 @@ export default function SpectraWorkspace({
                         className="w-full mt-2 py-2.5 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
                       >
                         <Sparkles className="w-4 h-4" />
-                        <span>{isDumping ? 'Sweeping EEPROM & Gateways...' : 'Capture Diagnostic Bundle'}</span>
+                        <span>{isDumping ? t('btnSweepingBundle') : t('btnCaptureBundle')}</span>
                       </button>
 
                       {joeFileName && (
@@ -2183,7 +2250,7 @@ export default function SpectraWorkspace({
                           className="w-full py-2 px-3 bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-500/70 disabled:opacity-50 text-cyan-300 font-bold text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer"
                         >
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>{isCalibratingOffsets ? 'Analyzing Offsets...' : '🧠 Sweep & AI Auto-Fix EEPROM Offsets'}</span>
+                          <span>{isCalibratingOffsets ? t('btnAnalyzingOffsets') : t('btnSweepAutoFix')}</span>
                         </button>
                       )}
                     </>
@@ -2196,10 +2263,13 @@ export default function SpectraWorkspace({
                         <div>
                           <div className="text-purple-300 font-bold flex items-center gap-1">
                             <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>{capturedBundle?.identity?.model_name || 'Machine'} Bundle Ready</span>
+                            <span>{t('bundleReadyTitle', { model: capturedBundle?.identity?.model_name || 'Machine' })}</span>
                           </div>
                           <div className="text-gray-400 font-mono text-[10px]">
-                            {Object.keys(capturedBundle?.eeprom_words || {}).length} EEPROM words • J.O.E.: {capturedBundle?.joe_ground_truth?.raw_lines?.length ? 'Attached' : 'None'}
+                            {t('bundleSummaryLine', {
+                              words: Object.keys(capturedBundle?.eeprom_words || {}).length,
+                              joe: capturedBundle?.joe_ground_truth?.raw_lines?.length ? t('joeAttached') : t('joeNone'),
+                            })}
                           </div>
                         </div>
                       </div>
@@ -2210,7 +2280,7 @@ export default function SpectraWorkspace({
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-cyan-300 text-xs flex items-center gap-1.5">
                               <Sparkles className="w-3.5 h-3.5" />
-                              <span>Local AI Offset Fixer (Instant Repair)</span>
+                              <span>{t('offsetFixerTitle')}</span>
                             </span>
                             <button
                               type="button"
@@ -2221,11 +2291,11 @@ export default function SpectraWorkspace({
                                   : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
                               }`}
                             >
-                              {aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (OFF)'}
+                              {aiEnabled ? t('btnTurnAiOff') : t('btnEnableAiOff')}
                             </button>
                           </div>
                           <p className="text-[11px] text-gray-400">
-                            Matches J.O.E. counts against EEPROM banks to fix mis-read offsets locally right now, and attaches the verified patch if you report upstream.
+                            {t('offsetFixerDesc')}
                           </p>
                           <div className="flex flex-wrap gap-2">
                             <button
@@ -2234,7 +2304,7 @@ export default function SpectraWorkspace({
                               disabled={!aiEnabled || isCalibratingOffsets}
                               className="flex-1 py-1.5 px-2.5 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 text-white font-bold text-[11px] rounded cursor-pointer"
                             >
-                              {isCalibratingOffsets ? 'CALIBRATING...' : offsetCalibration ? '🔄 RE-RUN AI CALIBRATION' : '🧠 AI MATCH J.O.E. OFFSETS'}
+                              {isCalibratingOffsets ? t('btnCalibrating') : offsetCalibration ? t('btnRerunAiCalib') : t('btnAiMatchJoe')}
                             </button>
                             {offsetCalibration && (
                               <button
@@ -2246,7 +2316,7 @@ export default function SpectraWorkspace({
                                     : 'bg-[#FCEE09] hover:bg-yellow-400 text-black'
                                 }`}
                               >
-                                {offsetAppliedLocally ? '✓ FIXED LOCALLY NOW' : '🔧 FIX LOCALLY NOW'}
+                                {offsetAppliedLocally ? t('btnFixedLocallyNow') : t('btnFixLocallyNow')}
                               </button>
                             )}
                           </div>
@@ -2254,7 +2324,11 @@ export default function SpectraWorkspace({
                           {offsetCalibration && (
                             <div className="max-h-36 overflow-y-auto bg-black/50 border border-zinc-800 rounded p-2 space-y-1 font-mono text-[10px]">
                               <div className="text-zinc-300 font-bold">
-                                Matched {offsetCalibration.products?.length || 0} beverages, {offsetCalibration.maintenance?.length || 0} maintenance, {offsetCalibration.maintenance_pct?.length || 0} cockpit %
+                                {t('matchedLine', {
+                                  products: offsetCalibration.products?.length || 0,
+                                  maintenance: offsetCalibration.maintenance?.length || 0,
+                                  pct: offsetCalibration.maintenance_pct?.length || 0,
+                                })}
                               </div>
                               {(offsetCalibration.products || []).slice(0, 12).map((p, idx) => (
                                 <div key={idx} className="flex justify-between text-zinc-400 border-b border-zinc-800/60 py-0.5">
@@ -2270,24 +2344,24 @@ export default function SpectraWorkspace({
                       {/* Destination Option 1: Save Locally */}
                       <div className="p-2.5 bg-black/30 border border-gray-800 rounded space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-gray-200 text-xs">Destination 1: Local File</span>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded uppercase font-mono">Default</span>
+                          <span className="font-bold text-gray-200 text-xs">{t('dest1Title')}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded uppercase font-mono">{t('dest1Badge')}</span>
                         </div>
-                        <p className="text-[11px] text-gray-400">Save complete JSON snapshot to your computer via native file dialog or browser download.</p>
+                        <p className="text-[11px] text-gray-400">{t('dest1Desc')}</p>
                         <button
                           onClick={handleSaveLocally}
                           disabled={exportStatus.loading}
                           className="w-full py-2 px-3 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          <span>Save Locally (Native Dialog)</span>
+                          <span>{t('btnSaveLocallyDialog')}</span>
                         </button>
                         <div className="flex justify-end pt-0.5">
                           <button
                             onClick={() => triggerBrowserDownload(capturedBundle, capturedFilename)}
                             className="text-[10px] text-sky-400 hover:text-sky-300 underline cursor-pointer"
                           >
-                            Download via browser instead
+                            {t('btnDownloadBrowser')}
                           </button>
                         </div>
                       </div>
@@ -2295,10 +2369,10 @@ export default function SpectraWorkspace({
                       {/* Destination Option 2: Upload to Community Repository */}
                       <div className="p-2.5 bg-black/30 border border-gray-800 rounded space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-gray-200 text-xs">Destination 2: Community Repository</span>
+                          <span className="font-bold text-gray-200 text-xs">{t('dest2Title')}</span>
                           <span className="text-[10px] text-gray-400 font-mono">Pr0xyA-91/spectra-captures</span>
                         </div>
-                        <p className="text-[11px] text-gray-400">Share telemetry with the SPECTRA project to map new registers and appliance archetypes.</p>
+                        <p className="text-[11px] text-gray-400">{t('dest2Desc')}</p>
 
                         {/* GitHub Auth Status Header */}
                         <div className="p-2 bg-zinc-900/70 border border-zinc-800 rounded text-[11px] flex items-center justify-between">
@@ -2306,20 +2380,20 @@ export default function SpectraWorkspace({
                             <Github className="w-3.5 h-3.5 text-gray-400" />
                             {githubAuth.authenticated ? (
                               <span className="text-emerald-400 font-mono">
-                                Signed in as <strong>@{githubAuth.login}</strong>
+                                {t('ghSignedInAs', { login: githubAuth.login })}
                               </span>
                             ) : (
-                              <span className="text-amber-400">Not signed in to GitHub</span>
+                              <span className="text-amber-400">{t('ghNotSignedIn')}</span>
                             )}
                           </div>
                           {githubAuth.authenticated ? (
                             <button
                               onClick={handleLogout}
                               className="text-[10px] text-gray-400 hover:text-rose-400 flex items-center gap-1 cursor-pointer"
-                              title="Sign out from GitHub"
+                              title={t('ghSignOut')}
                             >
                               <LogOut className="w-3 h-3" />
-                              <span>Sign out</span>
+                              <span>{t('ghSignOut')}</span>
                             </button>
                           ) : (
                             <div className="flex items-center gap-2">
@@ -2328,14 +2402,14 @@ export default function SpectraWorkspace({
                                   onClick={handleStartDeviceFlow}
                                   className="text-[10px] text-sky-400 hover:text-sky-300 font-medium underline cursor-pointer"
                                 >
-                                  Device Code
+                                  {t('ghDeviceCode')}
                                 </button>
                               )}
                               <button
                                 onClick={() => setShowPatInput(!showPatInput)}
                                 className="text-[10px] text-sky-400 hover:text-sky-300 font-medium underline cursor-pointer"
                               >
-                                {showPatInput ? 'Cancel' : 'Access Token'}
+                                {showPatInput ? t('ghCancel') : t('ghAccessToken')}
                               </button>
                             </div>
                           )}
@@ -2344,7 +2418,7 @@ export default function SpectraWorkspace({
                         {/* Device Flow in Progress */}
                         {deviceFlow && (
                           <div className="p-2.5 bg-sky-950/40 border border-sky-800/60 rounded space-y-2 text-xs">
-                            <div className="text-[11px] text-sky-300 font-medium">1. Authorize SPECTRA on GitHub:</div>
+                            <div className="text-[11px] text-sky-300 font-medium">{t('ghAuthorizeTitle')}</div>
                             <div className="flex items-center justify-between bg-black/60 p-2 rounded border border-sky-900">
                               <span className="font-mono text-sm font-bold text-sky-200 tracking-wider">{deviceFlow.user_code}</span>
                               <button
@@ -2352,7 +2426,7 @@ export default function SpectraWorkspace({
                                 className="px-2 py-1 bg-sky-800/80 hover:bg-sky-700 text-sky-200 rounded text-[10px] flex items-center gap-1 cursor-pointer"
                               >
                                 {copiedCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                                <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                                <span>{copiedCode ? t('ghCopied') : t('ghCopy')}</span>
                               </button>
                             </div>
                             <div className="flex items-center justify-between text-[11px]">
@@ -2362,19 +2436,19 @@ export default function SpectraWorkspace({
                                 rel="noreferrer"
                                 className="text-sky-400 hover:text-sky-300 underline flex items-center gap-1 font-medium"
                               >
-                                <span>2. Open github.com/login/device</span>
+                                <span>{t('ghOpenDeviceUrl')}</span>
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                               <button
                                 onClick={() => setDeviceFlow(null)}
                                 className="text-[10px] text-gray-400 hover:text-gray-200 cursor-pointer"
                               >
-                                Cancel
+                                {t('ghCancel')}
                               </button>
                             </div>
                             <div className="text-[10px] text-gray-400 flex items-center gap-1.5 animate-pulse">
                               <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
-                              <span>Waiting for authorization in your browser...</span>
+                              <span>{t('ghWaitingAuth')}</span>
                             </div>
                           </div>
                         )}
@@ -2383,7 +2457,7 @@ export default function SpectraWorkspace({
                         {showPatInput && !githubAuth.authenticated && (
                           <div className="p-2.5 bg-black/50 border border-zinc-700 rounded space-y-2 text-xs">
                             <label className="block text-[11px] text-gray-300 font-medium">
-                              GitHub Personal Access Token (classic or fine-grained with public_repo &amp; gist):
+                              {t('ghPatLabel')}
                             </label>
                             <div className="flex gap-1.5">
                               <input
@@ -2398,7 +2472,7 @@ export default function SpectraWorkspace({
                                 disabled={!patInput.trim()}
                                 className="px-3 py-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded font-medium text-xs cursor-pointer"
                               >
-                                Connect
+                                {t('ghConnect')}
                               </button>
                             </div>
                           </div>
@@ -2411,7 +2485,7 @@ export default function SpectraWorkspace({
                           className="w-full py-2 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600 text-white font-medium text-xs rounded flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:cursor-not-allowed shadow-sm"
                         >
                           <Upload className="w-3.5 h-3.5" />
-                          <span>{isUploading ? 'Submitting to GitHub...' : (githubAuth.authenticated ? 'Upload to Community Repository' : 'Upload to Community Repository (Sign in above)')}</span>
+                          <span>{isUploading ? t('btnUploadingCommunity') : (githubAuth.authenticated ? t('btnUploadCommunity') : t('btnUploadCommunityNeedSignIn'))}</span>
                         </button>
 
                         {/* Upload Success Banner */}
@@ -2419,7 +2493,7 @@ export default function SpectraWorkspace({
                           <div className="p-2 bg-emerald-950/60 border border-emerald-800 rounded text-[11px] text-emerald-300 flex items-center justify-between">
                             <span className="flex items-center gap-1.5">
                               <Check className="w-3.5 h-3.5 text-emerald-400" />
-                              <span>Capture issue opened on GitHub!</span>
+                              <span>{t('uploadSuccessMsg')}</span>
                             </span>
                             {uploadResult.url && (
                               <a
@@ -2428,7 +2502,7 @@ export default function SpectraWorkspace({
                                 rel="noreferrer"
                                 className="underline text-emerald-200 hover:text-white flex items-center gap-1 font-mono font-bold"
                               >
-                                <span>View Issue</span>
+                                <span>{t('viewIssue')}</span>
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                             )}
@@ -2437,14 +2511,14 @@ export default function SpectraWorkspace({
 
                         {/* Unauthenticated fallback link */}
                         <div className="flex items-center justify-between pt-1 text-[10px] text-gray-500 border-t border-gray-800/50">
-                          <span>Prefer manual submission without signing in?</span>
+                          <span>{t('preferManualSubmit')}</span>
                           <a
                             href="https://github.com/Pr0xyA-91/spectra-captures/issues/new"
                             target="_blank"
                             rel="noreferrer"
                             className="text-purple-400 hover:text-purple-300 underline flex items-center gap-1"
                           >
-                            <span>Open submission form in browser</span>
+                            <span>{t('openSubmissionBrowser')}</span>
                             <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         </div>
@@ -2465,6 +2539,12 @@ export default function SpectraWorkspace({
         isOpen={showConfigModal}
         onClose={() => setShowConfigModal(false)}
         theme={theme}
+        lang={lang}
+        onChangeLang={setLang}
+        initialSection={configInitialSection}
+        onLaunchGuide={handleLaunchGuideFromConfig}
+        showGuideOnStartup={showGuideOnStartup}
+        onToggleGuideOnStartup={handleSetGuideOnStartup}
         aiEnabled={aiEnabled}
         aiModel={aiModel}
         aiSystem={aiSystem}
@@ -2489,6 +2569,45 @@ export default function SpectraWorkspace({
       />
 
       {/* ==================================================================== */}
+      {/* ZONE 5c: INTERACTIVE FIRST-RUN & REFRESHER WALKTHROUGH GUIDE */}
+      {/* ==================================================================== */}
+      <InteractiveGuideModal
+        isOpen={showGuideModal}
+        onClose={handleCloseGuide}
+        theme={theme}
+        lang={lang}
+        onChangeLang={setLang}
+        showOnStartup={startupGuideCheckbox}
+        onSetShowOnStartup={(checked) => setStartupGuideCheckbox(Boolean(checked))}
+        hasStats={Boolean(statsData)}
+        isInterrogating={isInterrogating}
+        onSelectDemoPort={() => {
+          const demo = availablePorts.find((p) => p.toUpperCase().includes('DEMO')) || 'DEMO / SIMULATION';
+          setSelectedPort(demo);
+          setHardwareError(null);
+          querySensors(true, demo);
+        }}
+        onRunInterrogate={() => {
+          if (!selectedPort) {
+            const demo = availablePorts.find((p) => p.toUpperCase().includes('DEMO')) || 'DEMO / SIMULATION';
+            setSelectedPort(demo);
+          }
+          runFullInterrogation();
+        }}
+        onSwitchTab={(tabId) => setActiveTab(tabId)}
+        onOpenConfig={(section = 'ai') => {
+          setConfigInitialSection(section);
+          setShowConfigModal(true);
+        }}
+        onJumpToOffsetCalibrator={() => {
+          setActiveTab('overview');
+          if (!aiEnabled) {
+            handleToggleAi(true);
+          }
+        }}
+      />
+
+      {/* ==================================================================== */}
       {/* ZONE 6: FOOTER STATUS BAR */}
       {/* ==================================================================== */}
       <footer className={`px-4 py-2 border-t ${theme.border} ${theme.headerBg} text-[11px] text-gray-400 flex flex-wrap items-center justify-between gap-2`}>
@@ -2498,10 +2617,10 @@ export default function SpectraWorkspace({
         </div>
         <div className="flex items-center space-x-4 font-mono text-[10px] text-gray-500">
           <span>TB1: {coffeeTemp != null ? `${coffeeTemp.toFixed(1)}°C` : '---'}</span>
-          <span>FLOW: {flowRate != null ? `${flowRate.toFixed(1)} ml/s` : '---'}</span>
+          <span>{lang === 'cs' ? 'PRŮTOK' : 'FLOW'}: {flowRate != null ? `${flowRate.toFixed(1)} ml/s` : '---'}</span>
           <span>BU: {buPos != null ? `${buPos} tk` : '---'}</span>
-          <span>POLL: {isPolling ? '1.1s' : 'OFF'}</span>
-          <span>TIMESTAMP: {lastTimestamp || '---'}</span>
+          <span>{t('footerPoll')} {isPolling ? '1.1s' : t('footerPollOff')}</span>
+          <span>{t('footerTimestamp')} {lastTimestamp || '---'}</span>
         </div>
       </footer>
     </div>
