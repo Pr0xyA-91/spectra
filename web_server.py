@@ -1223,6 +1223,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         # 5. API: Branded Service Report (HTML Inspection Certificate)
         elif url.path == "/api/service_report":
             port = params.get("port", [""])[0].strip()
+            lang = params.get("lang", ["en"])[0].strip().lower()
+            is_cs = lang.startswith("cs")
             include_ai = params.get("ai_summary", ["0"])[0].lower() in ("1", "true", "yes")
             if not port or not is_valid_port(port):
                 self._send_json({"error": "Invalid or missing serial port"})
@@ -1235,29 +1237,42 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_security_headers()
                 self.end_headers()
                 try:
-                    self.wfile.write(b"<html><body style='background:#070709;color:#e4e4e7;font-family:monospace;padding:40px;'><h2>Data Not Read Yet</h2><p>Please interrogate the machine first before generating a service certificate.</p></body></html>")
+                    msg_html = (
+                        "<html><body style='background:#070709;color:#e4e4e7;font-family:monospace;padding:40px;'><h2>Data zatím nebyla načtena</h2><p>Před vygenerováním servisního protokolu nejprve klikněte na Načíst stroj.</p></body></html>"
+                        if is_cs
+                        else "<html><body style='background:#070709;color:#e4e4e7;font-family:monospace;padding:40px;'><h2>Data Not Read Yet</h2><p>Please interrogate the machine first before generating a service certificate.</p></body></html>"
+                    )
+                    self.wfile.write(msg_html.encode("utf-8"))
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionError):
                     pass
                 return
 
             score, _ = compute_advisor_health(summary, {})
-            checklist = [
-                ("Visual inspection of silicone pressure lines & brass fittings", True),
-                ("Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)", True),
-                ("Descaling cycle execution & flowmeter verification", True),
-                ("Clean microswitch contact leaves on rear chassis", True),
-            ]
+            if is_cs:
+                checklist = [
+                    ("Vizuální kontrola silikonových hadiček a mosazných spojek", True),
+                    ("Kontrola tepelných pojistek a kontinuity (TB1: 0,1 Ω, TB2: 0,1 Ω)", True),
+                    ("Provedení odvápnění a ověření impulzů průtokoměru", True),
+                    ("Očištění kontaktů mikrospínače odkapní misky", True),
+                ]
+            else:
+                checklist = [
+                    ("Visual inspection of silicone pressure lines & brass fittings", True),
+                    ("Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)", True),
+                    ("Descaling cycle execution & flowmeter verification", True),
+                    ("Clean microswitch contact leaves on rear chassis", True),
+                ]
             ai_summary_data = None
             if include_ai:
                 try:
                     import spectra_ai
                     if spectra_ai.is_ai_enabled():
-                        ai_res = spectra_ai.generate_customer_service_summary(summary, score)
+                        ai_res = spectra_ai.generate_customer_service_summary(summary, score, lang=lang)
                         if ai_res.get("success"):
                             ai_summary_data = ai_res
                 except Exception:
                     pass
-            html_content = gui_widgets.generate_service_report_html(summary, score, checklist, ai_summary=ai_summary_data)
+            html_content = gui_widgets.generate_service_report_html(summary, score, checklist, ai_summary=ai_summary_data, lang=lang)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2246,10 +2261,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 telemetry = data.get("telemetry") or _last_sensor_payload or {}
                 stats_summary = data.get("stats") or _last_stats_cache or {}
                 model = data.get("model")
+                lang = str(data.get("lang") or "en").strip().lower()
                 res = spectra_ai.analyze_fault_triage(
                     telemetry=telemetry,
                     stats_summary=stats_summary,
                     model=model,
+                    lang=lang,
                 )
                 self._send_json(res)
             except Exception as e:
@@ -2268,7 +2285,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     return
                 score, _ = compute_advisor_health(summary, {})
                 model = data.get("model")
-                res = spectra_ai.generate_customer_service_summary(summary, score, model=model)
+                lang = str(data.get("lang") or "en").strip().lower()
+                res = spectra_ai.generate_customer_service_summary(summary, score, model=model, lang=lang)
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)})

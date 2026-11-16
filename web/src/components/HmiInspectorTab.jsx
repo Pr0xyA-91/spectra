@@ -28,6 +28,7 @@ import {
   ChevronDown,
   X
 } from 'lucide-react';
+import { createTranslator } from '../i18n/translations';
 
 const FALLBACK_MODEL_CATALOG = [
   { id: 'qwen2.5:0.5b', name: 'Qwen 2.5 0.5B (Ultra-Light)', min_ram_mb: 800, disk_mb: 398, languages: '29+ CS/EN/DE/ZH', speed_cpu: 'Fast (~1.5s/phrase)', compatibility: 'RECOMMENDED' },
@@ -43,12 +44,14 @@ const FALLBACK_MODEL_CATALOG = [
 
 export default function HmiInspectorTab({
   theme,
+  lang = 'en',
   aiEnabled = false,
   onToggleAi = null,
   onGlobalModelChange = null,
   beginAiWork = null,
   endAiWork = null,
 }) {
+  const t = createTranslator(lang);
   const [targetPath, setTargetPath] = useState('');
   const [autoScanDownloads, setAutoScanDownloads] = useState(() => {
     try {
@@ -800,7 +803,7 @@ export default function HmiInspectorTab({
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-sm font-extrabold tracking-wider text-cyan-400">
-                  SPECTRA FIRMWARE INSPECTOR &amp; BINARY AUDITOR
+                  {t('hmiTitle')}
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-cyan-950/80 border border-cyan-800 text-cyan-300">
                   {hmiInfo?.container_badge || 'ELF32 ARM (LVGL)'}
@@ -821,7 +824,7 @@ export default function HmiInspectorTab({
               title="Re-run static audit"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-cyan-400' : ''}`} />
-              <span>RE-SCAN</span>
+              <span>{t('hmiBtnRescan')}</span>
             </button>
 
             <button
@@ -831,7 +834,7 @@ export default function HmiInspectorTab({
               title="Create a patched laboratory copy of the binary fixing all detected defects"
             >
               <Sparkles className="w-3.5 h-3.5 text-black" />
-              <span>{isPatching ? 'PATCHING...' : '🩹 PATCH BINARY (LAB)'}</span>
+              <span>{isPatching ? t('hmiBtnPatching') : t('hmiBtnPatch')}</span>
             </button>
 
             <div className="flex items-center rounded border border-zinc-700 bg-zinc-900/60 overflow-hidden">
@@ -867,20 +870,20 @@ export default function HmiInspectorTab({
         {/* Binary Path Selector */}
         <div className="flex items-center space-x-2 pt-1 flex-wrap gap-y-2">
           <div className="flex items-center space-x-2 flex-1 min-w-[320px]">
-            <span className="text-gray-400 font-bold shrink-0">Target Binary / Update Dir:</span>
+            <span className="text-gray-400 font-bold shrink-0">{lang === 'cs' ? 'Cílový firmware / složka:' : 'Target Binary / Update Dir:'}</span>
             <input
               type="text"
               value={targetPath}
               onChange={(e) => setTargetPath(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchAuditData()}
               className="flex-1 bg-black/60 border border-zinc-700 rounded px-2.5 py-1 text-gray-200 font-mono text-[11px] focus:outline-none focus:border-cyan-500"
-              placeholder="Select or enter firmware binary (ELF, .apk, .bin) or update directory..."
+              placeholder={t('hmiPathPlaceholder')}
             />
             <button
               onClick={() => fetchAuditData()}
               className="px-3 py-1 font-bold rounded bg-cyan-950 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 transition-colors shrink-0"
             >
-              LOAD
+              {lang === 'cs' ? 'NAČÍST' : 'LOAD'}
             </button>
             <button
               onClick={handleBrowseTarget}
@@ -888,7 +891,7 @@ export default function HmiInspectorTab({
               title="Open file chooser dialog"
             >
               <FolderOpen className="w-3.5 h-3.5 text-cyan-400" />
-              <span>BROWSE...</span>
+              <span>{t('hmiBtnBrowse')}</span>
             </button>
             <button
               onClick={() => fetchDiscoveredTargets(false)}
@@ -1069,7 +1072,7 @@ export default function HmiInspectorTab({
           }`}
         >
           <Shield className="w-4 h-4" />
-          <span>🛡️ AUTOMATED FIRMWARE AUDIT ({findings.length})</span>
+          <span>{t('hmiSubTabAudit', { count: findings.length })}</span>
         </button>
         <button
           onClick={() => {
@@ -1083,7 +1086,7 @@ export default function HmiInspectorTab({
           }`}
         >
           <Sparkles className="w-4 h-4" />
-          <span>🧠 3-TIER OFFLINE AI & GLOSSARY</span>
+          <span>{t('hmiSubTabSemantic')}</span>
         </button>
         <button
           onClick={() => setSubTab('explorer')}
@@ -1094,7 +1097,7 @@ export default function HmiInspectorTab({
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>🔍 TRANSLATION & POINTER EXPLORER</span>
+          <span>{t('hmiSubTabExplorer')}</span>
         </button>
       </div>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Trash2, Download, Flame, Activity } from 'lucide-react';
+import { createTranslator } from '../i18n/translations';
 
 /**
  * Real-Time Rolling Strip Chart Graph (Oscilloscope Widget)
@@ -15,9 +16,11 @@ import { Play, Pause, Trash2, Download, Flame, Activity } from 'lucide-react';
  */
 export default function OscilloscopeStripChart({
   theme,
+  lang = 'en',
   liveData,
   maxSamples = 60,
 }) {
+  const t = createTranslator(lang);
   const [tb1Data, setTb1Data] = useState([]);
   const [tb2Data, setTb2Data] = useState([]);
   const [flowData, setFlowData] = useState([]);
@@ -141,7 +144,8 @@ export default function OscilloscopeStripChart({
     });
 
     // Vertical Time Grid Lines (-50s, -40s, -30s, -20s, -10s, Now)
-    const timeLabels = ['-50s', '-40s', '-30s', '-20s', '-10s', 'Now'];
+    const nowLabel = t('oscNow');
+    const timeLabels = ['-50s', '-40s', '-30s', '-20s', '-10s', nowLabel];
     ctx.textAlign = 'center';
     ctx.font = '9.5px monospace';
     timeLabels.forEach((label, i) => {
@@ -154,7 +158,7 @@ export default function OscilloscopeStripChart({
       ctx.lineTo(gx, padTop + plotH);
       ctx.stroke();
 
-      ctx.fillStyle = label === 'Now' ? (theme.textPrimary || '#FCEE09') : (theme.textMuted || '#6c7086');
+      ctx.fillStyle = label === nowLabel ? (theme.textPrimary || '#FCEE09') : (theme.textMuted || '#6c7086');
       ctx.fillText(label, gx, h - 10);
     });
 
@@ -173,13 +177,13 @@ export default function OscilloscopeStripChart({
       ctx.fillText('■ TB2: ---', padLeft + 110, 14);
 
       ctx.fillStyle = '#74c7ec';
-      ctx.fillText('■ Flow: ---', padLeft + 220, 14);
+      ctx.fillText(`${t('oscFlowPrefix')} ---`, padLeft + 220, 14);
 
       // Center Prompt
       ctx.textAlign = 'center';
       ctx.fillStyle = theme.textMuted || '#6c7086';
       ctx.font = '11px monospace';
-      ctx.fillText('Awaiting live telemetry stream...', padLeft + plotW / 2, padTop + plotH / 2);
+      ctx.fillText(t('oscAwaiting'), padLeft + plotW / 2, padTop + plotH / 2);
       return;
     }
 
@@ -284,13 +288,13 @@ export default function OscilloscopeStripChart({
     if (hasTb2 && lastTb2 != null) {
       ctx.fillText(`■ TB2: ${lastTb2.toFixed(1)}°C`, padLeft + 110, 14);
     } else {
-      ctx.fillText('■ TB2: N/A (Single Heater)', padLeft + 110, 14);
+      ctx.fillText(t('oscTb2Single'), padLeft + 110, 14);
     }
 
     // Flow
     ctx.fillStyle = '#74c7ec';
-    ctx.fillText(`■ Flow: ${lastFlow != null ? lastFlow.toFixed(1) : '---'} ml/s`, padLeft + 280, 14);
-  }, [tb1Data, tb2Data, flowData, theme, hasTb2, maxSamples]);
+    ctx.fillText(`${t('oscFlowPrefix')} ${lastFlow != null ? lastFlow.toFixed(1) : '---'} ml/s`, padLeft + 280, 14);
+  }, [tb1Data, tb2Data, flowData, theme, hasTb2, maxSamples, lang, t]);
 
   return (
     <div className={`p-3 border rounded ${theme.surfaceClass} space-y-2`}>
@@ -299,10 +303,10 @@ export default function OscilloscopeStripChart({
         <div className="flex items-center space-x-2">
           <span className="font-bold text-gray-200 uppercase tracking-wider flex items-center space-x-1.5">
             <Activity className="w-4 h-4 text-emerald-400" />
-            <span>REAL-TIME OSCILLOSCOPE &amp; STRIP CHART</span>
+            <span>{t('oscTitle')}</span>
           </span>
           <span className="text-[10px] text-gray-500 font-mono">
-            (X: Time / Y: Temperature °C)
+            {t('oscAxes')}
           </span>
         </div>
 
@@ -316,7 +320,7 @@ export default function OscilloscopeStripChart({
             }`}
           >
             {isPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
-            <span>{isPaused ? 'RESUME' : 'PAUSE'}</span>
+            <span>{isPaused ? t('btnResume') : t('btnPause')}</span>
           </button>
 
           <button
@@ -324,7 +328,7 @@ export default function OscilloscopeStripChart({
             className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center space-x-1"
           >
             <Trash2 className="w-3 h-3" />
-            <span>CLEAR</span>
+            <span>{t('btnClear')}</span>
           </button>
 
           <button
@@ -345,7 +349,7 @@ export default function OscilloscopeStripChart({
         />
         {isPaused && (
           <div className="absolute top-3 right-3 px-2 py-0.5 bg-amber-500 text-black font-black font-mono text-[10px] rounded shadow uppercase tracking-wider animate-pulse">
-            PAUSED
+            {t('oscPausedBadge')}
           </div>
         )}
       </div>

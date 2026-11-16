@@ -7,18 +7,31 @@ In accordance with SPECTRA edition guidelines, releases are identified strictly 
 
 ## 📦 Public Release Delta Summary (Since Last Public Sync)
 
-> Comparing **`Build 20261114.0020`** against the previous public snapshots:
-> - **Linux (`public/main`)**: Last synced at **`Build 20261104.1418`** (commit `4097b74`)
-> - **Windows (`public/windows`)**: Last synced at **`Build 20261102.1738`** (commit `8bde69a`)
+> Comparing **`Build 20261116.1639`** against the previous public snapshots:
+> - **Linux (`public/main`)**: Last synced at **`Build 20261114.0020`**
+> - **Windows (`public/windows`)**: Last synced at **`Build 20261114.0020`**
 >
 > **Summary of Major Capabilities Added Since Public Sync**:
-> 1. **Phase 1–3 Hybrid Rust Desktop Architecture (`crates/spectra-shell`, `crates/spectra-agent`, `crates/spectra-core`, `crates/spectra-py`)**: Replaced `.NET`/`pywebview` multi-window startup on Windows with a single-window native `tao` + `wry` desktop shell (`spectra-shell.exe`), embedded async Rust HTTP/1.1 gateway (`http_gateway.rs` with `--pure-rust` standalone mode and Python sidecar reverse-proxy), and cross-compiled native PyO3 extension (`spectra_py.so` / `spectra_py.pyd`).
-> 2. **9-Tab Workstation & Universal Firmware Inspector (`09 // FIRMWARE INSPECTOR`)**: Added dynamic ELF32, Android APK (`resources.arsc`), and MCU `.bin` localization auditing and non-destructive lab binary patching (Build `20261109.1339` – `20261113.1350`).
-> 3. **Default-OFF Local AI Suite (`spectra_ai.py`, `AiStatusBar.jsx`, `ConfigModal.jsx`)**: Adaptive hardware self-check (`qwen2.5:0.5b`, `gemma3:1b`, `gemma2:2b`, vision `gemma3:4b`), zero-admin portable AI runtime auto-installation with Windows OS TLS/SChannel certificate store resolution (`tls_utils.py`), on-demand Bench Triage, and Customer Summary generation.
-> 4. **CSV / Screenshot EEPROM Offset Calibrator & Unified 172-Machine Library (`machine_library.py`)**: Instant `16-bit BE` + `32-bit CDAB` J.O.E. / legacy CSV / screenshot correlation (`correlate_with_joe_ranked`), local override persistence (`eeprom_overrides.json` with `Local Override > Verified Spec > Built-in Profile` precedence), `.spectra-offset.json` import/export, and ENA 7 archetype support.
-> 5. **GitHub Community Upload & Native OS Dialogs (`github_auth.py`, `hmi_inspector.py`)**: OAuth 2.0 Device Flow + PAT authentication (`public_repo` + `gist` scopes, keyring / `0600` storage), automatic unlisted Gist attachment for large payloads, and focused foreground native Save As / Open File dialogs on Windows & Linux.
-> 6. **Win32 GUI Subsystem Packaging & Persistent Window State (`src_launcher/`, `spectra_app.py`)**: Eliminated stray console windows, added GDI splash fallback, official `.ico` window & taskbar branding (`SetCurrentProcessExplicitAppUserModelID`), maximized default window state (`window_state.json`), and clean in-place updates (`spectra_update.exe`).
-> 7. **Public `08 // MEM MAPPER` & Illustrated Operator Documentation (`memory_mapper.py`, `MemMapperTab.jsx`, `docs/USER_GUIDE.md`, `docs/images/`)**: Promoted Mem Mapper as a public read-only differential EEPROM scope & raw sensor mapper (Rust `parse_rt_block` accelerated), added visual workflow/architecture diagrams and end-to-end guides covering operation, Local AI, EEPROM offset fixing, Mem Mapper, and GitHub connection, and sanitized test/doc fixtures & binary build paths.
+> 1. **Czech UI Localization (`web/src/i18n/translations.js`, `ConfigModal.jsx`, `gui_widgets.py`, `spectra_ai.py`)**: Full Czech secondary language translation across the entire SPECTRA workstation (keeping developer-oriented `08 // MEM MAPPER` in English), instant `Language / Jazyk` toggle inside `CONFIG`, Czech service inspection certificate HTML, and Czech Local AI bench triage / customer summary prompts.
+> 2. **Interactive First-Run & Refresher Guide (`InteractiveGuideModal.jsx`)**: 7-step bilingual walkthrough popping up on first launch with an inline language quick-picker, live interactive actions (`DEMO` port switch, `⚡ INTERROGATE`, tab peeks, AI setup jump, Offset Calibrator jump), and a `CONFIG` reminder + startup toggle to relaunch anytime.
+> 3. **Simple Czech Operator Guide (`docs/USER_GUIDE_CS.md`)**: Beginner-friendly Czech manual focused on basic operation, connecting Local AI, and fixing wrong drink counters via CSV/screenshot offset calibration.
+
+---
+
+## [Build 20261116.1639] — 2026-11-16
+
+### 🌐 Highlights: Czech UI Localization, Interactive Guided Tour & Simple Czech User Guide
+
+#### 1. Czech Secondary Language & Config Toggle (`web/src/i18n/translations.js`, `ConfigModal.jsx`, `spectra_ai.py`, `gui_widgets.py`)
+- **Full Workstation Translation**: Added complete `en`/`cs` translation dictionaries covering top controls, 9 KPI tiles, navigation tabs, `01 // OVERVIEW`, `02 // SENSORS & OSCILLOSCOPE` (including Digital Twin & Oscilloscope canvas), `03 // BEVERAGES`, `04 // MAINTENANCE`, `05 // ALERTS`, `06 // IDENTITY`, `07 // COMMAND INJECTOR`, `09 // FIRMWARE INSPECTOR`, Export Modal, Debug Console, and Config Modal (preserving `08 // MEM MAPPER` in English).
+- **Config Language Switcher**: Added persistent `Language / Jazyk` (`English (EN)` / `Čeština (CS)`) selector at the top of `ConfigModal.jsx` (`localStorage['spectra_lang']`).
+- **Czech Service Certificates & AI Output**: Extended `gui_widgets.generate_service_report_html(..., lang="cs")`, `spectra_ai.analyze_fault_triage(..., lang="cs")`, and `spectra_ai.generate_customer_service_summary(..., lang="cs")` via `web_server.py`.
+
+#### 2. Interactive Guided Tour (`web/src/components/InteractiveGuideModal.jsx`)
+- **First-Start Onboarding & Config Reminder**: Pops up automatically on first run (`localStorage['spectra_onboarding_seen']`) with live 1-click actions (switching to `DEMO`, running `⚡ INTERROGATE`, jumping to tabs/AI setup/Offset Calibrator) and a persistent reminder/launch button + startup checkbox inside `ConfigModal.jsx`.
+
+#### 3. Beginner-Friendly Czech User Guide (`docs/USER_GUIDE_CS.md`)
+- **Non-Technical Operator Manual**: Added `docs/USER_GUIDE_CS.md` focusing on basic usage, connecting Local AI, and step-by-step EEPROM offset fixing, linked from `docs/USER_GUIDE.md` and `README.md`.
 
 ---
 

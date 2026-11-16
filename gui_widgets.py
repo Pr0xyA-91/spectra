@@ -1071,12 +1071,14 @@ def generate_service_report_html(
     health_score: int,
     technician_checklist: List[Tuple[str, bool]],
     ai_summary: Optional[Dict[str, Any]] = None,
+    lang: str = "en",
 ) -> str:
     """
     Generates a professional, branded customer service inspection certificate
     in self-contained HTML format ready for printing to PDF or customer handoff.
     """
-    model = html.escape(str(summary.get("machine_model", "Unknown Jura Model")))
+    is_cs = str(lang).lower().startswith("cs")
+    model = html.escape(str(summary.get("machine_model", "Neznámý model Jura" if is_cs else "Unknown Jura Model")))
     total_cups = summary.get("total_cups", 0)
     serial_no = html.escape(str(summary.get("telemetry", {}).get("serial_number", "N/A")))
     prod_date = html.escape(str(summary.get("telemetry", {}).get("production_date", "N/A")))
@@ -1084,14 +1086,46 @@ def generate_service_report_html(
     timestamp = html.escape(str(summary.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))))
 
     health_color = "#22c55e" if health_score >= 80 else ("#eab308" if health_score >= 50 else "#ef4444")
-    health_label = "EXCELLENT" if health_score >= 85 else ("GOOD" if health_score >= 70 else "NEEDS SERVICE")
+    if is_cs:
+        health_label = "VÝBORNÝ" if health_score >= 85 else ("DOBRÝ" if health_score >= 70 else "NUTNÝ SERVIS")
+    else:
+        health_label = "EXCELLENT" if health_score >= 85 else ("GOOD" if health_score >= 70 else "NEEDS SERVICE")
+
+    bev_cs_map = {
+        "Hot Water": "Horká voda",
+        "Hot water": "Horká voda",
+        "Milk Foam": "Mléčná pěna",
+        "Milk": "Mléko",
+        "Steam": "Pára",
+        "Coffee": "Káva",
+        "2x Coffee": "2x Káva",
+        "2x Espresso": "2x Espresso",
+        "Pot of Coffee": "Konvice kávy",
+        "Ground Coffee": "Mletá káva",
+    }
+    maint_cs_map = {
+        "Cleanings": "Čištění",
+        "Coffee Cleaning": "Čištění kávových cest",
+        "Decalcifications": "Odvápnění",
+        "Descaling": "Odvápnění",
+        "Thermoblock Descaling": "Odvápnění termobloku",
+        "Filter Changes": "Výměny filtru",
+        "CLARIS Filter Changes": "Výměny filtru CLARIS",
+        "Milk System Cleaning": "Čištění mléčných cest",
+        "Milk System Rinses": "Proplachy mléčných cest",
+        "Switch-On Rinses": "Proplachy při zapnutí",
+        "Switch-Off Rinses": "Proplachy při vypnutí",
+        "Coffee Rinses": "Proplachy kávy",
+    }
 
     # Beverage rows
     bev_rows = ""
     for b in sorted(summary.get("beverages", []), key=lambda x: x.get("count", 0), reverse=True)[:10]:
         cnt = b.get("count", 0)
         pct = (cnt / max(1, total_cups)) * 100.0
-        safe_name = html.escape(str(b.get('name', 'Specialty')))
+        raw_name = str(b.get('name', 'Specialty'))
+        disp_name = bev_cs_map.get(raw_name, raw_name) if is_cs else raw_name
+        safe_name = html.escape(disp_name)
         bev_rows += f"""
         <tr>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{safe_name}</td>
@@ -1104,7 +1138,9 @@ def generate_service_report_html(
     maint_rows = ""
     for m in summary.get("maintenance", []):
         pct_str = f"{m.get('percentage')}%" if m.get("percentage") is not None else "N/A"
-        safe_label = html.escape(str(m.get('label', 'Cycle')))
+        raw_lbl = str(m.get('label', 'Cycle'))
+        disp_lbl = maint_cs_map.get(raw_lbl, raw_lbl) if is_cs else raw_lbl
+        safe_label = html.escape(disp_lbl)
         maint_rows += f"""
         <tr>
             <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{safe_label}</td>
@@ -1131,20 +1167,41 @@ def generate_service_report_html(
     if ai_summary and ai_summary.get("customer_summary"):
         safe_ai_note = html.escape(str(ai_summary.get("customer_summary", "")))
         safe_ai_next = html.escape(str(ai_summary.get("recommended_next_service", "")))
-        next_line = f"<div style='margin-top: 8px; font-weight: 600; color: #0f172a;'>Recommended Next Step: {safe_ai_next}</div>" if safe_ai_next else ""
+        next_prefix = "Doporučený další krok:" if is_cs else "Recommended Next Step:"
+        summary_heading = "Shrnutí servisu pro zákazníka" if is_cs else "Customer Service Summary"
+        next_line = f"<div style='margin-top: 8px; font-weight: 600; color: #0f172a;'>{next_prefix} {safe_ai_next}</div>" if safe_ai_next else ""
         ai_summary_html = f"""
     <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-left: 4px solid #0284c7; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px;">
-        <div style="font-size: 11px; font-weight: 800; color: #0369a1; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;">Customer Service Summary</div>
+        <div style="font-size: 11px; font-weight: 800; color: #0369a1; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;">{summary_heading}</div>
         <div style="font-size: 13px; color: #1e293b; line-height: 1.5;">{safe_ai_note}</div>
         {next_line}
     </div>
     """
 
+    html_lang = "cs" if is_cs else "en"
+    doc_title = f"SPECTRA Servisní inspekční protokol — {model}" if is_cs else f"SPECTRA Diagnostic Inspection Certificate — {model}"
+    brand_sub = "Univerzální hardwarová telemetrie a servisní inspekční protokol" if is_cs else "Universal Hardware Telemetry &amp; Logic Board Inspection Certificate"
+    lbl_model = "Model kávovaru" if is_cs else "Appliance Model"
+    lbl_serial = "Sériové číslo" if is_cs else "Serial Number"
+    lbl_cups = "Celkem připraveno šálků" if is_cs else "Total Cups Prepared"
+    lbl_date = "Datum inspekce" if is_cs else "Inspection Date"
+    sec_bev = "Historie připravených nápojů" if is_cs else "Specialty Preparation History"
+    col_spec = "Nápoj" if is_cs else "Specialty"
+    col_prep = "Počet" if is_cs else "Prepared"
+    col_share = "Podíl" if is_cs else "Share"
+    sec_maint = "Cykly údržby a hygiena" if is_cs else "Maintenance Cycles &amp; Hygiene"
+    col_cycle = "Cyklus" if is_cs else "Cycle"
+    col_count = "Počet" if is_cs else "Count"
+    col_life = "Stav" if is_cs else "Life"
+    sec_chk = "Kontrolní seznam technika" if is_cs else "Field Service Inspection Verification"
+    ftr_left = f"Ověřeno diagnostickým enginem SPECTRA (Build {__build__})" if is_cs else f"Verified by SPECTRA Hardware Interrogation Engine (Build {__build__})"
+    ftr_right = "Kontrolní součet: SHA256 • Neinvazivní optická telemetrie" if is_cs else "Checksum: SHA256-AUTHENTICATED • Non-invasive Optical Bus Telemetry"
+
     cert_html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{html_lang}">
 <head>
 <meta charset="utf-8">
-<title>SPECTRA Diagnostic Inspection Certificate — {model}</title>
+<title>{doc_title}</title>
 <style>
     body {{
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1276,7 +1333,7 @@ def generate_service_report_html(
     <div class="header">
         <div>
             <div class="brand-title">SPECTRA DIAGNOSTIC SUITE</div>
-            <div class="brand-sub">Universal Hardware Telemetry &amp; Logic Board Inspection Certificate</div>
+            <div class="brand-sub">{brand_sub}</div>
         </div>
         <div class="health-badge">
             <div class="health-score">{health_score}%</div>
@@ -1286,19 +1343,19 @@ def generate_service_report_html(
 
     <div class="spec-grid">
         <div class="spec-item">
-            <span class="spec-label">Appliance Model</span>
+            <span class="spec-label">{lbl_model}</span>
             <span class="spec-val">{model}</span>
         </div>
         <div class="spec-item">
-            <span class="spec-label">Serial Number</span>
+            <span class="spec-label">{lbl_serial}</span>
             <span class="spec-val">{serial_no}</span>
         </div>
         <div class="spec-item">
-            <span class="spec-label">Total Cups Prepared</span>
+            <span class="spec-label">{lbl_cups}</span>
             <span class="spec-val">{total_cups:,}</span>
         </div>
         <div class="spec-item">
-            <span class="spec-label">Inspection Date</span>
+            <span class="spec-label">{lbl_date}</span>
             <span class="spec-val">{timestamp}</span>
         </div>
     </div>
@@ -1307,13 +1364,13 @@ def generate_service_report_html(
 
     <div class="two-col">
         <div>
-            <div class="section-title">Specialty Preparation History</div>
+            <div class="section-title">{sec_bev}</div>
             <table>
                 <thead>
                     <tr>
-                        <th>Specialty</th>
-                        <th style="text-align: right;">Prepared</th>
-                        <th style="text-align: right;">Share</th>
+                        <th>{col_spec}</th>
+                        <th style="text-align: right;">{col_prep}</th>
+                        <th style="text-align: right;">{col_share}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1323,13 +1380,13 @@ def generate_service_report_html(
         </div>
 
         <div>
-            <div class="section-title">Maintenance Cycles &amp; Hygiene</div>
+            <div class="section-title">{sec_maint}</div>
             <table>
                 <thead>
                     <tr>
-                        <th>Cycle</th>
-                        <th style="text-align: right;">Count</th>
-                        <th style="text-align: right;">Life</th>
+                        <th>{col_cycle}</th>
+                        <th style="text-align: right;">{col_count}</th>
+                        <th style="text-align: right;">{col_life}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1337,7 +1394,7 @@ def generate_service_report_html(
                 </tbody>
             </table>
 
-            <div class="section-title" style="margin-top: 24px;">Field Service Inspection Verification</div>
+            <div class="section-title" style="margin-top: 24px;">{sec_chk}</div>
             <ul>
                 {chk_items}
             </ul>
@@ -1345,8 +1402,8 @@ def generate_service_report_html(
     </div>
 
     <div class="footer">
-        <span>Verified by SPECTRA Hardware Interrogation Engine (Build {__build__})</span>
-        <span>Checksum: SHA256-AUTHENTICATED • Non-invasive Optical Bus Telemetry</span>
+        <span>{ftr_left}</span>
+        <span>{ftr_right}</span>
     </div>
 </div>
 </body>
