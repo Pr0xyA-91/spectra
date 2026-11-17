@@ -391,7 +391,7 @@ export default function DiagnosticAdvisorTab({
   const advisorCards = statsData.advisor_cards || [];
   const beverages = statsData.beverages || [];
   const totalPreps = statsData.total_preparations || 0;
-  const totalCups = statsData.total_cups || totalPreps;
+  const totalCups = statsData.total_cups ?? totalPreps;
 
   // Health Score Color
   const getScoreColor = (sc) => {

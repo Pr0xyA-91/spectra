@@ -90,10 +90,8 @@ class TestENA7Mapping(unittest.TestCase):
         self.assertEqual(session.telemetry["ean_code"], "(01)07610917135004(21)20120115001004")
         self.assertEqual(session.telemetry["production_date"], "15.1.2012")
 
-        # Verify beverage counters (J.O.E. exact ground truth)
-        # Total coffee preps: 603 + 0 + 10720 + 7 + 2167 + 236 = 13733
-        # Total cups: 13726 + (7 * 2) = 13740
-        self.assertEqual(session.total_preparations, 13733)
+        # Verify beverage counters (all preparations incl. 532 hot water = 14265; coffee-only cups = 13740)
+        self.assertEqual(session.total_preparations, 14265)
         self.assertEqual(session.total_cups, 13740)
         self.assertEqual(session.counters[1], 603)    # 1 Espresso
         self.assertEqual(session.counters[2], 0)      # 2 Espressi

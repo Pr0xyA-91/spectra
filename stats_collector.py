@@ -43,6 +43,31 @@ except ImportError:
     _rust_core = None
     HAS_RUST_CORE = False
 
+
+_COFFEE_PRODUCT_KEYWORDS = (
+    "coffee", "kaffee", "káva", "espresso", "espressi", "ristretto", "ristretti",
+    "cappuccino", "latte", "macchiato", "flat white", "cortado", "americano",
+    "lungo", "doppio", "barista", "melange", "au lait", "ground", "aroma", "special",
+)
+_NON_COFFEE_PRODUCT_KEYWORDS = (
+    "water", "voda", "wasser", "tea", "čaj", "milk", "mléko", "mléčná",
+    "milch", "foam", "pěna", "schaum", "steam", "pára", "dampf",
+)
+_NON_COFFEE_PRODUCT_CODES = frozenset((8, 10, 13, 45))
+
+
+def is_non_coffee_product(name: str, code: Optional[int] = None) -> bool:
+    """
+    Return True for standalone non-coffee beverages (steam, milk/milk foam, hot water/tea)
+    that count in total preparations only, never in total coffee cups.
+    """
+    low = str(name or "").strip().lower()
+    if any(tok in low for tok in _COFFEE_PRODUCT_KEYWORDS):
+        return False
+    if code is not None and code in _NON_COFFEE_PRODUCT_CODES:
+        return True
+    return any(tok in low for tok in _NON_COFFEE_PRODUCT_KEYWORDS)
+
 try:
     from version import __version__, __build__
 except ImportError:
@@ -1319,25 +1344,29 @@ class JuraStatsSession:
             new_prod_defs: List[Dict[str, Any]] = []
             single_preps = 0
             double_preps = 0
+            coffee_cups = 0
             for idx, item in enumerate(ov_prods, start=1):
                 code = int(item.get("code") or idx)
                 val = _read_word(item.get("addr"))
                 is_dbl = bool(item.get("is_double", False))
+                item_name = str(item.get("name") or f"Product #{code}")
                 new_counters[code] = val
                 if is_dbl:
                     double_preps += val
                 else:
                     single_preps += val
+                if not is_non_coffee_product(item_name, code):
+                    coffee_cups += (val * 2) if is_dbl else val
                 new_prod_defs.append({
                     "code": code,
-                    "name": str(item.get("name") or f"Product #{code}"),
+                    "name": item_name,
                     "is_double": is_dbl,
                     "active": True,
                 })
             self.counters = new_counters
             self.override_products = new_prod_defs
             self.total_preparations = single_preps + double_preps
-            self.total_cups = single_preps + (double_preps * 2)
+            self.total_cups = coffee_cups
             self.telemetry["total_preparations"] = self.total_preparations
             self.telemetry["total_cups"] = self.total_cups
 
@@ -1654,7 +1683,7 @@ class JuraStatsSession:
                     single_preps = esp1 + cof1 + water
                     double_preps = esp2 + cof2
                     self.total_preparations = single_preps + double_preps
-                    self.total_cups = single_preps + (double_preps * 2)
+                    self.total_cups = esp1 + cof1 + (double_preps * 2)
 
                     # D4 Filter changes are stored at 0x000E
                     filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
@@ -1740,7 +1769,8 @@ class JuraStatsSession:
                     single_preps = rist + esp + cof + flat_white + capp + latte + milk + water + spec + macchiato + doppio + green_tea + ground
                     double_preps = rist2 + esp2 + cof2 + spec2
                     self.total_preparations = single_preps + double_preps
-                    self.total_cups = single_preps + (double_preps * 2)
+                    coffee_single_cups = rist + esp + cof + flat_white + capp + latte + spec + macchiato + doppio + ground
+                    self.total_cups = coffee_single_cups + (double_preps * 2)
 
                     filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
                     milk_rinses = eeprom.get(0x0020, 0)
@@ -1774,7 +1804,7 @@ class JuraStatsSession:
 
                     single_preps = esp1 + cof1 + aroma + ground
                     double_preps = esp2 + cof2
-                    self.total_preparations = single_preps + double_preps
+                    self.total_preparations = single_preps + double_preps + hotwater
                     self.total_cups = single_preps + (double_preps * 2)
 
                     filter_cycles = eeprom.get(0x0052, 0)
@@ -2028,8 +2058,25 @@ class JuraStatsSession:
                             if count_val != 0xFFFF:
                                 self.counters[code] = count_val
 
-            self.total_preparations = self.counters.get(0, sum(v for k, v in self.counters.items() if k != 0))
-            self.total_cups = self.total_preparations
+            per_prod = {k: v for k, v in self.counters.items() if k != 0 and v > 0}
+            if per_prod:
+                prof_by_code = {
+                    p.get("code"): p
+                    for p in self.profile.get("products", [])
+                    if isinstance(p, dict) and p.get("code") is not None
+                }
+                coffee_cups = 0
+                for code, count_val in per_prod.items():
+                    p_def = prof_by_code.get(code, {})
+                    pname = str(p_def.get("name") or profiles_db.get_product_name(self.profile, code))
+                    is_dbl = bool(p_def.get("is_double", False))
+                    if not is_non_coffee_product(pname, code):
+                        coffee_cups += (count_val * 2) if is_dbl else count_val
+                self.total_preparations = self.counters.get(0, sum(per_prod.values()))
+                self.total_cups = coffee_cups
+            else:
+                self.total_preparations = self.counters.get(0, 0)
+                self.total_cups = self.total_preparations
 
             # Maintenance Counters (@TG:43)
             update_prog(0.82, "Reading maintenance counters (@TG:43)...")
@@ -2083,7 +2130,7 @@ class JuraStatsSession:
 
     def get_structured_summary(self) -> Dict[str, Any]:
         """Produce structured statistics dictionary."""
-        grand_total = self.total_cups or self.total_preparations
+        grand_total = self.total_cups if self.total_cups is not None else self.total_preparations
 
         # Build beverage list
         beverage_list = []
