@@ -1292,9 +1292,9 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261117.1403' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261117.1859' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261117.1403'}
+            BUILD {liveBuild || debugSummary?.build || '20261117.1859'}
           </button>
           {updateInfo?.update_available && (
             <button
@@ -2445,7 +2445,7 @@ export default function SpectraWorkspace({
                         </label>
                         <input
                           type="file"
-                          accept=".csv"
+                          accept=".csv,.txt"
                           onChange={handleJoeFileUpload}
                           className="w-full text-[11px] text-gray-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-medium file:bg-purple-900/50 file:text-purple-300 hover:file:bg-purple-800/60 cursor-pointer"
                         />

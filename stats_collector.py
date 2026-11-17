@@ -1265,9 +1265,6 @@ class JuraStatsSession:
         directly to this session's counters and maintenance stats.
         """
         mem = eeprom if eeprom is not None else self.last_eeprom
-        if not mem:
-            return False
-
         art = article_num or self.telemetry.get("article_number")
         ov = profiles_db.get_eeprom_offset_override(
             self.ef_code,
@@ -1278,6 +1275,24 @@ class JuraStatsSession:
             self.override_products = None
             self.override_maint_labels = None
             self.offset_override_info = None
+            return False
+
+        ov_model = str(ov.get("model_name") or "").strip()
+        ov_art = str(ov.get("article_number") or "").strip()
+        ov_serial = str(ov.get("serial_number") or "").strip()
+        ov_market = str(ov.get("market_region") or "").strip()
+
+        if ov_model and ov_model.lower() not in ("unknown", "unknown jura", "n/a"):
+            self.model_family = ov_model
+            self.telemetry["appliance_type"] = ov_model
+        if ov_art and ov_art.lower() not in ("unknown", "n/a"):
+            self.telemetry["article_number"] = ov_art
+        if ov_serial and ov_serial.lower() not in ("unknown", "n/a"):
+            self.telemetry["serial_number"] = ov_serial
+        if ov_market and ov_market.lower() not in ("unknown", "n/a"):
+            self.telemetry["market_region"] = ov_market
+
+        if not mem and (ov.get("products") or ov.get("maintenance")):
             return False
 
         def _read_word(addr_val: Any) -> int:
@@ -2145,6 +2160,8 @@ class JuraStatsSession:
             "timestamp": datetime.now().isoformat(),
             "port": self.port_name,
             "machine_model": self.model_family,
+            "appliance_type": self.telemetry.get("appliance_type", self.model_family),
+            "article_number": self.telemetry.get("article_number", "N/A"),
             "firmware_string": self.raw_model_str,
             "ef_code": self.ef_code,
             "protocol_mode": self.protocol_mode,
@@ -2153,6 +2170,7 @@ class JuraStatsSession:
             "production_date": self.telemetry.get("production_date", "N/A"),
             "machine_number": self.telemetry.get("machine_number", "N/A"),
             "country_code": self.telemetry.get("country_code", "N/A"),
+            "market_region": self.telemetry.get("market_region", self.telemetry.get("country_code", "N/A")),
             "total_preparations": self.total_preparations,
             "total_cups": grand_total,
             "beverages": beverage_list,

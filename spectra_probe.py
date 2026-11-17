@@ -91,16 +91,29 @@ def _coerce_int(val_str: Any) -> Any:
 
 
 def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
-    """Parse lines of an official J.O.E. app CSV export."""
+    """Parse lines of an official J.O.E. app CSV export or freeform diagnostic `.txt` file."""
     result = {
         "model_name": "",
         "article_number": "",
+        "serial_number": "",
+        "market_region": "",
         "cockpit": {},
         "maintenance": {},
         "products": {},
         "total_products": None,
         "raw_lines": []
     }
+
+    maint_tokens = (
+        "clean", "decalc", "descal", "filter", "rinse", "rinsing",
+        "milk", "capp", "brew", "reinig", "entkalk", "spül", "čist", "odváp"
+    )
+    beverage_tokens = (
+        "espresso", "coffee", "kaffee", "káva", "ristretto", "cappuccino",
+        "latte", "macchiato", "flat white", "americano", "cortado",
+        "lungo", "portion", "hot water", "water", "foam", "powder",
+        "ground", "aroma", "jug", "pot", "tea"
+    )
 
     current_section = None
     for raw_line in lines:
@@ -109,35 +122,55 @@ def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
         if not line:
             continue
 
-        # Header metadata
-        if line.lower().startswith("model name:"):
-            result["model_name"] = line.split(":", 1)[1].strip()
-            continue
-        if line.lower().startswith("article number:"):
-            result["article_number"] = line.split(":", 1)[1].strip()
-            continue
+        # Header metadata (colon- or semicolon-delimited)
+        meta_m = re.match(r"^([A-Za-z0-9\s./_-]{2,32}?)\s*[:;=]\s*(.+)$", line)
+        if meta_m:
+            mkey = meta_m.group(1).strip().lower()
+            mval = meta_m.group(2).strip().strip('"\'')
+            if mkey in ("model name", "machine model", "appliance", "appliance type", "model"):
+                if mval:
+                    result["model_name"] = mval
+                continue
+            if mkey in ("article number", "model number", "art. no", "art no", "item no", "type number", "artikelnummer"):
+                if mval:
+                    result["article_number"] = mval
+                continue
+            if mkey in ("serial number", "serial no", "serial", "s/n", "seriennummer"):
+                if mval:
+                    result["serial_number"] = mval
+                continue
+            if mkey in ("market", "region", "market region", "country", "country code"):
+                if mval:
+                    result["market_region"] = mval
+                continue
 
         # Section markers
-        if line.lower() == "cockpit":
+        low_line = line.lower().strip(":[]- ")
+        if low_line == "cockpit":
             current_section = "cockpit"
             continue
-        elif line.lower() == "maintenance counter":
+        elif low_line in ("maintenance counter", "maintenance counters", "maintenance"):
             current_section = "maintenance"
             continue
-        elif line.lower() == "product counter":
+        elif low_line in ("product counter", "product counters", "products", "beverage counters"):
             current_section = "products"
             continue
 
-        # Key-value lines (comma or semicolon delimited)
+        # Key-value lines (comma, semicolon, tab, colon, or equals delimited)
+        parts: List[str] = []
         if ';' in line:
             parts = [p.strip() for p in line.split(';') if p.strip()]
-        else:
+        elif ',' in line:
             try:
                 import csv
                 reader = csv.reader([line])
                 parts = [p.strip() for p in next(reader) if p.strip()]
             except Exception:
                 parts = [p.strip() for p in re.split(r'[,;]', line) if p.strip()]
+        else:
+            txt_m = re.match(r"^(?=.*[A-Za-z\u00C0-\u024F])([^:=;|]{2,48}?)\s*(?:[:=]|\t+|\s{2,})\s*(\d[\d,\.\s]{0,12}%?)\s*$", line)
+            if txt_m:
+                parts = [txt_m.group(1).strip(" :-•|"), txt_m.group(2).strip()]
 
         if len(parts) >= 2:
             key = parts[0]
@@ -151,10 +184,31 @@ def parse_joe_csv_lines(lines: List[str]) -> Dict[str, Any]:
             elif current_section == "maintenance":
                 result["maintenance"][key] = _coerce_int(val_str)
             elif current_section == "products":
-                if key.lower().startswith("total number of products"):
+                if key.lower().startswith(("total number of products", "total products", "total preps")):
                     result["total_products"] = _coerce_int(val_str)
                 else:
                     result["products"][key] = _coerce_int(val_str)
+            else:
+                # Freeform `.txt` line outside section headers: skip dates/temps/units
+                low_key = key.lower()
+                low_val = val_str.lower()
+                if any(tok in low_key for tok in ("date", "timestamp", "time", "firmware", "ef", "baud", "voltage", "temp", "year")):
+                    continue
+                if "%" in low_val:
+                    pct_m = re.search(r"(\d{1,3})\s*%", val_str)
+                    if pct_m and 0 <= int(pct_m.group(1)) <= 100:
+                        result["cockpit"][key] = f"{int(pct_m.group(1))}%"
+                    continue
+                if re.search(r"(°c|°f|ml/s|hz|rpm|v\b)", low_val):
+                    continue
+                coerced = _coerce_int(val_str)
+                if isinstance(coerced, int) and coerced >= 0:
+                    if low_key.startswith(("total number of products", "total products", "total preps")):
+                        result["total_products"] = coerced
+                    elif any(t in low_key for t in maint_tokens):
+                        result["maintenance"][key] = coerced
+                    elif any(t in low_key for t in beverage_tokens) or re.match(r"^[A-Za-z0-9]", key):
+                        result["products"][key] = coerced
 
     return result
 
@@ -718,8 +772,12 @@ def upload_capture_to_community_repo(
         return False, "No capture data or file path provided.", None
 
     ident = data.get("identity", {})
-    model_name = ident.get("model_name") or "Unknown"
-    article_number = str(ident.get("article_number") or "unknown")
+    offset_fix = data.get("ai_offset_fix") or data.get("override")
+    fix_dict = offset_fix if isinstance(offset_fix, dict) else {}
+    model_name = fix_dict.get("model_name") or ident.get("model_name") or "Unknown"
+    article_number = str(fix_dict.get("article_number") or ident.get("article_number") or "unknown")
+    serial_number = str(fix_dict.get("serial_number") or ident.get("serial_number") or "N/A")
+    market_region = str(fix_dict.get("market_region") or ident.get("market_region") or "N/A")
     gateways = data.get("gateways", {})
     firmware = gateways.get("TY:", "").replace("ty:", "").strip()
     words_count = len(data.get("eeprom_words", {}))
@@ -728,7 +786,6 @@ def upload_capture_to_community_repo(
     timestamp = data.get("timestamp") or metadata.get("timestamp") or time.strftime("%Y-%m-%d %H:%M:%S")
     build_val = data.get("build") or metadata.get("spectra_build") or BUILD_NUMBER
 
-    offset_fix = data.get("ai_offset_fix") or data.get("override")
     has_offset_fix = isinstance(offset_fix, dict) and bool(
         offset_fix.get("products") or offset_fix.get("maintenance") or offset_fix.get("maintenance_pct")
     )
@@ -743,6 +800,8 @@ def upload_capture_to_community_repo(
         f"- **Manufacturer**: {ident.get('manufacturer', 'Jura')}\n"
         f"- **Model Name**: {model_name}\n"
         f"- **Article Number**: {article_number}\n"
+        f"- **Serial Number**: {serial_number}\n"
+        f"- **Market / Region**: {market_region}\n"
         f"- **Firmware**: {firmware}\n"
         f"- **Build**: {build_val}\n"
         f"- **Timestamp**: {timestamp}\n"
@@ -753,6 +812,16 @@ def upload_capture_to_community_repo(
 
     fix_section = ""
     if has_offset_fix:
+        import machine_library
+        merged_ident = dict(ident)
+        merged_ident.setdefault("model_name", model_name)
+        merged_ident.setdefault("article_number", article_number)
+        if serial_number and serial_number != "N/A":
+            merged_ident["serial_number"] = serial_number
+        if market_region and market_region != "N/A":
+            merged_ident["market_region"] = market_region
+        harvest_patch = machine_library.build_offset_patch_payload(offset_fix, identity=merged_ident)
+
         fix_lines = [
             "### Verified EEPROM Offset Fix (Local AI Calibration)",
             f"- **Model Used**: `{offset_fix.get('model_used', 'local_ai')}`",
@@ -776,7 +845,14 @@ def upload_capture_to_community_repo(
             fix_lines.append(
                 f"| Cockpit % | {c.get('name')} ({c.get('byte')} byte) | `{c.get('addr_hex')}` | {c.get('joe_pct')}% | `{c.get('eeprom_word_hex')}` | Yes |"
             )
-        fix_lines.append("")
+        fix_lines.extend([
+            "",
+            "### Automated Harvesting Payload (`spectra.offset_patch.v1`)",
+            "```json",
+            json.dumps(harvest_patch, indent=2, ensure_ascii=False),
+            "```",
+            "",
+        ])
         fix_section = "\n".join(fix_lines) + "\n"
 
     # Fallback pre-filled submission URL (unauthenticated / manual fallback)

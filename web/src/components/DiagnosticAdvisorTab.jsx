@@ -17,6 +17,7 @@ import {
   Check,
   Send,
   Sliders,
+  X,
 } from 'lucide-react';
 import { createTranslator, txAdvisorCard, txBeverageName, txVal } from '../i18n/translations';
 
@@ -62,15 +63,22 @@ export default function DiagnosticAdvisorTab({
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [aiError, setAiError] = useState('');
 
-  // Inline Offset Calibrator (CSV or J.O.E./Legacy Screenshot)
+  // Inline Offset Calibrator (.csv, .txt notes, or J.O.E./Legacy Screenshot + US/EU Identity)
   const [refFileName, setRefFileName] = useState('');
   const [refCsvText, setRefCsvText] = useState('');
   const [refImageB64, setRefImageB64] = useState('');
   const [refIsImage, setRefIsImage] = useState(false);
+  const [refNotesText, setRefNotesText] = useState('');
+  const [manualModelName, setManualModelName] = useState('');
+  const [manualArticleNumber, setManualArticleNumber] = useState('');
+  const [manualSerialNumber, setManualSerialNumber] = useState('');
+  const [manualMarketRegion, setManualMarketRegion] = useState('');
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calResult, setCalResult] = useState(null);
   const [calNotice, setCalNotice] = useState({ msg: '', error: false, url: '' });
   const [appliedLocal, setAppliedLocal] = useState(false);
+  const [showUploadPromptModal, setShowUploadPromptModal] = useState(false);
+  const [isUploadingContrib, setIsUploadingContrib] = useState(false);
 
   const handleRunAiTriage = async () => {
     if (!aiEnabled) return;
@@ -164,9 +172,19 @@ export default function DiagnosticAdvisorTab({
     else reader.readAsText(file);
   };
 
+  const hasAnyCalibInput = Boolean(
+    refCsvText ||
+      refImageB64 ||
+      refNotesText.trim() ||
+      manualModelName.trim() ||
+      manualArticleNumber.trim() ||
+      manualSerialNumber.trim() ||
+      manualMarketRegion.trim()
+  );
+
   const handleCalibrateUploadedRef = async () => {
     if (!aiEnabled) return;
-    if (!refCsvText && !refImageB64) {
+    if (!hasAnyCalibInput) {
       setCalNotice({ msg: t('msgSelectRefFirst'), error: true, url: '' });
       return;
     }
@@ -179,9 +197,14 @@ export default function DiagnosticAdvisorTab({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          file_name: refFileName,
+          file_name: refFileName || (refNotesText.trim() ? 'manual_notes.txt' : 'reference.csv'),
           csv_text: refCsvText || undefined,
           image_b64: refImageB64 || undefined,
+          user_notes: refNotesText.trim() || undefined,
+          user_model_name: manualModelName.trim() || undefined,
+          user_article_number: manualArticleNumber.trim() || undefined,
+          user_serial_number: manualSerialNumber.trim() || undefined,
+          user_market_region: manualMarketRegion.trim() || undefined,
           port: selectedPort,
           model: aiModel || undefined,
         }),
@@ -191,6 +214,19 @@ export default function DiagnosticAdvisorTab({
         setCalNotice({ msg: data.error || 'Calibration failed.', error: true, url: '' });
       } else {
         setCalResult(data);
+        const det = data.detected_identity || data.override || {};
+        if (det.model_name && det.model_name !== 'Unknown' && !manualModelName.trim()) {
+          setManualModelName(det.model_name);
+        }
+        if (det.article_number && det.article_number !== 'unknown' && !manualArticleNumber.trim()) {
+          setManualArticleNumber(det.article_number);
+        }
+        if (det.serial_number && det.serial_number !== 'N/A' && !manualSerialNumber.trim()) {
+          setManualSerialNumber(det.serial_number);
+        }
+        if (det.market_region && det.market_region !== 'N/A' && !manualMarketRegion.trim()) {
+          setManualMarketRegion(det.market_region);
+        }
         setCalNotice({
           msg: t('msgMatchedOffsets', { products: data.matched_products, maintenance: data.matched_maintenance }),
           error: false,
@@ -207,25 +243,38 @@ export default function DiagnosticAdvisorTab({
 
   const handleApplyCalibrationLocally = async () => {
     if (!calResult?.override) return;
+    const mergedOverride = {
+      ...calResult.override,
+      ...(manualModelName.trim() ? { model_name: manualModelName.trim() } : {}),
+      ...(manualArticleNumber.trim() ? { article_number: manualArticleNumber.trim() } : {}),
+      ...(manualSerialNumber.trim() ? { serial_number: manualSerialNumber.trim() } : {}),
+      ...(manualMarketRegion.trim() ? { market_region: manualMarketRegion.trim() } : {}),
+    };
     try {
       const res = await fetch('/api/offsets/apply_local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           capture_id: calResult.capture_id || undefined,
-          override: calResult.override,
+          override: mergedOverride,
+          model_name: manualModelName.trim() || undefined,
+          article_number: manualArticleNumber.trim() || undefined,
+          serial_number: manualSerialNumber.trim() || undefined,
+          market_region: manualMarketRegion.trim() || undefined,
           port: selectedPort,
         }),
       });
       const data = await res.json();
       if (data.success) {
         setAppliedLocal(true);
+        setCalResult((prev) => (prev ? { ...prev, override: data.override || mergedOverride } : prev));
         if (data.updated_stats && onStatsUpdated) onStatsUpdated(data.updated_stats);
         setCalNotice({
           msg: t('msgAppliedSaved', { key: data.saved_key }),
           error: false,
           url: '',
         });
+        setShowUploadPromptModal(true);
       } else {
         setCalNotice({ msg: data.error || 'Failed to save local override.', error: true, url: '' });
       }
@@ -236,14 +285,22 @@ export default function DiagnosticAdvisorTab({
 
   const handleContributeOffsetFix = async () => {
     if (!calResult?.override) return;
+    setIsUploadingContrib(true);
     setCalNotice({ msg: t('msgSubmittingFix'), error: false, url: '' });
+    const mergedOverride = {
+      ...calResult.override,
+      ...(manualModelName.trim() ? { model_name: manualModelName.trim() } : {}),
+      ...(manualArticleNumber.trim() ? { article_number: manualArticleNumber.trim() } : {}),
+      ...(manualSerialNumber.trim() ? { serial_number: manualSerialNumber.trim() } : {}),
+      ...(manualMarketRegion.trim() ? { market_region: manualMarketRegion.trim() } : {}),
+    };
     try {
       const res = await fetch('/api/offsets/contribute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           capture_id: calResult.capture_id || undefined,
-          override: calResult.override,
+          override: mergedOverride,
         }),
       });
       const data = await res.json();
@@ -262,6 +319,8 @@ export default function DiagnosticAdvisorTab({
       }
     } catch (err) {
       setCalNotice({ msg: `Contribute error: ${err.message}`, error: true, url: '' });
+    } finally {
+      setIsUploadingContrib(false);
     }
   };
 
@@ -635,13 +694,57 @@ export default function DiagnosticAdvisorTab({
 
                   <button
                     type="button"
-                    disabled={isCalibrating || (!refCsvText && !refImageB64)}
+                    disabled={isCalibrating || !hasAnyCalibInput}
                     onClick={handleCalibrateUploadedRef}
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-bold text-xs rounded cursor-pointer"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isCalibrating ? 'animate-spin' : ''}`} />
                     <span>{isCalibrating ? t('btnCalibrating') : t('btnCalibrateOffsets')}</span>
                   </button>
+                </div>
+
+                {/* Machine Identity Correction (US/EU Variants) & Freeform Text Window */}
+                <div className="p-2.5 bg-zinc-950/70 border border-zinc-800/90 rounded space-y-2 text-[11px] font-mono">
+                  <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                    {t('identityOverrideTitle')}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                    <input
+                      type="text"
+                      value={manualModelName}
+                      onChange={(e) => setManualModelName(e.target.value)}
+                      placeholder={t('lblModelName')}
+                      className="px-2 py-1 bg-black/70 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-500"
+                    />
+                    <input
+                      type="text"
+                      value={manualArticleNumber}
+                      onChange={(e) => setManualArticleNumber(e.target.value)}
+                      placeholder={t('lblArticleNumber')}
+                      className="px-2 py-1 bg-black/70 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-500"
+                    />
+                    <input
+                      type="text"
+                      value={manualSerialNumber}
+                      onChange={(e) => setManualSerialNumber(e.target.value)}
+                      placeholder={t('lblSerialNumber')}
+                      className="px-2 py-1 bg-black/70 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-500"
+                    />
+                    <input
+                      type="text"
+                      value={manualMarketRegion}
+                      onChange={(e) => setManualMarketRegion(e.target.value)}
+                      placeholder={t('lblMarketRegion')}
+                      className="px-2 py-1 bg-black/70 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={refNotesText}
+                    onChange={(e) => setRefNotesText(e.target.value)}
+                    placeholder={t('refNotesPlaceholder')}
+                    className="w-full px-2 py-1.5 bg-black/70 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-amber-500 resize-y"
+                  />
                 </div>
 
                 {refIsImage && (
@@ -702,6 +805,16 @@ export default function DiagnosticAdvisorTab({
                         </div>
                       ))}
                     </div>
+
+                    {(calResult.detected_identity?.model_name || calResult.override?.model_name) && (
+                      <div className="text-[10px] text-cyan-300 bg-cyan-950/30 border border-cyan-800/50 rounded px-2 py-1">
+                        {t('detectedIdentitySummary', {
+                          model: manualModelName || calResult.override.model_name || '—',
+                          article: manualArticleNumber || calResult.override.article_number || '—',
+                          serial: manualSerialNumber || calResult.override.serial_number || '—',
+                        })}
+                      </div>
+                    )}
 
                     <div className="flex flex-wrap gap-2 pt-1">
                       <button
@@ -800,6 +913,95 @@ export default function DiagnosticAdvisorTab({
           </div>
         </div>
       </div>
+      {/* Community Calibration Upload Prompt Modal after Local Apply */}
+      {showUploadPromptModal && calResult?.override && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md border-2 border-sky-500/70 bg-[#0d0d14] rounded-xl shadow-2xl overflow-hidden font-mono text-xs">
+            <div className="flex items-center justify-between px-4 py-3 bg-[#14141f] border-b border-zinc-800">
+              <div className="flex items-center space-x-2 text-sky-300 font-bold uppercase tracking-wider">
+                <Send className="w-4 h-4" />
+                <span>{t('calibUploadModalTitle')}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUploadPromptModal(false)}
+                className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 text-zinc-200">
+              <p className="text-[11px] leading-relaxed text-zinc-300">
+                {t('calibUploadModalDesc')}
+              </p>
+              <div className="p-2.5 bg-black/60 border border-zinc-800 rounded space-y-1 text-[11px]">
+                <div className="text-cyan-300 font-bold">
+                  {t('detectedIdentitySummary', {
+                    model: manualModelName || calResult.override.model_name || '—',
+                    article: manualArticleNumber || calResult.override.article_number || '—',
+                    serial: manualSerialNumber || calResult.override.serial_number || '—',
+                  })}
+                </div>
+                <div className="text-zinc-400">
+                  {t('calibratedSummary', {
+                    products: calResult.matched_products ?? 0,
+                    maintenance: calResult.matched_maintenance ?? 0,
+                    source: calResult.extraction_source || calResult.override.extraction_source || 'calibration',
+                  })}
+                </div>
+              </div>
+
+              {calNotice.msg && (
+                <div
+                  className={`p-2 rounded text-[11px] border ${
+                    calNotice.error
+                      ? 'bg-rose-950/50 border-rose-700 text-rose-200'
+                      : 'bg-emerald-950/50 border-emerald-700 text-emerald-200'
+                  }`}
+                >
+                  <div>{calNotice.msg}</div>
+                  {calNotice.url && (
+                    <a
+                      href={calNotice.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block mt-1 underline text-cyan-300 font-bold"
+                    >
+                      {t('viewSubmission')}
+                    </a>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleExportPatchFile}
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold rounded text-[11px] cursor-pointer"
+                >
+                  {t('btnExportPatchJson')}
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploadingContrib}
+                  onClick={handleContributeOffsetFix}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-extrabold rounded text-[11px] cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{t('calibUploadBtnNow')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUploadPromptModal(false)}
+                  className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded text-[11px] cursor-pointer"
+                >
+                  {calNotice.url ? t('calibUploadClose') : t('calibUploadBtnLater')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,19 +1,19 @@
 {
-  "build": "20261117.1403",
-  "main_build": "20261117.1403",
-  "windows_build": "20261117.1403",
-  "published_at": "2026-11-17T17:30:17Z",
-  "release_notes": "- feat(updater): Build 20261117.1403 \u2014 Option A GitHub Release self-updater & startup check\n- feat(ai,onboarding): Build 20261117.1320 \u2014 on-disk AI model detection, unpulled model prompts & persistent onboarding prefs\n- fix(sweep,watchdog,docs): Build 20261117.1112 \u2014 prevent crash during full EEPROM sweep & add Czech PDF changelog\n- feat(i18n,docs,guide): Build 20261116.1639 \u2014 Czech UI localization, interactive onboarding guide & Czech user guide\n- chore(rules): persist hybrid Rust shell, Windows build, and public sanitization rules\n- chore(release): promote 08 // MEM MAPPER for public & sanitize PII/test fixtures",
+  "build": "20261117.1859",
+  "main_build": "20261117.1859",
+  "windows_build": "20261117.1859",
+  "published_at": "2026-11-17T18:10:50Z",
+  "release_notes": "- feat(calibration,updater): Build 20261117.1859 \u2014 .txt AI offset & identity fix, Config update bar, capture prompt & harvester\n- feat(updater): Build 20261117.1403 \u2014 Option A GitHub Release self-updater & startup check\n- feat(ai,onboarding): Build 20261117.1320 \u2014 on-disk AI model detection, unpulled model prompts & persistent onboarding prefs\n- fix(sweep,watchdog,docs): Build 20261117.1112 \u2014 prevent crash during full EEPROM sweep & add Czech PDF changelog\n- feat(i18n,docs,guide): Build 20261116.1639 \u2014 Czech UI localization, interactive onboarding guide & Czech user guide\n- chore(rules): persist hybrid Rust shell, Windows build, and public sanitization rules",
   "assets": {
     "spectra_update.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261117.1403/spectra_update.exe",
-      "sha256": "fa18492197a5e5917c7c7b8e482f37be97c365db9328d3ab8eec23c5bfdfc0d9",
-      "size": 29889024
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261117.1859/spectra_update.exe",
+      "sha256": "784e950d48277dc081364ad1b59fe75b2508e250f444e9976032c303f3aea109",
+      "size": 29905920
     },
     "spectra_setup.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261117.1403/spectra_setup.exe",
-      "sha256": "e962c3ce4df6cae484ca64b9cd0ad8134bfef1071537a49201a98bb691e2fc87",
-      "size": 51971584
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261117.1859/spectra_setup.exe",
+      "sha256": "6776409b0a772722500bf0887807cb02fff44745a462dcb87bcf5a61de0f49b3",
+      "size": 51988480
     }
   }
 }

@@ -341,6 +341,8 @@ def build_offset_patch_payload(
     ef_code = _norm_ef(override.get("ef_code") or ident.get("ef_code") or "")
     art = str(override.get("article_number") or ident.get("article_number") or "").strip()
     model_name = str(override.get("model_name") or ident.get("model_name") or "Unknown").strip()
+    serial_num = str(override.get("serial_number") or ident.get("serial_number") or "").strip()
+    market_reg = str(override.get("market_region") or ident.get("market_region") or "").strip()
     norms = _extract_override_offsets(override)
 
     patch: Dict[str, Any] = {
@@ -352,11 +354,15 @@ def build_offset_patch_payload(
             "ef_code": ef_code,
             "article_number": art,
             "model_name": model_name,
+            "serial_number": serial_num,
+            "market_region": market_reg,
         },
         "override": {
             "ef_code": ef_code,
             "article_number": art,
             "model_name": model_name,
+            "serial_number": serial_num,
+            "market_region": market_reg,
             "source": override.get("source") or "ai_joe_calibration",
             "extraction_source": override.get("extraction_source") or "csv_or_screenshot",
             "model_used": override.get("model_used") or "local_ai",
@@ -393,12 +399,15 @@ def import_offset_patch(raw_payload: Any, model_key: Optional[str] = None) -> Tu
     ident = data.get("identity") if isinstance(data.get("identity"), dict) else {}
     normalized = _extract_override_offsets(candidate)
     if not normalized["products"] and not normalized["maintenance"] and not normalized["maintenance_pct"]:
-        return False, "Offset patch contains zero valid product or maintenance addresses.", None
+        if not any(str(candidate.get(k) or ident.get(k) or "").strip() for k in ("model_name", "article_number", "serial_number")):
+            return False, "Offset patch contains zero valid product/maintenance addresses or identity overrides.", None
 
     override_to_save = {
         "ef_code": _norm_ef(candidate.get("ef_code") or ident.get("ef_code") or ""),
         "article_number": str(candidate.get("article_number") or ident.get("article_number") or "").strip(),
         "model_name": str(candidate.get("model_name") or ident.get("model_name") or "Imported Machine").strip(),
+        "serial_number": str(candidate.get("serial_number") or ident.get("serial_number") or "").strip(),
+        "market_region": str(candidate.get("market_region") or ident.get("market_region") or "").strip(),
         "source": str(candidate.get("source") or "imported_patch"),
         "extraction_source": str(candidate.get("extraction_source") or "json_patch"),
         "model_used": str(candidate.get("model_used") or "community_patch"),
