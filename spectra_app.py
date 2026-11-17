@@ -126,6 +126,7 @@ def start_inprocess_server() -> Tuple[Any, int, str]:
     web_server._current_http_port = port
     server_address = ("127.0.0.1", port)
     httpd = web_server.ThreadingHTTPServer(server_address, web_server.SpectraApiHandler)
+    web_server._active_httpd = httpd
 
     server_thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="SpectraHttpServer")
     server_thread.start()

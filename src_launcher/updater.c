@@ -203,11 +203,14 @@ static void update_registry_version(void) {
 
 int wmain(int argc, wchar_t *argv[]) {
     BOOL silent = FALSE;
+    BOOL force_relaunch = FALSE;
     wchar_t custom_dir[MAX_PATH] = L"";
 
     for (int i = 1; i < argc; i++) {
         if (wcscmp(argv[i], L"/S") == 0 || wcscmp(argv[i], L"--silent") == 0) {
             silent = TRUE;
+        } else if (wcscmp(argv[i], L"/R") == 0 || wcscmp(argv[i], L"--relaunch") == 0) {
+            force_relaunch = TRUE;
         } else if (wcsncmp(argv[i], L"/D=", 3) == 0) {
             wcsncpy(custom_dir, argv[i] + 3, MAX_PATH);
         } else if (wcsncmp(argv[i], L"--dir=", 6) == 0) {
@@ -247,6 +250,10 @@ int wmain(int argc, wchar_t *argv[]) {
 
     wprintf(L"[*] Target Installation Directory: %ls\n", target_dir);
 
+    if (force_relaunch) {
+        Sleep(800);
+    }
+
     // 1. Terminate running SPECTRA instance
     kill_running_spectra();
 
@@ -264,8 +271,8 @@ int wmain(int argc, wchar_t *argv[]) {
 
     wprintf(L"[✓] SPECTRA successfully updated to %hs!\n", SPECTRA_VERSION);
 
-    // 4. Restart SPECTRA if interactive
-    if (!silent) {
+    // 4. Restart SPECTRA if interactive or explicitly requested via --relaunch
+    if (!silent || force_relaunch) {
         wchar_t target_exe[MAX_PATH];
         swprintf(target_exe, MAX_PATH, L"%ls\\spectra.exe", target_dir);
         wprintf(L"[*] Restarting SPECTRA...\n");

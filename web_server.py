@@ -55,6 +55,7 @@ import gui_widgets
 import memory_mapper
 import copy
 import spectra_probe
+import updater
 from version import __version__, __build__, __edition__
 
 # Native Rust Core Acceleration Bridge (spectra_py)
@@ -78,6 +79,7 @@ _hw_op_lock = threading.Lock()
 _active_hw_ops: int = 0
 _is_native_webview: bool = False
 _shutdown_callbacks: List[Any] = []
+_active_httpd: Optional[HTTPServer] = None
 _capture_cache_lock = threading.Lock()
 _cached_captures: Dict[str, Dict[str, Any]] = {}
 _written_capture_paths: Set[str] = set()
@@ -131,6 +133,25 @@ def register_shutdown_callback(cb):
     """Register a callable to be executed when app mode shuts down."""
     if cb not in _shutdown_callbacks:
         _shutdown_callbacks.append(cb)
+
+
+def shutdown_for_restart():
+    """Release serial/Ollama resources, shutdown UI windows, and close HTTP socket before self-update restart."""
+    cleanup_resources()
+    for cb in list(_shutdown_callbacks):
+        try:
+            cb()
+        except Exception:
+            pass
+    if _active_httpd is not None:
+        try:
+            _active_httpd.shutdown()
+        except Exception:
+            pass
+        try:
+            _active_httpd.server_close()
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -1779,6 +1800,22 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             })
             return
 
+        elif url.path == "/api/update/check":
+            force_val = (params.get("force", ["0"])[0] or "0").lower() in ("1", "true", "yes")
+            info = updater.check_for_updates(force=force_val)
+            self._send_json({
+                "success": bool(info.get("ok", True)),
+                **info,
+            })
+            return
+
+        elif url.path == "/api/update/status":
+            self._send_json({
+                "success": True,
+                **updater.get_update_progress(),
+            })
+            return
+
         elif url.path == "/api/github/auth/status":
             try:
                 import github_auth
@@ -2808,6 +2845,23 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": False, "error": str(e)})
             return
 
+        # 29. API: Trigger Self-Update & Cancel Active Download
+        elif url.path == "/api/update/apply":
+            try:
+                res = updater.start_self_update(on_before_restart=shutdown_for_restart)
+                self._send_json({"success": bool(res.get("ok")), **res})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+            return
+
+        elif url.path == "/api/update/cancel":
+            try:
+                res = updater.cancel_self_update()
+                self._send_json({"success": bool(res.get("ok")), **res})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+            return
+
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -2883,7 +2937,7 @@ def find_free_port(start_port: int = 8080) -> int:
 
 
 def main(auto_open: bool = False):
-    global _current_http_port
+    global _current_http_port, _active_httpd
     _ensure_serial_group()
     install_tee_streams()
     try:
@@ -2910,6 +2964,7 @@ def main(auto_open: bool = False):
     _current_http_port = port
     server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, SpectraApiHandler)
+    _active_httpd = httpd
 
     print("=" * 78)
     print(f"  SPECTRA (Build {__build__}) Hardware Telemetry API & Web Server")

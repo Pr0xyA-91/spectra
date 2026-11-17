@@ -279,6 +279,12 @@ export default function SpectraWorkspace({
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [startupGuideCheckbox, setStartupGuideCheckbox] = useState(false);
 
+  // Self-Updater State
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateProgress, setUpdateProgress] = useState({ status: 'idle', percent: 0, in_progress: false, restart_required: false, message: '', error: '' });
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isReconnectingAfterUpdate, setIsReconnectingAfterUpdate] = useState(false);
+
   const persistUiOnboardingSeen = useCallback((seenVal) => {
     const isSeen = Boolean(seenVal);
     try {
@@ -319,6 +325,96 @@ export default function SpectraWorkspace({
   const [isCalibratingOffsets, setIsCalibratingOffsets] = useState(false);
   const [offsetCalibration, setOffsetCalibration] = useState(null);
   const [offsetAppliedLocally, setOffsetAppliedLocally] = useState(false);
+
+  const checkForUpdates = useCallback(async (force = false) => {
+    setIsCheckingUpdates(true);
+    try {
+      const res = await fetch(`/api/update/check?force=${force ? '1' : '0'}`);
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateInfo(data);
+        return data;
+      }
+    } catch {}
+    finally {
+      setIsCheckingUpdates(false);
+    }
+    return null;
+  }, []);
+
+  // Silent non-blocking update check shortly after startup
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      checkForUpdates(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checkForUpdates]);
+
+  const pollServerAfterRestart = useCallback(() => {
+    setIsReconnectingAfterUpdate(true);
+    let attempts = 0;
+    const pollTimer = setInterval(async () => {
+      attempts += 1;
+      try {
+        const res = await fetch(`/api/version?ts=${Date.now()}`);
+        if (res.ok) {
+          clearInterval(pollTimer);
+          window.location.reload();
+        }
+      } catch {}
+      if (attempts >= 35) {
+        clearInterval(pollTimer);
+        setIsReconnectingAfterUpdate(false);
+      }
+    }, 800);
+  }, []);
+
+  const startSelfUpdate = useCallback(async () => {
+    try {
+      const res = await fetch('/api/update/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data?.state) {
+        setUpdateProgress(data.state);
+      }
+      if (!data?.ok) return;
+
+      const statusTimer = setInterval(async () => {
+        try {
+          const stRes = await fetch('/api/update/status');
+          if (!stRes.ok) throw new Error('status unavailable');
+          const st = await stRes.json();
+          setUpdateProgress(st);
+          if (st.restart_required || st.status === 'restarting') {
+            clearInterval(statusTimer);
+            pollServerAfterRestart();
+          } else if (!st.in_progress && ['up_to_date', 'error', 'cancelled'].includes(st.status)) {
+            clearInterval(statusTimer);
+          }
+        } catch {
+          clearInterval(statusTimer);
+          pollServerAfterRestart();
+        }
+      }, 450);
+    } catch {}
+  }, [pollServerAfterRestart]);
+
+  const cancelSelfUpdate = useCallback(async () => {
+    try {
+      const res = await fetch('/api/update/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.state) setUpdateProgress(data.state);
+      }
+    } catch {}
+  }, []);
 
   const fetchAiGlobalStatus = useCallback(async () => {
     try {
@@ -1188,9 +1284,32 @@ export default function SpectraWorkspace({
               SPECTRA
             </span>
           </div>
-          <span className="text-[10px] px-2 py-0.5 bg-black/60 text-zinc-300 border border-zinc-700 font-mono font-bold tracking-wider rounded">
-            BUILD {liveBuild || debugSummary?.build || '20261117.1320'}
-          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfigInitialSection('updates');
+              setShowConfigModal(true);
+              checkForUpdates(false);
+            }}
+            className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261117.1403' })}
+          >
+            BUILD {liveBuild || debugSummary?.build || '20261117.1403'}
+          </button>
+          {updateInfo?.update_available && (
+            <button
+              type="button"
+              onClick={() => {
+                setConfigInitialSection('updates');
+                setShowConfigModal(true);
+              }}
+              className="flex items-center space-x-1 text-[10px] px-2 py-0.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/70 font-mono font-extrabold tracking-wider rounded animate-pulse cursor-pointer transition-colors"
+              title={t('headerUpdateTitle', { build: updateInfo.latest_build })}
+            >
+              <Download className="w-3 h-3" />
+              <span>{t('headerUpdateBtn', { build: updateInfo.latest_build })}</span>
+            </button>
+          )}
           <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
             {t('appSubtitle')}
           </span>
@@ -1335,7 +1454,10 @@ export default function SpectraWorkspace({
 
           {/* Configuration & AI Model / GitHub Manager */}
           <button
-            onClick={() => setShowConfigModal(true)}
+            onClick={() => {
+              setConfigInitialSection('ai');
+              setShowConfigModal(true);
+            }}
             className="flex items-center space-x-1 px-2.5 py-1 font-mono font-bold rounded text-[11px] bg-black/40 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 transition-colors cursor-pointer"
             title={t('btnConfigTitle')}
           >
@@ -2684,6 +2806,13 @@ export default function SpectraWorkspace({
         onLogout={handleLogout}
         onCancelDeviceFlow={() => setDeviceFlow(null)}
         onCopyDeviceCode={handleCopyDeviceCode}
+        updateInfo={updateInfo}
+        updateProgress={updateProgress}
+        isCheckingUpdates={isCheckingUpdates}
+        isReconnectingAfterUpdate={isReconnectingAfterUpdate}
+        onCheckUpdates={checkForUpdates}
+        onStartUpdate={startSelfUpdate}
+        onCancelUpdate={cancelSelfUpdate}
       />
 
       {/* ==================================================================== */}
