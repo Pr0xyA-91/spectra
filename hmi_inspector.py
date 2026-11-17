@@ -4052,18 +4052,79 @@ class KalermHmiInspector:
         }
 
     @staticmethod
+    def _discover_local_ollama_models_on_disk() -> List[str]:
+        """Scan standard Ollama manifest directories so installed models appear even when daemon is idle."""
+        manifest_roots: List[str] = []
+        env_models = (os.environ.get("OLLAMA_MODELS") or "").strip()
+        if env_models:
+            exp_env = os.path.expanduser(env_models)
+            manifest_roots.append(os.path.join(exp_env, "manifests"))
+            manifest_roots.append(exp_env)
+
+        if os.name == "nt":
+            manifest_roots.extend([
+                os.path.expandvars(r"%USERPROFILE%\.ollama\models\manifests"),
+                os.path.expandvars(r"%LOCALAPPDATA%\SPECTRA\ollama\models\manifests"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Ollama\models\manifests"),
+            ])
+        else:
+            manifest_roots.extend([
+                os.path.expanduser("~/.ollama/models/manifests"),
+                os.path.expanduser("~/.local/share/spectra/ollama/models/manifests"),
+                os.path.expanduser("~/.local/share/spectra/ollama/.ollama/models/manifests"),
+                "/usr/share/ollama/.ollama/models/manifests",
+                "/var/lib/ollama/.ollama/models/manifests",
+            ])
+
+        seen: set = set()
+        found: List[str] = []
+        for root in manifest_roots:
+            try:
+                if not root or not os.path.isdir(root):
+                    continue
+                for dirpath, _dirnames, filenames in os.walk(root):
+                    for fname in filenames:
+                        if fname.startswith("."):
+                            continue
+                        full_path = os.path.join(dirpath, fname)
+                        rel = os.path.relpath(full_path, root).replace("\\", "/")
+                        parts = [p for p in rel.split("/") if p]
+                        if any(p.startswith(".") for p in parts):
+                            continue
+                        if len(parts) < 4:
+                            continue
+                        namespace, model_name, tag = parts[-3], parts[-2], parts[-1]
+                        if not model_name or not tag:
+                            continue
+                        model_tag = f"{model_name}:{tag}" if namespace == "library" else f"{namespace}/{model_name}:{tag}"
+                        if model_tag not in seen:
+                            seen.add(model_tag)
+                            found.append(model_tag)
+            except OSError:
+                continue
+        return found
+
+    @staticmethod
     def check_local_ollama(timeout: float = 0.35) -> Dict[str, Any]:
         """
         Tier 3: Check if local Ollama daemon is running on http://127.0.0.1:11434.
         STRICTLY localhost only (127.0.0.1). Never connects to external networks.
+        Merges on-disk manifest tags so installed models are reported even when daemon is stopped.
         """
         endpoint = "http://127.0.0.1:11434"
+        disk_models = KalermHmiInspector._discover_local_ollama_models_on_disk()
         try:
             req = urllib.request.Request(f"{endpoint}/api/tags", headers={"User-Agent": "SPECTRA-Offline-Auditor"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
-                    models = [m.get("name") for m in data.get("models", [])]
+                    api_models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                    merged: List[str] = []
+                    seen: set = set()
+                    for m in api_models + disk_models:
+                        if m not in seen:
+                            seen.add(m)
+                            merged.append(m)
                     loaded_models = []
                     try:
                         req_ps = urllib.request.Request(f"{endpoint}/api/ps", headers={"User-Agent": "SPECTRA-Offline-Auditor"})
@@ -4078,7 +4139,7 @@ class KalermHmiInspector:
                     return {
                         "available": True,
                         "endpoint": endpoint,
-                        "models": models,
+                        "models": merged,
                         "loaded_models": loaded_models,
                     }
         except Exception:
@@ -4086,7 +4147,7 @@ class KalermHmiInspector:
         return {
             "available": False,
             "endpoint": endpoint,
-            "models": [],
+            "models": disk_models,
             "loaded_models": [],
         }
 
@@ -4555,8 +4616,13 @@ class KalermHmiInspector:
         Combines host hardware self-check, local Ollama daemon reachability,
         binary installation check, and managed subprocess tracking.
         """
+        ollama = cls.check_local_ollama()
+        installed_models = [
+            m.get("name") if isinstance(m, dict) else str(m)
+            for m in (ollama.get("models") or [])
+        ]
         try:
-            hw = cls.probe_host_hardware()
+            hw = cls.probe_host_hardware(override_installed_models=installed_models)
         except Exception:
             hw = {
                 "cpu": {"model": "Host CPU", "logical_cores": 4, "has_avx2": True},
@@ -4565,20 +4631,19 @@ class KalermHmiInspector:
                 "disk": {"disk_free_gb": 20.0},
                 "tier": "BALANCED_CPU",
                 "recommended_model": "qwen2.5:0.5b",
-                "default_selected_model": "qwen2.5:0.5b",
+                "default_selected_model": installed_models[0] if installed_models else "qwen2.5:0.5b",
                 "model_catalog": [
-                    {"id": "qwen2.5:0.5b", "name": "Qwen 2.5 0.5B (Ultra-Light)", "min_ram_mb": 800, "supports_vision": False, "compatibility": "RECOMMENDED", "is_recommended": True, "is_installed": False},
-                    {"id": "gemma3:1b", "name": "Gemma 3 1B (Google Ultra-Light)", "min_ram_mb": 1100, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": False},
-                    {"id": "qwen2.5:1.5b", "name": "Qwen 2.5 1.5B (Balanced)", "min_ram_mb": 1600, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": False},
-                    {"id": "llama3.2:1b", "name": "Llama 3.2 1B (Meta)", "min_ram_mb": 1200, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": False},
-                    {"id": "gemma2:2b", "name": "Gemma 2 2B (Google)", "min_ram_mb": 2600, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": False},
-                    {"id": "qwen2.5:3b", "name": "Qwen 2.5 3B (High Accuracy)", "min_ram_mb": 3200, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": False},
-                    {"id": "gemma3:4b", "name": "Gemma 3 4B (Google Vision + Text)", "min_ram_mb": 3400, "supports_vision": True, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": False},
-                    {"id": "qwen2.5:7b", "name": "Qwen 2.5 7B (Studio Grade)", "min_ram_mb": 5800, "supports_vision": False, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": False},
-                    {"id": "llama3.1:8b", "name": "Llama 3.1 8B (Meta)", "min_ram_mb": 6200, "supports_vision": False, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": False},
+                    {"id": "qwen2.5:0.5b", "name": "Qwen 2.5 0.5B (Ultra-Light)", "min_ram_mb": 800, "supports_vision": False, "compatibility": "RECOMMENDED", "is_recommended": True, "is_installed": "qwen2.5:0.5b" in installed_models},
+                    {"id": "gemma3:1b", "name": "Gemma 3 1B (Google Ultra-Light)", "min_ram_mb": 1100, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": "gemma3:1b" in installed_models},
+                    {"id": "qwen2.5:1.5b", "name": "Qwen 2.5 1.5B (Balanced)", "min_ram_mb": 1600, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": "qwen2.5:1.5b" in installed_models},
+                    {"id": "llama3.2:1b", "name": "Llama 3.2 1B (Meta)", "min_ram_mb": 1200, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": "llama3.2:1b" in installed_models},
+                    {"id": "gemma2:2b", "name": "Gemma 2 2B (Google)", "min_ram_mb": 2600, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": "gemma2:2b" in installed_models},
+                    {"id": "qwen2.5:3b", "name": "Qwen 2.5 3B (High Accuracy)", "min_ram_mb": 3200, "supports_vision": False, "compatibility": "COMPATIBLE", "is_recommended": False, "is_installed": "qwen2.5:3b" in installed_models},
+                    {"id": "gemma3:4b", "name": "Gemma 3 4B (Google Vision + Text)", "min_ram_mb": 3400, "supports_vision": True, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": "gemma3:4b" in installed_models},
+                    {"id": "qwen2.5:7b", "name": "Qwen 2.5 7B (Studio Grade)", "min_ram_mb": 5800, "supports_vision": False, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": "qwen2.5:7b" in installed_models},
+                    {"id": "llama3.1:8b", "name": "Llama 3.1 8B (Meta)", "min_ram_mb": 6200, "supports_vision": False, "compatibility": "HEAVY_FOR_CPU", "is_recommended": False, "is_installed": "llama3.1:8b" in installed_models},
                 ],
             }
-        ollama = cls.check_local_ollama()
         bin_path = cls._find_ollama_binary()
         is_managed = bool(cls._ollama_process and cls._ollama_process.poll() is None)
         return {

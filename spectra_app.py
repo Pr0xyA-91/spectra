@@ -763,16 +763,30 @@ def try_launch_win32_native_window(url: str, port: int, httpd, build_str: str) -
 
 def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> None:
     """
-    Runs the chromeless standalone app window with a dedicated user-data-dir
-    and monitors process lifecycle and heartbeat watchdog.
+    Runs the chromeless standalone app window with a persistent user-data-dir
+    so localStorage & browser state survive restarts, and monitors process
+    lifecycle and heartbeat watchdog.
     Hardened for Windows broker process handoff (msedge.exe / chrome.exe).
     """
     geom = get_host_monitor_geometry()
-    temp_profile = tempfile.mkdtemp(prefix="spectra_app_profile_")
+    if sys.platform.startswith("win"):
+        base_cfg = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
+        profile_dir = os.path.join(base_cfg, "SPECTRA", "browser_profile")
+    else:
+        base_cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+        profile_dir = os.path.join(base_cfg, "spectra", "browser_profile")
+    os.makedirs(profile_dir, exist_ok=True)
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_path = os.path.join(profile_dir, lock_name)
+        if os.path.lexists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
 
     cmd = [
         browser_bin,
-        f"--user-data-dir={temp_profile}",
+        f"--user-data-dir={profile_dir}",
         f"--app={url}",
         f"--window-size={geom['win_w']},{geom['win_h']}",
         "--new-window",
@@ -808,7 +822,6 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
         return
 
     def cleanup_and_exit():
-        shutil.rmtree(temp_profile, ignore_errors=True)
         shutdown_spectra_cleanly(httpd)
         os._exit(0)
 
@@ -850,7 +863,8 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
                     print("[!] No frontend heartbeat received within grace period. Terminating.")
                     break
             else:
-                if gap > 7.0:
+                hw_busy = getattr(web_server, "_active_hw_ops", 0) > 0
+                if not hw_busy and gap > 18.0:
                     # Frontend window was closed without clean unload beacon
                     break
 
@@ -865,7 +879,9 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
         time.sleep(25.0)  # Initial grace period for page load
         while proc.poll() is None:
             time.sleep(1.5)
-            if time.time() - getattr(web_server, "_last_heartbeat_time", time.time()) > 7.0:
+            if getattr(web_server, "_active_hw_ops", 0) > 0:
+                continue
+            if time.time() - getattr(web_server, "_last_heartbeat_time", time.time()) > 18.0:
                 break
         try:
             proc.terminate()

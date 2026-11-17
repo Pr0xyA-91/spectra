@@ -766,5 +766,53 @@ class TestWin32DialogFocus(unittest.TestCase):
         self.assertIsNotNone(captured_ofn["lpfnHook"])
 
 
+class TestOnDiskModelDetectionAndToggleGuard(unittest.TestCase):
+    def tearDown(self):
+        with patch.object(hmi_inspector.KalermHmiInspector, "control_local_ollama", return_value={"status": "STOPPED"}):
+            spectra_ai.set_ai_enabled(False)
+
+    def test_discover_local_ollama_models_on_disk_when_daemon_stopped(self):
+        """Installed Ollama manifests on disk must be reported even when 127.0.0.1:11434 is stopped."""
+        with tempfile.TemporaryDirectory() as td:
+            manifest_file = os.path.join(td, "manifests", "registry.ollama.ai", "library", "qwen2.5", "0.5b")
+            os.makedirs(os.path.dirname(manifest_file), exist_ok=True)
+            with open(manifest_file, "w", encoding="utf-8") as fh:
+                fh.write('{"schemaVersion": 2}')
+
+            with patch.dict(os.environ, {"OLLAMA_MODELS": td}, clear=False), patch.object(
+                os.path, "expanduser", side_effect=lambda p: p.replace("~", td) if "~" in p else p
+            ), patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("daemon stopped")):
+                chk = hmi_inspector.KalermHmiInspector.check_local_ollama(timeout=0.05)
+
+            self.assertFalse(chk["available"])
+            self.assertEqual(chk["models"], ["qwen2.5:0.5b"])
+
+    def test_set_ai_enabled_refuses_when_no_models_installed(self):
+        """set_ai_enabled(True, require_installed_model=True) rejects activation if 0 models are installed."""
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = os.path.join(td, "ai_config.json")
+            empty_status = {"hardware": {"default_selected_model": "qwen2.5:0.5b"}, "ollama": {"available": False, "models": []}}
+            with patch.object(spectra_ai, "AI_CONFIG_FILE", cfg_file), patch.object(
+                hmi_inspector.KalermHmiInspector, "get_ai_system_status", return_value=empty_status
+            ), patch.object(
+                hmi_inspector.KalermHmiInspector, "get_ollama_download_progress", return_value={"active": False}
+            ):
+                res_empty = spectra_ai.set_ai_enabled(True, model="gemma3:1b", require_installed_model=True)
+                self.assertFalse(res_empty["success"])
+                self.assertTrue(res_empty.get("requires_model_install"))
+                self.assertFalse(res_empty["ai_enabled"])
+                self.assertFalse(spectra_ai.is_ai_enabled())
+
+                has_model_status = {
+                    "hardware": {"default_selected_model": "qwen2.5:0.5b"},
+                    "ollama": {"available": False, "models": ["qwen2.5:0.5b"]},
+                }
+                with patch.object(hmi_inspector.KalermHmiInspector, "get_ai_system_status", return_value=has_model_status):
+                    res_ok = spectra_ai.set_ai_enabled(True, model="gemma3:1b", require_installed_model=True)
+                    self.assertTrue(res_ok["success"])
+                    self.assertTrue(res_ok["ai_enabled"])
+                    self.assertEqual(res_ok["preferred_model"], "qwen2.5:0.5b")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -361,13 +361,20 @@ class MemoryMapperEngine:
         """
         total_blocks = max(1, self.max_words // 16)
         for b_idx in range(total_blocks):
+            if not getattr(self.conn, "is_open", True):
+                raise IOError("Serial port disconnected during EEPROM sweep.")
             blk = b_idx * 16
             blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
             if progress_callback:
                 progress_callback(b_idx + 1, total_blocks, f"Reading Block 0x{blk_str}...")
 
             cmd = f"RT:{blk_str}"
-            ans = self.query_safe(cmd, timeout=1.5)
+            try:
+                ans = self.query_safe(cmd, timeout=1.5)
+            except (IOError, OSError) as exc:
+                if not getattr(self.conn, "is_open", True):
+                    raise IOError(f"Serial port disconnected at block 0x{blk_str}: {exc}") from exc
+                ans = None
 
             block_success = False
             if ans and ans.lower().startswith("rt:"):
@@ -383,20 +390,30 @@ class MemoryMapperEngine:
                         except Exception:
                             pass
                     if not block_success:
+                        parsed_ok = True
                         for i in range(16):
                             w_hex = raw_hex[i * 4: i * 4 + 4]
                             try:
                                 self.current_eeprom[blk + i] = int(w_hex, 16)
                             except ValueError:
-                                self.current_eeprom[blk + i] = 0x0000
-                        block_success = True
+                                parsed_ok = False
+                                break
+                        if parsed_ok:
+                            block_success = True
 
             if not block_success:
                 # Fallback to single word queries
                 for i in range(16):
+                    if not getattr(self.conn, "is_open", True):
+                        raise IOError("Serial port disconnected during EEPROM sweep.")
                     addr = blk + i
                     addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
-                    w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                    try:
+                        w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                    except (IOError, OSError) as exc:
+                        if not getattr(self.conn, "is_open", True):
+                            raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
+                        w_ans = None
                     if w_ans and w_ans.lower().startswith("re:"):
                         try:
                             self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
@@ -413,29 +430,46 @@ class MemoryMapperEngine:
         total_blocks = max(1, self.max_words // 16)
         if b_idx < 0 or b_idx >= total_blocks:
             return []
+        if not getattr(self.conn, "is_open", True):
+            raise IOError("Serial port disconnected during block sweep.")
 
         blk = b_idx * 16
         blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
         cmd = f"RT:{blk_str}"
-        ans = self.query_safe(cmd, timeout=1.5)
+        try:
+            ans = self.query_safe(cmd, timeout=1.5)
+        except (IOError, OSError) as exc:
+            if not getattr(self.conn, "is_open", True):
+                raise IOError(f"Serial port disconnected at block 0x{blk_str}: {exc}") from exc
+            ans = None
 
         block_success = False
         if ans and ans.lower().startswith("rt:"):
             raw_hex = ans[3:].strip()
             if len(raw_hex) >= 64:
+                parsed_ok = True
                 for i in range(16):
                     w_hex = raw_hex[i * 4: i * 4 + 4]
                     try:
                         self.current_eeprom[blk + i] = int(w_hex, 16)
                     except ValueError:
-                        self.current_eeprom[blk + i] = 0x0000
-                block_success = True
+                        parsed_ok = False
+                        break
+                if parsed_ok:
+                    block_success = True
 
         if not block_success:
             for i in range(16):
+                if not getattr(self.conn, "is_open", True):
+                    raise IOError("Serial port disconnected during block sweep.")
                 addr = blk + i
                 addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
-                w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                try:
+                    w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                except (IOError, OSError) as exc:
+                    if not getattr(self.conn, "is_open", True):
+                        raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
+                    w_ans = None
                 if w_ans and w_ans.lower().startswith("re:"):
                     try:
                         self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)

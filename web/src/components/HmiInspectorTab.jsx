@@ -1587,6 +1587,18 @@ export default function HmiInspectorTab({
                           ❌ INSUFFICIENT RAM
                         </span>
                       )}
+                      {!selectedModelMeta.is_installed && !(aiStatus?.ollama?.models || []).includes(activeModelId) && !aiStatus?.download?.active && (
+                        <button
+                          type="button"
+                          disabled={isOperatingOllama}
+                          onClick={() => controlOllama('pull_async', activeModelId)}
+                          className="flex items-center space-x-1 px-2 py-0.5 text-[10px] font-bold rounded bg-[#FCEE09] hover:bg-yellow-300 text-black disabled:opacity-40 cursor-pointer"
+                          title={`Download ${activeModelId} now`}
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Pull {activeModelId}</span>
+                        </button>
+                      )}
 
                       {/* Custom Cyber Dropdown Popup Menu */}
                       {isModelDropdownOpen && (

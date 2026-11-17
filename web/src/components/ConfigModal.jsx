@@ -60,6 +60,7 @@ export default function ConfigModal({
   const [pullModelInput, setPullModelInput] = useState('gemma3:1b');
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [isPullPolling, setIsPullPolling] = useState(false);
+  const [pendingUnpulledModel, setPendingUnpulledModel] = useState(null);
   const [statusBanner, setStatusBanner] = useState({ msg: '', error: false });
 
   // Machine Library state
@@ -147,8 +148,13 @@ export default function ConfigModal({
     if (!aiDownload?.active && ['COMPLETED', 'ERROR', 'CANCELLED'].includes(aiDownload?.status)) {
       setIsPullPolling(false);
       if (aiDownload.status === 'COMPLETED') {
+        const pulledModel = aiDownload.model || pullModelInput;
+        setPendingUnpulledModel(null);
+        if (pulledModel && onSaveAiConfig) {
+          onSaveAiConfig({ model: pulledModel, auto_unload: autoUnload });
+        }
         setStatusBanner({
-          msg: aiDownload.status_text || t('cfgMsgModelReady', { model: aiDownload.model || pullModelInput }),
+          msg: aiDownload.status_text || t('cfgMsgModelReady', { model: pulledModel }),
           error: false,
         });
       } else if (aiDownload.status === 'ERROR') {
@@ -160,7 +166,13 @@ export default function ConfigModal({
         setStatusBanner({ msg: t('cfgMsgDlCancelled'), error: true });
       }
     }
-  }, [aiDownload, isPullPolling, pullModelInput, t]);
+  }, [aiDownload, isPullPolling, pullModelInput, autoUnload, onSaveAiConfig, t]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPendingUnpulledModel(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -170,6 +182,14 @@ export default function ConfigModal({
   const loadedModels = Array.isArray(ollamaInfo.loaded_models) ? ollamaInfo.loaded_models : [];
   const catalog = Array.isArray(hardware.model_catalog) ? hardware.model_catalog : [];
 
+  const isModelInstalled = (modelId) => {
+    const target = (modelId || '').trim();
+    if (!target) return false;
+    return installedModels.some(
+      (ins) => ins === target || ins === `${target}:latest` || ins.startsWith(`${target}:`) || ins.startsWith(target)
+    );
+  };
+
   // Combine installed models + catalog entries for the Default Model selector
   const selectableModels = Array.from(
     new Set([
@@ -178,6 +198,18 @@ export default function ConfigModal({
       ...(aiModel ? [aiModel] : [])
     ])
   );
+
+  const effectiveDefaultModel =
+    pendingUnpulledModel || aiModel || hardware?.default_selected_model || selectableModels[0] || '';
+  const promptUnpulledTarget =
+    pendingUnpulledModel && !isModelInstalled(pendingUnpulledModel)
+      ? pendingUnpulledModel
+      : effectiveDefaultModel && !isModelInstalled(effectiveDefaultModel)
+      ? effectiveDefaultModel
+      : null;
+  const promptUnpulledMeta = promptUnpulledTarget
+    ? catalog.find((c) => c.id === promptUnpulledTarget)
+    : null;
 
   const runOllamaAction = async (action, model = null) => {
     setOllamaBusy(true);
@@ -282,10 +314,26 @@ export default function ConfigModal({
 
   const handleSelectDefaultModel = async (nextModel) => {
     setStatusBanner({ msg: '', error: false });
+    if (!isModelInstalled(nextModel)) {
+      setPendingUnpulledModel(nextModel);
+      setPullModelInput(nextModel);
+      return;
+    }
+    setPendingUnpulledModel(null);
     if (onSaveAiConfig) {
       await onSaveAiConfig({ model: nextModel, auto_unload: autoUnload });
       setStatusBanner({ msg: t('cfgMsgDefaultModelSet', { model: nextModel }), error: false });
     }
+  };
+
+  const handlePullAndUseSelectedModel = async (modelId) => {
+    if (!modelId) return;
+    setPendingUnpulledModel(null);
+    setPullModelInput(modelId);
+    if (onSaveAiConfig) {
+      await onSaveAiConfig({ model: modelId, auto_unload: autoUnload });
+    }
+    await runOllamaAction('pull_async', modelId);
   };
 
   const handleDeleteOverride = async (key) => {
@@ -553,13 +601,13 @@ export default function ConfigModal({
                 </div>
 
                 <select
-                  value={aiModel || hardware?.default_selected_model || selectableModels[0] || ''}
+                  value={effectiveDefaultModel}
                   onChange={(e) => handleSelectDefaultModel(e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded px-2.5 py-2 text-xs text-white outline-none focus:border-[#00F0FF]"
                 >
                   {selectableModels.map((mId) => {
                     const cat = catalog.find((c) => c.id === mId);
-                    const isInstalled = installedModels.includes(mId);
+                    const isInstalled = isModelInstalled(mId);
                     const tagParts = [
                       isInstalled ? t('cfgInstalledTag') : t('cfgNotPulledTag'),
                       cat?.is_recommended ? t('cfgRecommendedTag') : cat?.compatibility || ''
@@ -571,6 +619,43 @@ export default function ConfigModal({
                     );
                   })}
                 </select>
+
+                {promptUnpulledTarget && !aiDownload?.active && (
+                  <div className="p-2.5 bg-amber-950/35 border border-amber-500/60 rounded space-y-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-amber-200 text-[11px]">
+                          {t('cfgUnpulledPromptTitle', { model: promptUnpulledTarget })}
+                        </div>
+                        <div className="text-[10px] text-amber-200/80 mt-0.5">
+                          {t('cfgUnpulledPromptDesc', {
+                            size: promptUnpulledMeta?.disk_mb ? ` (~${promptUnpulledMeta.disk_mb} MB)` : '',
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={ollamaBusy}
+                          onClick={() => handlePullAndUseSelectedModel(promptUnpulledTarget)}
+                          className="px-2.5 py-1 bg-[#FCEE09] hover:bg-yellow-300 disabled:opacity-40 text-black font-extrabold rounded text-[11px] flex items-center gap-1 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>{t('cfgBtnPullSelectedNow', { model: promptUnpulledTarget })}</span>
+                        </button>
+                        {pendingUnpulledModel && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingUnpulledModel(null)}
+                            className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 rounded text-[11px] cursor-pointer"
+                          >
+                            {t('cfgBtnKeepCurrentModel')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <label className="flex items-center space-x-2 text-[11px] text-zinc-300 cursor-pointer pt-1">
                   <input

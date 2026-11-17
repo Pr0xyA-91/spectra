@@ -18,6 +18,30 @@ In accordance with SPECTRA edition guidelines, releases are identified strictly 
 
 ---
 
+## [Build 20261117.1320] — 2026-11-17
+
+### 🤖 Local AI Model Detection, Toggle Guard & Persistent Onboarding Preferences
+- **On-Disk Ollama Model Discovery (`hmi_inspector.py`)**: Added `_discover_local_ollama_models_on_disk()` scanning local Ollama manifest directories (`OLLAMA_MODELS`, `~/.ollama/models/manifests`, `~/.local/share/spectra/ollama/...`, `%USERPROFILE%\.ollama\...`, `%LOCALAPPDATA%\SPECTRA\ollama\...`) and merging them into `check_local_ollama()` / `get_ai_system_status()` so installed models are reported accurately even when the local daemon (`127.0.0.1:11434`) is stopped.
+- **Local AI Activation Guard & Guided Installer Popup (`spectra_ai.py`, `web_server.py`, `SpectraWorkspace.jsx`, `ConfigModal.jsx`, `HmiInspectorTab.jsx`)**: Prevented enabling Local AI when 0 models are installed (`require_installed_model=True`), added a bilingual guided popup modal (`Download <model> & Enable AI`) when attempting to activate AI without a model, and added an inline prompt + 1-click `Pull <model> Now` button whenever an unpulled model is selected.
+- **Persistent Onboarding Guide & Language Preferences (`spectra_app.py`, `web_server.py`, `App.jsx`, `SpectraWorkspace.jsx`)**: Replaced the ephemeral `mkdtemp` Chromium profile in `run_chromeless_app_window()` with persistent `~/.config/spectra/browser_profile` (`%LOCALAPPDATA%\SPECTRA\browser_profile` on Windows) and added host-level `~/.config/spectra/ui_prefs.json` (`/api/ui_prefs` + `/api/version`) so interactive guide completion and language selection persist across restarts and ports.
+
+---
+
+## [Build 20261117.1112] — 2026-11-17
+
+### 🛠️ Fix: Crash / Watchdog Termination During Full EEPROM Sweep
+- **Block-by-Block Non-Blocking Sweep (`web/src/components/MemMapperTab.jsx`, `SpectraWorkspace.jsx`)**:
+  - Upgraded `08 // MEM MAPPER` to fetch `/api/mapper/info` first and sweep EEPROM sequentially block-by-block (`block=0..N-1`) with a live progress bar (`sweepProgress`), releasing `_session_lock` between blocks so UI heartbeats and debug telemetry never starve Chromium's 6-connection per-origin HTTP/1.1 limit.
+  - Added in-flight request guards (`diffInFlightRef`, `rawSensorsInFlightRef`) and paused `/api/sensors`, `/api/mapper/diff`, and `/api/mapper/raw_sensors` polling while full sweeps, dump captures (`isDumping`), or AI offset calibrations (`isCalibratingOffsets`) are active.
+- **Heartbeat Watchdog Long-Op Awareness (`web_server.py`, `spectra_app.py`)**:
+  - Added `long_hardware_operation()` (`_active_hw_ops`) and `touch_heartbeat()` around `/api/stats`, `/api/mapper/info`, `/api/mapper/sweep`, `/api/export_capture`, `/api/ai/calibrate_offsets`, and `/api/offsets/calibrate_upload`.
+  - Updated `SpectraHeartbeatWatchdog` loops in `spectra_app.py` to pause termination while `_active_hw_ops > 0` and raised the idle timeout from `7.0s` to `18.0s`.
+- **Clean Serial Disconnect & Noise Recovery (`memory_mapper.py`, `spectra_probe.py`, `web_server.py`)**:
+  - Wrapped `/api/mapper/*` endpoints in structured `try/except` handlers (clearing stale sessions cleanly on disconnect) and made `sweep_eeprom()` / `sweep_block()` abort immediately on closed ports instead of spinning through 512 fallback `RE:` retries; added `ValueError` recovery in `spectra_probe.sweep_eeprom()` on noisy `RT:` frames.
+- **Czech Changelog Deliverable**: Added [CHANGELOG_CS.md](./CHANGELOG_CS.md) and SPECTRA-themed [CHANGELOG_CS.pdf](./CHANGELOG_CS.pdf) covering `Build 20261102.1738` through `Build 20261116.1639`.
+
+---
+
 ## [Build 20261116.1639] — 2026-11-16
 
 ### 🌐 Highlights: Czech UI Localization, Interactive Guided Tour & Simple Czech User Guide

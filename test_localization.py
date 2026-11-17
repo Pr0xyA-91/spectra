@@ -88,6 +88,47 @@ class TestCzechLocalization(unittest.TestCase):
         self.assertEqual(cs_keys - en_keys, set(), f"Extra in cs: {cs_keys - en_keys}")
         self.assertGreater(len(en_keys), 200)
 
+    def test_ui_prefs_persistence_roundtrip(self):
+        """UI preferences (onboarding_seen, lang) persist across restarts and are exposed in /api/version."""
+        import json
+        import tempfile
+        import threading
+        import urllib.request
+        import web_server
+
+        with tempfile.TemporaryDirectory() as td:
+            prefs_file = Path(td) / "ui_prefs.json"
+            with patch("web_server.get_ui_prefs_path", return_value=str(prefs_file)):
+                default_prefs = web_server.load_ui_prefs()
+                self.assertEqual(default_prefs, {"onboarding_seen": False, "lang": "en"})
+
+                saved = web_server.save_ui_prefs({"onboarding_seen": True, "lang": "cs"})
+                self.assertEqual(saved, {"onboarding_seen": True, "lang": "cs"})
+                self.assertTrue(prefs_file.is_file())
+                self.assertEqual(web_server.load_ui_prefs(), {"onboarding_seen": True, "lang": "cs"})
+
+                httpd = web_server.ThreadingHTTPServer(("127.0.0.1", 0), web_server.SpectraApiHandler)
+                port = httpd.server_address[1]
+                t = threading.Thread(target=httpd.serve_forever, daemon=True)
+                t.start()
+                try:
+                    base = f"http://127.0.0.1:{port}"
+                    ver = json.loads(urllib.request.urlopen(f"{base}/api/version", timeout=3).read())
+                    self.assertEqual(ver.get("ui_prefs"), {"onboarding_seen": True, "lang": "cs"})
+
+                    req = urllib.request.Request(
+                        f"{base}/api/ui_prefs",
+                        data=json.dumps({"onboarding_seen": False, "lang": "en"}).encode(),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    upd = json.loads(urllib.request.urlopen(req, timeout=3).read())
+                    self.assertTrue(upd.get("success"))
+                    self.assertEqual(upd.get("prefs"), {"onboarding_seen": False, "lang": "en"})
+                finally:
+                    httpd.shutdown()
+                    httpd.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()
