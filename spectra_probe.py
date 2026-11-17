@@ -212,6 +212,8 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
     num_blocks = (max_words + 15) // 16
 
     for blk_idx in range(num_blocks):
+        if not getattr(conn, "is_open", True):
+            raise IOError("Serial port disconnected during EEPROM sweep.")
         blk = blk_idx * 16
         pct = int((blk_idx / num_blocks) * 100)
 
@@ -219,22 +221,37 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
             on_progress(pct, blk)
 
         cmd = f"RT:{blk:04X}"
-        ans = conn.query_ascii(cmd, timeout=1.5)
+        try:
+            ans = conn.query_ascii(cmd, timeout=1.5)
+        except (IOError, OSError) as exc:
+            if not getattr(conn, "is_open", True):
+                raise IOError(f"Serial port disconnected at block 0x{blk:04X}: {exc}") from exc
+            ans = None
 
         block_ok = False
         if ans and ans.lower().startswith("rt:"):
             raw_hex = ans[3:].strip()
             if len(raw_hex) >= 64:
-                for idx in range(16):
-                    w = int(raw_hex[idx * 4: idx * 4 + 4], 16)
-                    eeprom[blk + idx] = w
-                block_ok = True
+                try:
+                    for idx in range(16):
+                        w = int(raw_hex[idx * 4: idx * 4 + 4], 16)
+                        eeprom[blk + idx] = w
+                    block_ok = True
+                except ValueError:
+                    block_ok = False
 
         if not block_ok:
             # Fallback to word-by-word reads for this block
             for offset in range(16):
+                if not getattr(conn, "is_open", True):
+                    raise IOError("Serial port disconnected during EEPROM sweep.")
                 addr = blk + offset
-                w_ans = conn.query_ascii(f"RE:{addr:04X}", timeout=1.0)
+                try:
+                    w_ans = conn.query_ascii(f"RE:{addr:04X}", timeout=1.0)
+                except (IOError, OSError) as exc:
+                    if not getattr(conn, "is_open", True):
+                        raise IOError(f"Serial port disconnected at word 0x{addr:04X}: {exc}") from exc
+                    w_ans = None
                 if w_ans and w_ans.lower().startswith("re:"):
                     try:
                         eeprom[addr] = int(w_ans[3:].strip()[:4], 16)

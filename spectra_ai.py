@@ -200,12 +200,60 @@ def get_task_progress() -> Dict[str, Any]:
     return task
 
 
-def set_ai_enabled(enabled: bool, model: Optional[str] = None, auto_unload: Optional[bool] = None) -> Dict[str, Any]:
+def _is_model_in_installed(model_id: str, installed: List[str]) -> bool:
+    """Return True when `model_id` matches any locally installed Ollama model tag."""
+    target = (model_id or "").strip()
+    if not target or not installed:
+        return False
+    for raw_ins in installed:
+        ins = raw_ins.strip()
+        if not ins:
+            continue
+        if ins == target or ins == f"{target}:latest" or ins.startswith(f"{target}:") or ins.startswith(target):
+            return True
+    return False
+
+
+def set_ai_enabled(
+    enabled: bool,
+    model: Optional[str] = None,
+    auto_unload: Optional[bool] = None,
+    require_installed_model: bool = False,
+) -> Dict[str, Any]:
     """
     Enable or disable Local AI globally.
     Turning OFF immediately cancels active AI tasks and stops/unloads the Ollama process.
+    When `require_installed_model` is True, refuses to enable AI if 0 models are installed.
     """
     global _ai_enabled, _preferred_model, _auto_unload, _cancel_epoch
+
+    if enabled and require_installed_model:
+        sys_status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
+        installed = [
+            m.get("name") if isinstance(m, dict) else str(m)
+            for m in ((sys_status.get("ollama") or {}).get("models") or [])
+            if (m.get("name") if isinstance(m, dict) else str(m)).strip()
+        ]
+        if not installed:
+            with _ai_lock:
+                _ai_enabled = False
+            return {
+                "success": False,
+                "requires_model_install": True,
+                "ai_enabled": False,
+                "error": "No local AI model is installed yet. Please download a model first.",
+                "preferred_model": get_preferred_model(),
+                "status": get_ai_global_status(),
+            }
+
+        req_model = str(model).strip() if model is not None else ""
+        with _ai_lock:
+            candidate = req_model or _preferred_model
+            if not _is_model_in_installed(candidate, installed):
+                _preferred_model = installed[0]
+                _save_persisted_ai_prefs(_preferred_model, _auto_unload)
+                model = _preferred_model
+
     with _ai_lock:
         _ai_enabled = bool(enabled)
         if model is not None and str(model).strip():

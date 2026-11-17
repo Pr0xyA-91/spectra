@@ -14,6 +14,7 @@ import socket
 import threading
 import mimetypes
 import collections
+from contextlib import contextmanager
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import uuid
@@ -73,11 +74,34 @@ _mapper_engine: Optional[memory_mapper.MemoryMapperEngine] = None
 _consecutive_sensor_errors: int = 0
 _last_sensor_payload: Optional[Dict[str, Any]] = None
 _last_heartbeat_time: float = time.time()
+_hw_op_lock = threading.Lock()
+_active_hw_ops: int = 0
 _is_native_webview: bool = False
 _shutdown_callbacks: List[Any] = []
 _capture_cache_lock = threading.Lock()
 _cached_captures: Dict[str, Dict[str, Any]] = {}
 _written_capture_paths: Set[str] = set()
+
+
+def touch_heartbeat():
+    """Refresh the frontend/operation liveness timestamp."""
+    global _last_heartbeat_time
+    _last_heartbeat_time = time.time()
+
+
+@contextmanager
+def long_hardware_operation():
+    """Marks an active blocking hardware/EEPROM operation so watchdogs never false-trigger."""
+    global _active_hw_ops
+    with _hw_op_lock:
+        _active_hw_ops += 1
+    touch_heartbeat()
+    try:
+        yield
+    finally:
+        touch_heartbeat()
+        with _hw_op_lock:
+            _active_hw_ops = max(0, _active_hw_ops - 1)
 
 
 def cleanup_resources():
@@ -561,6 +585,61 @@ def save_custom_sensor_mapping(field_key: str, data: Dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+_ui_prefs_lock = threading.Lock()
+
+
+def get_ui_prefs_path() -> str:
+    """Return host-persistent path for SPECTRA UI preferences (onboarding, language)."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "SPECTRA", "ui_prefs.json")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "spectra", "ui_prefs.json")
+
+
+def load_ui_prefs() -> Dict[str, Any]:
+    """Load persistent UI preferences (`onboarding_seen`, `lang`) with safe defaults."""
+    prefs: Dict[str, Any] = {"onboarding_seen": False, "lang": "en"}
+    path = get_ui_prefs_path()
+    with _ui_prefs_lock:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    if isinstance(raw.get("onboarding_seen"), bool):
+                        prefs["onboarding_seen"] = raw["onboarding_seen"]
+                    raw_lang = str(raw.get("lang") or "").strip().lower()
+                    if raw_lang in ("en", "cs"):
+                        prefs["lang"] = raw_lang
+            except Exception:
+                pass
+    return prefs
+
+
+def save_ui_prefs(updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge and atomically persist UI preferences (`onboarding_seen`, `lang`) to disk."""
+    prefs = load_ui_prefs()
+    if isinstance(updates, dict):
+        if "onboarding_seen" in updates:
+            prefs["onboarding_seen"] = bool(updates["onboarding_seen"])
+        if "lang" in updates:
+            raw_lang = str(updates["lang"] or "").strip().lower()
+            if raw_lang in ("en", "cs"):
+                prefs["lang"] = raw_lang
+    path = get_ui_prefs_path()
+    with _ui_prefs_lock:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(prefs, fh, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+    return prefs
 
 
 def reset_custom_sensor_mappings() -> bool:
@@ -1060,7 +1139,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
-        global _active_session, _current_port, _last_stats_cache
+        global _active_session, _current_port, _last_stats_cache, _mapper_engine
         url = urlparse(self.path)
         params = parse_qs(url.query)
 
@@ -1160,7 +1239,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid or missing serial port"})
                 return
 
-            with _session_lock:
+            with long_hardware_operation(), _session_lock:
                 try:
                     if _active_session is not None:
                         try:
@@ -1403,71 +1482,94 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         # 7. API: Developer Memory Mapper Info [DEV ONLY]
         elif url.path == "/api/mapper/info":
             port = params.get("port", [""])[0].strip()
-            with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err})
-                    return
-                stats = mapper.get_summary_stats()
-                self._send_json({
-                    "ef_code": mapper.ef_code,
-                    "model_family": mapper.model_family,
-                    "address_width": mapper.address_width,
-                    "max_words": mapper.max_words,
-                    "is_two_digit": mapper.is_two_digit,
-                    "spec_file": os.path.basename(mapper.spec_file_path or ""),
-                    "summary": stats
-                })
+            with long_hardware_operation(), _session_lock:
+                try:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err})
+                        return
+                    stats = mapper.get_summary_stats()
+                    self._send_json({
+                        "ef_code": mapper.ef_code,
+                        "model_family": mapper.model_family,
+                        "address_width": mapper.address_width,
+                        "max_words": mapper.max_words,
+                        "is_two_digit": mapper.is_two_digit,
+                        "spec_file": os.path.basename(mapper.spec_file_path or ""),
+                        "summary": stats
+                    })
+                except Exception as e:
+                    self._send_json({"error": str(e)})
             return
 
         # 8. API: Developer Memory Mapper Sweep [DEV ONLY]
         elif url.path == "/api/mapper/sweep":
             port = params.get("port", [""])[0].strip()
             block_param = params.get("block", ["all"])[0].strip()
-            with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err, "registers": []})
-                    return
-                if block_param == "all" or not block_param.isdigit():
-                    mapper.sweep_eeprom()
-                    regs = [serialize_register_entry(r) for r in mapper.classified_registers]
-                else:
-                    b_idx = int(block_param)
-                    updated = mapper.sweep_block(b_idx)
-                    regs = [serialize_register_entry(r) for r in updated]
-                summary = mapper.get_summary_stats()
-                self._send_json({
-                    "registers": regs,
-                    "summary": summary,
-                    "timestamp": time.strftime("%H:%M:%S")
-                })
+            with long_hardware_operation(), _session_lock:
+                try:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err, "registers": []})
+                        return
+                    if block_param == "all" or not block_param.isdigit():
+                        mapper.sweep_eeprom(progress_callback=lambda *_a: touch_heartbeat())
+                        regs = [serialize_register_entry(r) for r in mapper.classified_registers]
+                    else:
+                        b_idx = int(block_param)
+                        updated = mapper.sweep_block(b_idx)
+                        regs = [serialize_register_entry(r) for r in updated]
+                    summary = mapper.get_summary_stats()
+                    self._send_json({
+                        "registers": regs,
+                        "summary": summary,
+                        "timestamp": time.strftime("%H:%M:%S")
+                    })
+                except Exception as e:
+                    if _active_session is not None and _active_session.conn is not None and not getattr(_active_session.conn, "is_open", True):
+                        try:
+                            _active_session.close()
+                        except Exception:
+                            pass
+                        _active_session = None
+                        _mapper_engine = None
+                    self._send_json({
+                        "error": str(e),
+                        "disconnected": True,
+                        "registers": []
+                    })
             return
 
         # 9. API: Developer Memory Mapper Diff [DEV ONLY]
         elif url.path == "/api/mapper/diff":
             port = params.get("port", [""])[0].strip()
             with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err, "changed_registers": []})
-                    return
-                diff = mapper.compute_diff(mask_noise=True)
-                diff["changed_registers"] = [serialize_register_entry(r) for r in diff["changed_registers"]]
-                diff["summary"] = mapper.get_summary_stats()
-                self._send_json(diff)
+                try:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err, "changed_registers": []})
+                        return
+                    diff = mapper.compute_diff(mask_noise=True)
+                    diff["changed_registers"] = [serialize_register_entry(r) for r in diff["changed_registers"]]
+                    diff["summary"] = mapper.get_summary_stats()
+                    self._send_json(diff)
+                except Exception as e:
+                    self._send_json({"error": str(e), "changed_registers": []})
             return
 
         # 10. API: Developer Raw Sensor Telemetry & Field Breakdown [DEV ONLY]
         elif url.path == "/api/mapper/raw_sensors":
             port = params.get("port", [""])[0].strip()
             with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err, "frames": {}, "fields": []})
-                    return
-                raw_data = _decode_raw_sensors(mapper)
-                self._send_json(raw_data)
+                try:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err, "frames": {}, "fields": []})
+                        return
+                    raw_data = _decode_raw_sensors(mapper)
+                    self._send_json(raw_data)
+                except Exception as e:
+                    self._send_json({"error": str(e), "frames": {}, "fields": []})
             return
 
         # 10b. API: Kalerm HMI Dynamic Local Firmware Discovery
@@ -1666,6 +1768,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 "build": __build__,
                 "version": __version__,
                 "edition": __edition__,
+                "ui_prefs": load_ui_prefs(),
+            })
+            return
+
+        elif url.path == "/api/ui_prefs":
+            self._send_json({
+                "success": True,
+                "prefs": load_ui_prefs(),
             })
             return
 
@@ -1779,7 +1889,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         return
 
                     joe_data = spectra_probe.parse_joe_csv_text(joe_csv) if joe_csv else {}
-                    with _session_lock:
+                    with long_hardware_operation(), _session_lock:
                         safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
                         owns = False
                         if safe_conn is None:
@@ -1789,6 +1899,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             bundle = spectra_probe.capture_machine_bundle(
                                 safe_conn,
                                 joe_data=joe_data,
+                                on_progress=lambda *_a: touch_heartbeat(),
                                 use_ollama=use_ollama,
                                 ollama_model=ollama_model,
                             )
@@ -2214,7 +2325,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 enabled = bool(data.get("enabled", False))
                 model = data.get("model")
                 auto_unload = data.get("auto_unload")
-                res = spectra_ai.set_ai_enabled(enabled, model=model, auto_unload=auto_unload)
+                res = spectra_ai.set_ai_enabled(
+                    enabled,
+                    model=model,
+                    auto_unload=auto_unload,
+                    require_installed_model=True,
+                )
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)})
@@ -2316,7 +2432,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         self._send_json({"success": False, "error": "No captured EEPROM bundle or valid serial port provided."})
                         return
                     joe_data = spectra_probe.parse_joe_csv_text(joe_csv) if joe_csv else {}
-                    with _session_lock:
+                    with long_hardware_operation(), _session_lock:
                         safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
                         owns = False
                         if safe_conn is None:
@@ -2326,6 +2442,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             bundle = spectra_probe.capture_machine_bundle(
                                 safe_conn,
                                 joe_data=joe_data,
+                                on_progress=lambda *_a: touch_heartbeat(),
                                 use_ollama=True,
                                 ollama_model=model,
                             )
@@ -2474,7 +2591,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     if not port or not is_valid_port(port):
                         self._send_json({"success": False, "error": "Interrogate a connected machine first or attach a valid serial port."})
                         return
-                    with _session_lock:
+                    with long_hardware_operation(), _session_lock:
                         safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
                         owns = False
                         if safe_conn is None:
@@ -2484,6 +2601,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             bundle = spectra_probe.capture_machine_bundle(
                                 safe_conn,
                                 joe_data={},
+                                on_progress=lambda *_a: touch_heartbeat(),
                                 use_ollama=False,
                             )
                         finally:
@@ -2677,6 +2795,15 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     "url": url_out,
                     "error": "" if ok else msg,
                 })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)})
+            return
+
+        # 28. API: Persist Host UI Preferences (Onboarding Seen & Language)
+        elif url.path == "/api/ui_prefs":
+            try:
+                prefs = save_ui_prefs(data if isinstance(data, dict) else {})
+                self._send_json({"success": True, "prefs": prefs})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)})
             return

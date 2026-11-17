@@ -36,7 +36,8 @@ export default function MemMapperTab({
   aiModel = '',
   onToggleAi = null,
   beginAiWork = null,
-  endAiWork = null
+  endAiWork = null,
+  onSweepStateChange = null
 }) {
   // Sub-tab: 'eeprom' or 'raw_sensors'
   const [subTab, setSubTab] = useState('eeprom');
@@ -106,12 +107,15 @@ export default function MemMapperTab({
   const [isSuggestingAi, setIsSuggestingAi] = useState(false);
   const [aiSuggestError, setAiSuggestError] = useState('');
   const pendingAiApplyRef = useRef(null);
+  const sweepSeqRef = useRef(0);
+  const diffInFlightRef = useRef(false);
+  const rawSensorsInFlightRef = useRef(false);
 
   // --------------------------------------------------------------------------
   // 1. Fetch Mapper Identity & Summary
   // --------------------------------------------------------------------------
   const fetchMapperInfo = useCallback(async () => {
-    if (!selectedPort) return;
+    if (!selectedPort) return null;
     try {
       const res = await fetch(`/api/mapper/info?port=${encodeURIComponent(selectedPort)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -119,47 +123,104 @@ export default function MemMapperTab({
       if (data.error) {
         setStatusMessage(data.error);
         setStatusType('warn');
-        return;
+        return data;
       }
       setMapperInfo(data);
       if (data.summary) {
         setSummary(data.summary);
       }
+      return data;
     } catch (err) {
       console.warn('Failed to fetch mapper info:', err);
+      return null;
     }
   }, [selectedPort]);
 
   // --------------------------------------------------------------------------
-  // 2. Full Memory Sweep
+  // 2. Full Memory Sweep (Block-by-Block with Live Progress & Heartbeat Safety)
   // --------------------------------------------------------------------------
-  const handleFullSweep = async () => {
+  const handleFullSweep = useCallback(async (infoOverride = null) => {
     if (!selectedPort) return;
+    if (isSweeping && !infoOverride) return;
+    const mySeq = sweepSeqRef.current + 1;
+    sweepSeqRef.current = mySeq;
     setIsSweeping(true);
-    setStatusMessage('Executing safe EEPROM sweep over UART...');
-    setStatusType('info');
+    onSweepStateChange?.(true);
 
     try {
-      const res = await fetch(`/api/mapper/sweep?port=${encodeURIComponent(selectedPort)}&block=all`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      if (data.error) {
-        setStatusMessage(`Sweep failed: ${data.error}`);
-        setStatusType('warn');
-      } else {
-        setRegisters(data.registers || []);
-        if (data.summary) setSummary(data.summary);
-        setStatusMessage(`Sweep complete: ${data.registers?.length || 0} words verified.`);
-        setStatusType('success');
+      let info = infoOverride || mapperInfo;
+      if (!info || !info.max_words) {
+        info = await fetchMapperInfo();
       }
+      if (sweepSeqRef.current !== mySeq) return;
+      if (!info || info.error) {
+        if (info?.error) {
+          setStatusMessage(`Sweep failed: ${info.error}`);
+          setStatusType('warn');
+        }
+        return;
+      }
+
+      const maxWords = Number(info.max_words) || 512;
+      const totalBlocks = Math.max(1, Math.floor(maxWords / 16));
+      setSweepProgress({ current: 0, total: totalBlocks });
+      setStatusMessage(`Executing safe EEPROM sweep (${totalBlocks} blocks / ${maxWords} words) over UART...`);
+      setStatusType('info');
+
+      let lastSummary = info.summary || null;
+      const mergedMap = new Map();
+
+      for (let bIdx = 0; bIdx < totalBlocks; bIdx += 1) {
+        if (sweepSeqRef.current !== mySeq) return;
+
+        setSweepProgress({ current: bIdx + 1, total: totalBlocks });
+        setStatusMessage(`Reading EEPROM Block ${bIdx + 1}/${totalBlocks} (0x${(bIdx * 16).toString(16).toUpperCase().padStart(info.address_width || 4, '0')})...`);
+
+        const res = await fetch(`/api/mapper/sweep?port=${encodeURIComponent(selectedPort)}&block=${bIdx}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (sweepSeqRef.current !== mySeq) return;
+
+        if (data.error) {
+          setStatusMessage(`Sweep stopped at block ${bIdx + 1}/${totalBlocks}: ${data.error}`);
+          setStatusType('warn');
+          return;
+        }
+
+        if (Array.isArray(data.registers) && data.registers.length > 0) {
+          for (const reg of data.registers) {
+            mergedMap.set(reg.addr, reg);
+          }
+          setRegisters((prev) => {
+            const map = new Map(prev.map((r) => [r.addr, r]));
+            for (const reg of data.registers) {
+              map.set(reg.addr, reg);
+            }
+            return Array.from(map.values()).sort((a, b) => a.addr - b.addr);
+          });
+        }
+        if (data.summary) {
+          lastSummary = data.summary;
+          setSummary(data.summary);
+        }
+      }
+
+      if (sweepSeqRef.current !== mySeq) return;
+      if (lastSummary) setSummary(lastSummary);
+      setStatusMessage(`Sweep complete: ${mergedMap.size || maxWords} words verified across ${totalBlocks} blocks.`);
+      setStatusType('success');
     } catch (err) {
-      setStatusMessage(`Sweep error: ${err.message}`);
-      setStatusType('warn');
+      if (sweepSeqRef.current === mySeq) {
+        setStatusMessage(`Sweep error: ${err.message}`);
+        setStatusType('warn');
+      }
     } finally {
-      setIsSweeping(false);
+      if (sweepSeqRef.current === mySeq) {
+        setIsSweeping(false);
+        onSweepStateChange?.(false);
+      }
     }
-  };
+  }, [selectedPort, isSweeping, mapperInfo, fetchMapperInfo, onSweepStateChange]);
 
   // --------------------------------------------------------------------------
   // 3. Baseline Capture
@@ -193,7 +254,8 @@ export default function MemMapperTab({
   // 4. Live Differential Polling
   // --------------------------------------------------------------------------
   const pollDiff = useCallback(async () => {
-    if (!selectedPort || !isLiveDiff) return;
+    if (!selectedPort || !isLiveDiff || isSweeping || diffInFlightRef.current) return;
+    diffInFlightRef.current = true;
     try {
       const res = await fetch(`/api/mapper/diff?port=${encodeURIComponent(selectedPort)}`);
       if (!res.ok) return;
@@ -227,15 +289,17 @@ export default function MemMapperTab({
       }
     } catch (err) {
       console.warn('Diff poll failed:', err);
+    } finally {
+      diffInFlightRef.current = false;
     }
-  }, [selectedPort, isLiveDiff, isDiffPaused]);
+  }, [selectedPort, isLiveDiff, isSweeping, isDiffPaused]);
 
   // Diff polling timer
   useEffect(() => {
-    if (!isLiveDiff) return;
+    if (!isLiveDiff || isSweeping) return;
     const interval = setInterval(pollDiff, 1500);
     return () => clearInterval(interval);
-  }, [isLiveDiff, pollDiff]);
+  }, [isLiveDiff, isSweeping, pollDiff]);
 
   // --------------------------------------------------------------------------
   // 5. Register Selection & Form Population
@@ -410,7 +474,8 @@ export default function MemMapperTab({
   // 7. Sub-Tab 2: Query Raw Sensors Telemetry
   // --------------------------------------------------------------------------
   const queryRawSensors = useCallback(async () => {
-    if (!selectedPort) return;
+    if (!selectedPort || isSweeping || rawSensorsInFlightRef.current) return;
+    rawSensorsInFlightRef.current = true;
     try {
       const res = await fetch(`/api/mapper/raw_sensors?port=${encodeURIComponent(selectedPort)}`);
       if (!res.ok) return;
@@ -420,16 +485,18 @@ export default function MemMapperTab({
       }
     } catch (err) {
       console.warn('Raw sensors query failed:', err);
+    } finally {
+      rawSensorsInFlightRef.current = false;
     }
-  }, [selectedPort]);
+  }, [selectedPort, isSweeping]);
 
   useEffect(() => {
-    if (subTab === 'raw_sensors' && isRawPolling) {
+    if (subTab === 'raw_sensors' && isRawPolling && !isSweeping) {
       queryRawSensors();
       const interval = setInterval(queryRawSensors, 1200);
       return () => clearInterval(interval);
     }
-  }, [subTab, isRawPolling, queryRawSensors]);
+  }, [subTab, isRawPolling, isSweeping, queryRawSensors]);
 
   // Populate Sensor Form when selected field changes
   const selectedSensorField = rawSensorData.fields?.find((f) => f.key === selectedFieldKey) || {
@@ -506,10 +573,20 @@ export default function MemMapperTab({
     }
   };
 
-  // Initial load
+  // Initial load: fetch metadata first, then sweep sequentially block-by-block
   useEffect(() => {
-    fetchMapperInfo();
-    handleFullSweep();
+    let cancelled = false;
+    (async () => {
+      const info = await fetchMapperInfo();
+      if (!cancelled && info && !info.error) {
+        await handleFullSweep(info);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sweepSeqRef.current += 1;
+      onSweepStateChange?.(false);
+    };
   }, [selectedPort]);
 
   // Copy helper
@@ -637,7 +714,7 @@ export default function MemMapperTab({
             {/* Sweep & Diff Action Buttons */}
             <div className="flex items-center space-x-2">
               <button
-                onClick={handleFullSweep}
+                onClick={() => handleFullSweep()}
                 disabled={isSweeping}
                 className={`flex items-center space-x-1.5 px-3 py-1 font-bold rounded transition-all ${
                   isSweeping
@@ -646,7 +723,7 @@ export default function MemMapperTab({
                 }`}
               >
                 <Zap className="w-3.5 h-3.5" />
-                <span>{isSweeping ? 'SWEEPING...' : '⚡ FULL SWEEP'}</span>
+                <span>{isSweeping ? `SWEEPING (${sweepProgress.current}/${sweepProgress.total})...` : '⚡ FULL SWEEP'}</span>
               </button>
 
               <button
@@ -672,6 +749,17 @@ export default function MemMapperTab({
               </button>
             </div>
           </div>
+
+          {isSweeping && (
+            <div className="w-full bg-zinc-900/90 border border-yellow-500/40 rounded overflow-hidden">
+              <div
+                className="h-1.5 bg-[#FCEE09] transition-all duration-150"
+                style={{
+                  width: `${Math.min(100, Math.round((sweepProgress.current / Math.max(1, sweepProgress.total)) * 100))}%`
+                }}
+              />
+            </div>
+          )}
 
           {/* Filter & Search Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">

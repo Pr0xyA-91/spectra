@@ -181,6 +181,56 @@ class TestMemoryMapperTool(unittest.TestCase):
             win.destroy()
             self.assertFalse(win.is_watching)
 
+    def test_sweep_disconnect_aborts_cleanly_without_hanging(self):
+        """Verify mid-sweep serial disconnect aborts immediately with IOError instead of 512 fallback retries."""
+        calls = []
+
+        def flaky_query(cmd, timeout=1.5):
+            calls.append(cmd)
+            if len(calls) >= 2:
+                self.conn.is_open = False
+                raise IOError("Serial port is not open.")
+            return "rt:" + ("0000" * 16)
+
+        orig_query = self.engine.query_safe
+        self.engine.query_safe = flaky_query
+        try:
+            with self.assertRaises(IOError):
+                self.engine.sweep_eeprom()
+            # Must abort on first closed-port error, never loop over all remaining blocks/words
+            self.assertEqual(len(calls), 2)
+        finally:
+            self.engine.query_safe = orig_query
+            self.conn.is_open = True
+
+    def test_probe_sweep_recovers_from_corrupt_rt_block(self):
+        """Verify spectra_probe.sweep_eeprom falls back to RE: words when an RT: frame contains corrupt hex."""
+        import spectra_probe
+
+        orig_query = self.conn.query_ascii
+
+        def noisy_query(cmd, timeout=1.0):
+            if cmd == "RT:0000":
+                return "rt:" + ("ZZZZ" * 16)
+            return orig_query(cmd, timeout=timeout)
+
+        self.conn.query_ascii = noisy_query
+        try:
+            eeprom = spectra_probe.sweep_eeprom(self.conn, max_words=32)
+            self.assertEqual(len(eeprom), 32)
+        finally:
+            self.conn.query_ascii = orig_query
+
+    def test_long_hardware_op_tracks_watchdog_state(self):
+        """Verify web_server.long_hardware_operation sets active count and refreshes heartbeat."""
+        import web_server
+        web_server._last_heartbeat_time = 0.0
+        before_ops = web_server._active_hw_ops
+        with web_server.long_hardware_operation():
+            self.assertEqual(web_server._active_hw_ops, before_ops + 1)
+            self.assertGreater(web_server._last_heartbeat_time, 0.0)
+        self.assertEqual(web_server._active_hw_ops, before_ops)
+
 
 if __name__ == "__main__":
     unittest.main()

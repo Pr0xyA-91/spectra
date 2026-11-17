@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import SpectraWorkspace from './components/SpectraWorkspace';
 import DebugConsoleModal from './components/DebugConsoleModal';
 
@@ -11,6 +11,7 @@ export default function App() {
       return 'en';
     }
   });
+  const prefsLoadedRef = useRef(false);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [debugCounts, setDebugCounts] = useState({ errorCount: 0, warnCount: 0 });
   const [debugSummary, setDebugSummary] = useState(null);
@@ -18,10 +19,44 @@ export default function App() {
   const [currentScale, setCurrentScale] = useState(1.0);
 
   useEffect(() => {
+    let active = true;
+    fetch('/api/ui_prefs')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!active) return;
+        const diskLang = d?.prefs?.lang;
+        let lsLang = null;
+        try {
+          lsLang = localStorage.getItem('spectra_lang');
+        } catch {}
+        if (!lsLang && (diskLang === 'cs' || diskLang === 'en')) {
+          setLang(diskLang);
+          try {
+            localStorage.setItem('spectra_lang', diskLang);
+          } catch {}
+        }
+        prefsLoadedRef.current = true;
+      })
+      .catch(() => {
+        prefsLoadedRef.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       localStorage.setItem('spectra_lang', lang);
     } catch {}
     document.documentElement.lang = lang;
+    if (prefsLoadedRef.current) {
+      fetch('/api/ui_prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang }),
+      }).catch(() => {});
+    }
   }, [lang]);
 
   // 1. Native Desktop App mode lifecycle: heartbeat & window_closed / close beacon
