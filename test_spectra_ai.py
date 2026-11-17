@@ -814,5 +814,148 @@ class TestOnDiskModelDetectionAndToggleGuard(unittest.TestCase):
                     self.assertEqual(res_ok["preferred_model"], "qwen2.5:0.5b")
 
 
+class TestTxtCalibrationIdentityAndHarvester(unittest.TestCase):
+    """Tests for .txt Local AI extraction, US/EU identity override, and calibration harvesting."""
+
+    def test_calibrate_from_txt_file_extracts_identity_and_offsets(self):
+        fake_eeprom = {0x0001: 420, 0x0002: 185, 0x0008: 12}
+        # Verify deterministic .txt parser handles numbered beverage labels too
+        import spectra_probe
+        det = spectra_probe.parse_joe_csv_text("Model Name: Jura E8 (NA)\nSerial Number: SN123\n1 Espresso: 420\n")
+        self.assertEqual(det["products"]["1 Espresso"], 420)
+        self.assertEqual(det["serial_number"], "SN123")
+
+        txt_report = (
+            "Service Export Diagnostics\n"
+            "Nameplate says Jura E8 (NA) 120V Art 15364, S/N 20240501001234.\n"
+            "Counts reported by customer: 420 Espresso, 185 Coffee, 12 Cleanings.\n"
+        )
+        ai_txt_reply = {
+            "model_name": "Jura E8 (NA)",
+            "article_number": "15364",
+            "serial_number": "20240501001234",
+            "market_region": "US",
+            "products": [{"name": "Espresso", "count": 420}, {"name": "Coffee", "count": 185}],
+            "maintenance": [{"name": "Cleanings", "count": 12}],
+            "cockpit": [],
+            "notes": "Parsed US E8 15364 text dump.",
+        }
+        ai_cal_reply = {
+            "products": [
+                {"name": "Espresso", "addr": "0x0001", "is_double": False, "reason": "exact match"},
+                {"name": "Coffee", "addr": "0x0002", "is_double": False, "reason": "exact match"},
+            ],
+            "maintenance": [
+                {"name": "Cleanings", "addr": "0x0008", "reason": "cleaning match"},
+            ],
+            "maintenance_pct": [],
+            "notes": "Matched US E8 counters",
+        }
+        with patch.object(spectra_ai, "_resolve_active_model", return_value=(True, "qwen2.5:0.5b", "")), patch.object(
+            spectra_ai,
+            "is_cancel_requested",
+            return_value=False,
+        ), patch.object(
+            spectra_ai,
+            "_query_ollama_json",
+            side_effect=[(ai_txt_reply, ""), (ai_cal_reply, "")],
+        ), patch.object(spectra_ai, "_maybe_auto_unload"):
+            res = spectra_ai.calibrate_offsets_from_upload(
+                eeprom_words={f"0x{k:04X}": v for k, v in fake_eeprom.items()},
+                file_name="machine_dump.txt",
+                csv_text=txt_report,
+                ty_str="EF532M",
+                model_name="Generic Jura",
+                article_number="15000",
+                model="qwen2.5:0.5b",
+            )
+
+        self.assertTrue(res["success"])
+        self.assertEqual(res["detected_identity"]["model_name"], "Jura E8 (NA)")
+        self.assertEqual(res["detected_identity"]["article_number"], "15364")
+        self.assertEqual(res["detected_identity"]["serial_number"], "20240501001234")
+        self.assertEqual(res["detected_identity"]["market_region"], "US")
+        self.assertEqual(res["override"]["model_name"], "Jura E8 (NA)")
+        self.assertEqual(res["matched_products"], 2)
+        self.assertEqual(res["matched_maintenance"], 1)
+
+    def test_identity_only_override_applies_to_stats_session(self):
+        import stats_collector
+        import profiles_db
+
+        with tempfile.TemporaryDirectory() as td:
+            ov_path = os.path.join(td, "overrides.json")
+            with patch.object(profiles_db, "EEPROM_OVERRIDES_FILE", ov_path):
+                profiles_db.save_eeprom_offset_override({
+                    "ef_code": "EF532M",
+                    "model_name": "Jura E8 (NA)",
+                    "article_number": "15364",
+                    "serial_number": "20240501009999",
+                    "market_region": "US",
+                    "products": [],
+                    "maintenance": [],
+                })
+                sess = stats_collector.JuraStatsSession(port_name="DEMO")
+                sess.ef_code = "EF532M"
+                sess.model_family = "Generic E8 (EU)"
+                sess.telemetry["article_number"] = "15000"
+                applied = sess.apply_local_offset_override()
+                self.assertTrue(applied)
+                summary = sess.get_structured_summary()
+                self.assertEqual(summary["machine_model"], "Jura E8 (NA)")
+                self.assertEqual(summary["article_number"], "15364")
+                self.assertEqual(summary["serial_number"], "20240501009999")
+                self.assertEqual(summary["market_region"], "US")
+
+    def test_sync_community_calibrations_harvester(self):
+        from contrib import sync_community_calibrations
+
+        with tempfile.TemporaryDirectory() as td:
+            models_dir = os.path.join(td, "models")
+            issue_file = os.path.join(td, "issues.json")
+            patch_obj = {
+                "schema": "spectra.offset_patch.v1",
+                "identity": {
+                    "ef_code": "EF999M",
+                    "model_name": "Z10 (NA)",
+                    "article_number": "15501",
+                    "market_region": "US",
+                },
+                "override": {
+                    "ef_code": "EF999M",
+                    "model_name": "Z10 (NA)",
+                    "article_number": "15501",
+                    "market_region": "US",
+                    "products": [{"name": "Espresso", "addr": 1, "addr_hex": "0x0001", "joe_count": 321}],
+                    "maintenance": [{"name": "Cleaning", "addr": 8, "addr_hex": "0x0008", "joe_count": 9}],
+                },
+                "eeprom_words": {"0x0001": 321, "0x0008": 9},
+            }
+            issues = [
+                {
+                    "number": 42,
+                    "title": "[Offset Fix + Capture] Z10 (NA) (Article 15501)",
+                    "body": "### Automated Harvesting Payload\n```json\n" + json.dumps(patch_obj) + "\n```",
+                }
+            ]
+            with open(issue_file, "w", encoding="utf-8") as f:
+                json.dump(issues, f)
+
+            res = sync_community_calibrations.sync_calibrations(
+                models_dir=models_dir,
+                apply_changes=True,
+                input_file=issue_file,
+            )
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["verified_calibrations"], 1)
+            self.assertEqual(len(res["updated_files"]), 1)
+            with open(res["updated_files"][0], "r", encoding="utf-8") as f:
+                spec = json.load(f)
+            self.assertEqual(spec["ef_code"], "EF999M")
+            self.assertIn("15501", spec["article_numbers"])
+            self.assertEqual(spec["market_regions"], ["US"])
+            self.assertEqual(spec["verified_offsets"]["products"][0]["addr_hex"], "0x0001")
+
+
 if __name__ == "__main__":
     unittest.main()

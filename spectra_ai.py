@@ -1102,10 +1102,24 @@ def calibrate_eeprom_offsets_from_joe(
 
 
 def _normalize_joe_struct(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize AI/OCR extracted counters into canonical spectra_probe J.O.E. dict shape."""
+    """Normalize AI/OCR extracted counters and identity fields into canonical spectra_probe J.O.E. dict shape."""
     products: Dict[str, int] = {}
     maintenance: Dict[str, int] = {}
     cockpit: Dict[str, str] = {}
+    ident_block = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
+
+    def _clean_ident(key: str, *aliases: str) -> str:
+        for k in (key, *aliases):
+            val = raw.get(k) if raw.get(k) is not None else ident_block.get(k)
+            s = str(val or "").strip()
+            if s and s.lower() not in ("none", "null", "n/a", "unknown", "—"):
+                return s
+        return ""
+
+    model_name = _clean_ident("model_name", "machine_model", "model", "appliance")
+    article_number = _clean_ident("article_number", "model_number", "art_no")
+    serial_number = _clean_ident("serial_number", "serial")
+    market_region = _clean_ident("market_region", "market", "region", "country")
 
     def _to_int(v: Any) -> Optional[int]:
         if isinstance(v, bool):
@@ -1157,7 +1171,110 @@ def _normalize_joe_struct(raw: Dict[str, Any]) -> Dict[str, Any]:
                 if name and pct is not None and 0 <= pct <= 100:
                     cockpit[name] = f"{pct}%"
 
-    return {"products": products, "maintenance": maintenance, "cockpit": cockpit}
+    return {
+        "model_name": model_name,
+        "article_number": article_number,
+        "serial_number": serial_number,
+        "market_region": market_region,
+        "products": products,
+        "maintenance": maintenance,
+        "cockpit": cockpit,
+    }
+
+
+def _merge_joe_dicts(primary: Dict[str, Any], secondary: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge deterministic parsed J.O.E. dict (primary) with AI-extracted metadata/counters (secondary)."""
+    out = {
+        "model_name": str(primary.get("model_name") or secondary.get("model_name") or "").strip(),
+        "article_number": str(primary.get("article_number") or secondary.get("article_number") or "").strip(),
+        "serial_number": str(primary.get("serial_number") or secondary.get("serial_number") or "").strip(),
+        "market_region": str(primary.get("market_region") or secondary.get("market_region") or "").strip(),
+        "products": dict(secondary.get("products") or {}),
+        "maintenance": dict(secondary.get("maintenance") or {}),
+        "cockpit": dict(secondary.get("cockpit") or {}),
+        "total_products": primary.get("total_products"),
+        "raw_lines": list(primary.get("raw_lines") or []),
+    }
+    out["products"].update(primary.get("products") or {})
+    out["maintenance"].update(primary.get("maintenance") or {})
+    out["cockpit"].update(primary.get("cockpit") or {})
+    return out
+
+
+def extract_joe_from_text_with_ai(
+    raw_text: str,
+    model: Optional[str] = None,
+    current_identity: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """
+    Use the active Local AI model to parse unstructured `.txt` reports, J.O.E. text
+    snippets, or user machine notes into normalized counters plus US/EU machine identity.
+    """
+    snippet = (raw_text or "").strip()
+    if not snippet:
+        return {"success": False, "error": "Uploaded text / notes payload is empty."}
+
+    ok, active_model, err = _resolve_active_model(requested_model=model, require_vision=False)
+    if not ok:
+        return {"success": False, "error": err}
+
+    cur_ident = current_identity if isinstance(current_identity, dict) else {}
+    clipped = snippet[:6000]
+    prompt = (
+        "You are analyzing a diagnostic text file or technician notes from a Jura espresso machine.\n"
+        "Hardware telemetry reported so far (may have wrong US vs EU model variant): "
+        f"{json.dumps(cur_ident, ensure_ascii=False)}\n\n"
+        "Extract machine identity AND any beverage/maintenance counters from the text below.\n"
+        "Respond with ONLY valid JSON matching this schema:\n"
+        "{\n"
+        '  "model_name": "exact Jura model name e.g. Jura E8 (NA) or WE8 (EA), empty if absent",\n'
+        '  "article_number": "5-digit article or model number e.g. 15364, empty if absent",\n'
+        '  "serial_number": "serial number string, empty if absent",\n'
+        '  "market_region": "US, NA, EU, UK, CH, etc. if indicated (e.g. 120V/60Hz -> US), empty if absent",\n'
+        '  "products": [{"name": "Espresso", "count": 123}],\n'
+        '  "maintenance": [{"name": "Cleanings", "count": 12}],\n'
+        '  "cockpit": [{"name": "Filter", "percent": 80}],\n'
+        '  "notes": "short extraction summary"\n'
+        "}\n"
+        "Rules: use integers for counts/percentages; only extract values explicitly supported by the text.\n\n"
+        f"TEXT INPUT:\n{clipped}"
+    )
+
+    update_task_progress(
+        active=True,
+        task_id="text_extract",
+        task_label="AI Text & Identity Parsing",
+        step="Parsing Diagnostic Text & Identity",
+        detail=f"Extracting counters and market identity via {active_model}...",
+        current=1,
+        total=2,
+        percent=35,
+        eta_seconds=15,
+        model=active_model,
+        error="",
+    )
+    try:
+        parsed, q_err = _query_ollama_json(
+            prompt,
+            active_model,
+            timeout=90.0,
+            temperature=0.05,
+            num_ctx=4096,
+            num_predict=768,
+        )
+        if parsed is None:
+            return {"success": False, "error": q_err or "Local AI did not return structured JSON from text."}
+        norm = _normalize_joe_struct(parsed)
+        return {
+            "success": True,
+            "method": f"ai_text:{active_model}",
+            "model": active_model,
+            "joe_data": norm,
+            "notes": str(parsed.get("notes") or f"Parsed text via {active_model}."),
+        }
+    finally:
+        _maybe_auto_unload(active_model)
+        update_task_progress(active=False)
 
 
 def _parse_counters_from_ocr_text(ocr_text: str) -> Dict[str, Any]:
@@ -1189,7 +1306,110 @@ def _parse_counters_from_ocr_text(ocr_text: str) -> Dict[str, Any]:
             else:
                 products[lbl] = val
 
-    return {"products": products, "maintenance": maintenance, "cockpit": cockpit}
+    return {
+        "model_name": model_name,
+        "article_number": article_number,
+        "serial_number": serial_number,
+        "market_region": market_region,
+        "products": products,
+        "maintenance": maintenance,
+        "cockpit": cockpit,
+    }
+
+
+def _merge_joe_dicts(primary: Dict[str, Any], secondary: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge deterministic parsed J.O.E. dict (primary) with AI-extracted metadata/counters (secondary)."""
+    out = {
+        "model_name": str(primary.get("model_name") or secondary.get("model_name") or "").strip(),
+        "article_number": str(primary.get("article_number") or secondary.get("article_number") or "").strip(),
+        "serial_number": str(primary.get("serial_number") or secondary.get("serial_number") or "").strip(),
+        "market_region": str(primary.get("market_region") or secondary.get("market_region") or "").strip(),
+        "products": dict(secondary.get("products") or {}),
+        "maintenance": dict(secondary.get("maintenance") or {}),
+        "cockpit": dict(secondary.get("cockpit") or {}),
+        "total_products": primary.get("total_products"),
+        "raw_lines": list(primary.get("raw_lines") or []),
+    }
+    out["products"].update(primary.get("products") or {})
+    out["maintenance"].update(primary.get("maintenance") or {})
+    out["cockpit"].update(primary.get("cockpit") or {})
+    return out
+
+
+def extract_joe_from_text_with_ai(
+    raw_text: str,
+    model: Optional[str] = None,
+    current_identity: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """
+    Use the active Local AI model to parse unstructured `.txt` reports, J.O.E. text
+    snippets, or user machine notes into normalized counters plus US/EU machine identity.
+    """
+    snippet = (raw_text or "").strip()
+    if not snippet:
+        return {"success": False, "error": "Uploaded text / notes payload is empty."}
+
+    ok, active_model, err = _resolve_active_model(requested_model=model, require_vision=False)
+    if not ok:
+        return {"success": False, "error": err}
+
+    cur_ident = current_identity if isinstance(current_identity, dict) else {}
+    clipped = snippet[:6000]
+    prompt = (
+        "You are analyzing a diagnostic text file or technician notes from a Jura espresso machine.\n"
+        "Hardware telemetry reported so far (may have wrong US vs EU model variant): "
+        f"{json.dumps(cur_ident, ensure_ascii=False)}\n\n"
+        "Extract machine identity AND any beverage/maintenance counters from the text below.\n"
+        "Respond with ONLY valid JSON matching this schema:\n"
+        "{\n"
+        '  "model_name": "exact Jura model name e.g. Jura E8 (NA) or WE8 (EA), empty if absent",\n'
+        '  "article_number": "5-digit article or model number e.g. 15364, empty if absent",\n'
+        '  "serial_number": "serial number string, empty if absent",\n'
+        '  "market_region": "US, NA, EU, UK, CH, etc. if indicated (e.g. 120V/60Hz -> US), empty if absent",\n'
+        '  "products": [{"name": "Espresso", "count": 123}],\n'
+        '  "maintenance": [{"name": "Cleanings", "count": 12}],\n'
+        '  "cockpit": [{"name": "Filter", "percent": 80}],\n'
+        '  "notes": "short extraction summary"\n'
+        "}\n"
+        "Rules: use integers for counts/percentages; only extract values explicitly supported by the text.\n\n"
+        f"TEXT INPUT:\n{clipped}"
+    )
+
+    update_task_progress(
+        active=True,
+        task_id="text_extract",
+        task_label="AI Text & Identity Parsing",
+        step="Parsing Diagnostic Text & Identity",
+        detail=f"Extracting counters and market identity via {active_model}...",
+        current=1,
+        total=2,
+        percent=35,
+        eta_seconds=15,
+        model=active_model,
+        error="",
+    )
+    try:
+        parsed, q_err = _query_ollama_json(
+            prompt,
+            active_model,
+            timeout=90.0,
+            temperature=0.05,
+            num_ctx=4096,
+            num_predict=768,
+        )
+        if parsed is None:
+            return {"success": False, "error": q_err or "Local AI did not return structured JSON from text."}
+        norm = _normalize_joe_struct(parsed)
+        return {
+            "success": True,
+            "method": f"ai_text:{active_model}",
+            "model": active_model,
+            "joe_data": norm,
+            "notes": str(parsed.get("notes") or f"Parsed text via {active_model}."),
+        }
+    finally:
+        _maybe_auto_unload(active_model)
+        update_task_progress(active=False)
 
 
 def extract_joe_from_image_with_ai(
@@ -1209,8 +1429,12 @@ def extract_joe_from_image_with_ai(
 
     prompt = (
         "You are reading a screenshot from Jura Operating Experience (J.O.E.) or legacy Jura diagnostic software.\n"
-        "Extract ALL visible diagnostic counters and return ONLY valid JSON with exact schema:\n"
+        "Extract ALL visible diagnostic counters AND any visible machine identity (US/EU model variant, article number, serial number) and return ONLY valid JSON with exact schema:\n"
         "{\n"
+        '  "model_name": "Jura model name if shown, empty if absent",\n'
+        '  "article_number": "model/article number if shown, empty if absent",\n'
+        '  "serial_number": "serial number if shown, empty if absent",\n'
+        '  "market_region": "US, NA, EU, etc. if indicated, empty if absent",\n'
         '  "products": [{"name": "Espresso", "count": 1234}],\n'
         '  "maintenance": [{"name": "Cleanings", "count": 45}],\n'
         '  "cockpit": [{"name": "Filter", "percent": 65}],\n'
@@ -1309,17 +1533,30 @@ def calibrate_offsets_from_upload(
     article_number: str = "",
     current_stats: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    user_notes: Optional[str] = None,
+    user_model_name: Optional[str] = None,
+    user_article_number: Optional[str] = None,
+    user_serial_number: Optional[str] = None,
+    user_market_region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Unified offset calibration from uploaded J.O.E. / Legacy Jura CSV or Screenshot Image.
-    Extracts ground-truth counters, correlates EEPROM words, verifies addresses, and
-    returns a ready-to-apply override plus before/after comparison preview.
+    Unified offset & machine-identity calibration from uploaded J.O.E. / Legacy CSV,
+    freeform `.txt` export / technician notes, or Screenshot Image.
+    Extracts ground-truth counters and US/EU machine identity via Local AI, correlates
+    EEPROM words, verifies addresses, and returns a ready-to-apply override + preview.
     """
     import spectra_probe
 
     fname = (file_name or "").strip()
     lower = fname.lower()
     is_image = bool(image_b64) or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp"))
+    u_model = str(user_model_name or "").strip()
+    u_art = str(user_article_number or "").strip()
+    u_serial = str(user_serial_number or "").strip()
+    u_market = str(user_market_region or "").strip()
+    u_notes = str(user_notes or "").strip()
+    hw_serial = str((current_stats or {}).get("serial_number") or "")
+    hw_market = str((current_stats or {}).get("country_code") or "")
 
     if is_image and image_b64:
         ext_res = extract_joe_from_image_with_ai(image_b64, model=model)
@@ -1327,29 +1564,159 @@ def calibrate_offsets_from_upload(
             return ext_res
         joe_data = ext_res["joe_data"]
         extraction_source = ext_res.get("method", "vision")
+        if u_notes:
+            note_parsed = spectra_probe.parse_joe_csv_text(u_notes)
+            joe_data = _merge_joe_dicts(joe_data, note_parsed)
     else:
         raw_text = (csv_text or "").strip()
-        if not raw_text:
-            return {"success": False, "error": "Uploaded CSV/text file is empty."}
-        joe_data = spectra_probe.parse_joe_csv_text(raw_text)
-        extraction_source = "csv_parser"
+        combined_parts = [p for p in (raw_text, u_notes) if p]
+        combined_text = "\n".join(combined_parts).strip()
+
+        has_manual_ident = bool(u_model or u_art or u_serial or u_market)
+        if not combined_text and not has_manual_ident:
+            return {"success": False, "error": "Uploaded file / notes payload is empty."}
+
+        det_data = spectra_probe.parse_joe_csv_text(combined_text) if combined_text else {
+            "model_name": "",
+            "article_number": "",
+            "serial_number": "",
+            "market_region": "",
+            "cockpit": {},
+            "maintenance": {},
+            "products": {},
+            "raw_lines": [],
+        }
+        det_count = (
+            len(det_data.get("products", {}))
+            + len(det_data.get("maintenance", {}))
+            + len(det_data.get("cockpit", {}))
+        )
+        extraction_source = "txt_parser" if lower.endswith(".txt") else "csv_parser"
+        joe_data = det_data
+
+        # Always run Local AI text extraction for `.txt`, freeform user notes, incomplete counters, or missing identity
+        should_use_ai_text = bool(combined_text) and (
+            lower.endswith(".txt")
+            or bool(u_notes)
+            or det_count == 0
+            or not det_data.get("model_name")
+        )
+        if should_use_ai_text:
+            ai_txt_res = extract_joe_from_text_with_ai(
+                combined_text,
+                model=model,
+                current_identity={
+                    "ef_code": ty_str,
+                    "model_name": model_name or "",
+                    "article_number": article_number or "",
+                    "serial_number": hw_serial,
+                    "market_region": hw_market,
+                },
+            )
+            if ai_txt_res.get("success"):
+                ai_joe = ai_txt_res.get("joe_data") or {}
+                joe_data = _merge_joe_dicts(det_data, ai_joe)
+                ai_items = (
+                    len(ai_joe.get("products", {}))
+                    + len(ai_joe.get("maintenance", {}))
+                    + len(ai_joe.get("cockpit", {}))
+                )
+                if ai_items > 0 or ai_joe.get("model_name") or ai_joe.get("article_number") or ai_joe.get("serial_number"):
+                    extraction_source = str(ai_txt_res.get("method") or "ai_text")
+            elif det_count == 0 and not has_manual_ident:
+                return ai_txt_res
 
     total_parsed = (
         len(joe_data.get("products", []))
         + len(joe_data.get("maintenance", []))
         + len(joe_data.get("cockpit", []))
     )
+
+    ai_det_model = str(joe_data.get("model_name") or "").strip()
+    ai_det_art = str(joe_data.get("article_number") or "").strip()
+    ai_det_serial = str(joe_data.get("serial_number") or "").strip()
+    ai_det_market = str(joe_data.get("market_region") or "").strip()
+
+    resolved_model = u_model or ai_det_model or model_name or "Unknown"
+    resolved_article = u_art or ai_det_art or article_number or "unknown"
+    resolved_serial = u_serial or ai_det_serial or (hw_serial if hw_serial != "N/A" else "")
+    resolved_market = u_market or ai_det_market or (hw_market if hw_market != "N/A" else "")
+    has_identity_update = bool(
+        u_model or u_art or u_serial or u_market or ai_det_model or ai_det_art or ai_det_serial or ai_det_market
+    )
+
+    detected_identity = {
+        "ef_code": ty_str,
+        "model_name": resolved_model,
+        "article_number": resolved_article,
+        "serial_number": resolved_serial,
+        "market_region": resolved_market,
+        "ai_detected_model": ai_det_model,
+        "ai_detected_article": ai_det_art,
+        "ai_detected_serial": ai_det_serial,
+        "ai_detected_market": ai_det_market,
+    }
+
     if total_parsed == 0:
+        if not has_identity_update:
+            return {
+                "success": False,
+                "error": "No readable diagnostic counters or machine identity details were extracted from the uploaded file/notes.",
+            }
+        # Identity-only override (e.g. user supplied US/EU model name, article #, or serial #)
+        override = {
+            "source": "ai_identity_override",
+            "model_used": model or "manual_or_ai",
+            "extraction_source": extraction_source or "identity_input",
+            "uploaded_filename": fname or "manual_notes.txt",
+            "ef_code": ty_str,
+            "model_name": resolved_model,
+            "article_number": resolved_article,
+            "serial_number": resolved_serial,
+            "market_region": resolved_market,
+            "identity_only": True,
+            "products": [],
+            "maintenance": [],
+            "maintenance_pct": [],
+            "notes": f"Machine identity updated to {resolved_model} (Article {resolved_article}).",
+        }
         return {
-            "success": False,
-            "error": "No readable diagnostic counters were extracted from the uploaded file.",
+            "success": True,
+            "model": model or "identity_override",
+            "extraction_source": override["extraction_source"],
+            "detected_identity": detected_identity,
+            "joe_summary": {
+                "products_found": 0,
+                "maintenance_found": 0,
+                "cockpit_found": 0,
+                "sample_products": [],
+                "sample_maintenance": [],
+            },
+            "override": override,
+            "preview_before": {
+                "total_preps": (current_stats or {}).get("total_preps"),
+                "products": (current_stats or {}).get("products", []),
+                "maintenance": (current_stats or {}).get("maintenance_counters", {}),
+            } if isinstance(current_stats, dict) else {},
+            "preview_after": {
+                "total_preps": (current_stats or {}).get("total_preps"),
+                "products": (current_stats or {}).get("products", []),
+                "maintenance_counters": (current_stats or {}).get("maintenance_counters", {}),
+                "maintenance_pct": {},
+            } if isinstance(current_stats, dict) else {},
+            "matched_products": 0,
+            "matched_maintenance": 0,
+            "matched_pct": 0,
+            "notes": override["notes"],
         }
 
     bundle = {
         "identity": {
             "ef_code": ty_str,
-            "model_name": model_name or "Unknown",
-            "article_number": article_number or "unknown",
+            "model_name": resolved_model,
+            "article_number": resolved_article,
+            "serial_number": resolved_serial,
+            "market_region": resolved_market,
         },
         "gateways": {
             "TY:": ty_str,
@@ -1364,7 +1731,11 @@ def calibrate_offsets_from_upload(
 
     override = cal["override"]
     override["extraction_source"] = extraction_source
-    override["uploaded_filename"] = fname
+    override["uploaded_filename"] = fname or "notes.txt"
+    override["model_name"] = resolved_model
+    override["article_number"] = resolved_article
+    override["serial_number"] = resolved_serial
+    override["market_region"] = resolved_market
 
     eeprom_int: Dict[int, int] = {}
     for k, v in (eeprom_words or {}).items():
@@ -1426,6 +1797,7 @@ def calibrate_offsets_from_upload(
         "success": True,
         "model": cal.get("model"),
         "extraction_source": extraction_source,
+        "detected_identity": detected_identity,
         "joe_summary": {
             "products_found": len(joe_data.get("products", {})),
             "maintenance_found": len(joe_data.get("maintenance", {})),

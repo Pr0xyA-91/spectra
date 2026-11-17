@@ -2493,10 +2493,38 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     bundle = dict(bundle)
                     bundle["joe_ground_truth"] = joe_data
 
+                ident_b = bundle.get("identity") if isinstance(bundle.get("identity"), dict) else {}
+                u_model = str(data.get("user_model_name") or "").strip()
+                u_art = str(data.get("user_article_number") or "").strip()
+                u_serial = str(data.get("user_serial_number") or "").strip()
+                u_market = str(data.get("user_market_region") or "").strip()
+                if u_model or u_art or u_serial or u_market:
+                    ident_b = dict(ident_b)
+                    if u_model:
+                        ident_b["model_name"] = u_model
+                    if u_art:
+                        ident_b["article_number"] = u_art
+                    if u_serial:
+                        ident_b["serial_number"] = u_serial
+                    if u_market:
+                        ident_b["market_region"] = u_market
+                    bundle = dict(bundle)
+                    bundle["identity"] = ident_b
+
                 res = spectra_ai.calibrate_eeprom_offsets_from_joe(bundle, model=model)
                 if res.get("success") and res.get("override"):
+                    ov = dict(res["override"])
+                    if u_model:
+                        ov["model_name"] = u_model
+                    if u_art:
+                        ov["article_number"] = u_art
+                    if u_serial:
+                        ov["serial_number"] = u_serial
+                    if u_market:
+                        ov["market_region"] = u_market
+                    res["override"] = ov
                     bundle = dict(bundle)
-                    bundle["ai_offset_fix"] = res["override"]
+                    bundle["ai_offset_fix"] = ov
                     if not capture_id:
                         capture_id = uuid.uuid4().hex[:12]
                     with _capture_cache_lock:
@@ -2522,8 +2550,21 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     if isinstance(cached_b, dict):
                         override = cached_b.get("ai_offset_fix")
 
-                if not isinstance(override, dict) or (not override.get("products") and not override.get("maintenance")):
-                    self._send_json({"success": False, "error": "No valid EEPROM offset override data provided."})
+                if isinstance(override, dict):
+                    override = dict(override)
+                    for fk in ("model_name", "article_number", "serial_number", "market_region"):
+                        fval = str(data.get(fk) or "").strip()
+                        if fval:
+                            override[fk] = fval
+
+                has_identity_fields = isinstance(override, dict) and any(
+                    str(override.get(k) or "").strip()
+                    for k in ("model_name", "article_number", "serial_number")
+                )
+                if not isinstance(override, dict) or (
+                    not override.get("products") and not override.get("maintenance") and not has_identity_fields
+                ):
+                    self._send_json({"success": False, "error": "No valid EEPROM offset or identity override data provided."})
                     return
 
                 saved = profiles_db.save_eeprom_offset_override(
@@ -2549,11 +2590,28 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             updated_stats["advisor_cards"] = cards
                             _last_stats_cache = updated_stats
 
+                if updated_stats is None and isinstance(_last_stats_cache, dict):
+                    _last_stats_cache = dict(_last_stats_cache)
+                    if saved.get("model_name"):
+                        _last_stats_cache["machine_model"] = saved["model_name"]
+                        _last_stats_cache["appliance_type"] = saved["model_name"]
+                    if saved.get("article_number"):
+                        _last_stats_cache["article_number"] = saved["article_number"]
+                    if saved.get("serial_number"):
+                        _last_stats_cache["serial_number"] = saved["serial_number"]
+                    if saved.get("market_region"):
+                        _last_stats_cache["market_region"] = saved["market_region"]
+                    updated_stats = _last_stats_cache
+
                 updated_bundle = None
                 if capture_id:
                     with _capture_cache_lock:
                         if capture_id in _cached_captures and isinstance(_cached_captures[capture_id], dict):
                             _cached_captures[capture_id]["ai_offset_fix"] = saved
+                            if isinstance(_cached_captures[capture_id].get("identity"), dict):
+                                for fk in ("model_name", "article_number", "serial_number", "market_region"):
+                                    if saved.get(fk):
+                                        _cached_captures[capture_id]["identity"][fk] = saved[fk]
                             updated_bundle = _cached_captures[capture_id]
 
                 self._send_json({
@@ -2576,7 +2634,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": False, "error": str(e)})
             return
 
-        # 24. API: Calibrate EEPROM Offsets from Uploaded CSV or Screenshot (Overview Flow)
+        # 24. API: Calibrate EEPROM Offsets from Uploaded CSV, .txt Notes, or Screenshot (Overview Flow)
         elif url.path == "/api/offsets/calibrate_upload":
             try:
                 import spectra_ai
@@ -2585,9 +2643,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     self._send_json({"success": False, "error": "Local AI is turned OFF. Enable Local AI first."})
                     return
 
-                file_name = str(data.get("file_name") or "reference.csv").strip()
+                file_name = str(data.get("file_name") or ("manual_notes.txt" if data.get("user_notes") else "reference.csv")).strip()
                 csv_text = data.get("csv_text")
                 image_b64 = data.get("image_b64")
+                user_notes = str(data.get("user_notes") or "").strip()
+                user_model_name = str(data.get("user_model_name") or "").strip()
+                user_article_number = str(data.get("user_article_number") or "").strip()
+                user_serial_number = str(data.get("user_serial_number") or "").strip()
+                user_market_region = str(data.get("user_market_region") or "").strip()
                 port = str(data.get("port") or _current_port or "").strip()
                 capture_id = str(data.get("capture_id") or "").strip()
                 bundle = data.get("bundle")
@@ -2625,30 +2688,33 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             article_number = str((sess.telemetry or {}).get("article_number") or "")
 
                 if eeprom_words is None:
-                    if not port or not is_valid_port(port):
+                    if port and is_valid_port(port):
+                        with long_hardware_operation(), _session_lock:
+                            safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                            owns = False
+                            if safe_conn is None:
+                                safe_conn = serial_io.JuraSerialConnection(port)
+                                owns = True
+                            try:
+                                bundle = spectra_probe.capture_machine_bundle(
+                                    safe_conn,
+                                    joe_data={},
+                                    on_progress=lambda *_a: touch_heartbeat(),
+                                    use_ollama=False,
+                                )
+                            finally:
+                                if owns:
+                                    safe_conn.close()
+                        eeprom_words = bundle.get("eeprom_words") or {}
+                        ident = bundle.get("identity") or {}
+                        ty_str = str(ident.get("ef_code") or (bundle.get("gateways") or {}).get("TY:") or "")
+                        model_name = str(ident.get("model_name") or "")
+                        article_number = str(ident.get("article_number") or "")
+                    elif user_model_name or user_article_number or user_serial_number or user_market_region:
+                        eeprom_words = {}
+                    else:
                         self._send_json({"success": False, "error": "Interrogate a connected machine first or attach a valid serial port."})
                         return
-                    with long_hardware_operation(), _session_lock:
-                        safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
-                        owns = False
-                        if safe_conn is None:
-                            safe_conn = serial_io.JuraSerialConnection(port)
-                            owns = True
-                        try:
-                            bundle = spectra_probe.capture_machine_bundle(
-                                safe_conn,
-                                joe_data={},
-                                on_progress=lambda *_a: touch_heartbeat(),
-                                use_ollama=False,
-                            )
-                        finally:
-                            if owns:
-                                safe_conn.close()
-                    eeprom_words = bundle.get("eeprom_words") or {}
-                    ident = bundle.get("identity") or {}
-                    ty_str = str(ident.get("ef_code") or (bundle.get("gateways") or {}).get("TY:") or "")
-                    model_name = str(ident.get("model_name") or "")
-                    article_number = str(ident.get("article_number") or "")
 
                 if isinstance(_last_stats_cache, dict):
                     ty_str = ty_str or str(_last_stats_cache.get("ef_code") or "")
@@ -2665,23 +2731,35 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     article_number=article_number,
                     current_stats=_last_stats_cache if isinstance(_last_stats_cache, dict) else None,
                     model=model,
+                    user_notes=user_notes or None,
+                    user_model_name=user_model_name or None,
+                    user_article_number=user_article_number or None,
+                    user_serial_number=user_serial_number or None,
+                    user_market_region=user_market_region or None,
                 )
 
                 if res.get("success") and res.get("override"):
+                    ov = res["override"]
+                    res_ident = {
+                        "manufacturer": "Jura",
+                        "ef_code": ov.get("ef_code") or ty_str,
+                        "model_name": ov.get("model_name") or model_name or "Unknown",
+                        "article_number": ov.get("article_number") or article_number or "unknown",
+                        "serial_number": ov.get("serial_number") or "",
+                        "market_region": ov.get("market_region") or "",
+                    }
                     if not isinstance(bundle, dict):
                         bundle = {
-                            "identity": {
-                                "manufacturer": "Jura",
-                                "ef_code": ty_str,
-                                "model_name": model_name or "Unknown",
-                                "article_number": article_number or "unknown",
-                            },
-                            "gateways": {"TY:": ty_str},
+                            "identity": res_ident,
+                            "gateways": {"TY:": res_ident["ef_code"]},
                             "eeprom_words": eeprom_words,
                         }
                     else:
                         bundle = dict(bundle)
-                    bundle["ai_offset_fix"] = res["override"]
+                        merged_ident = dict(bundle.get("identity") or {})
+                        merged_ident.update({k: v for k, v in res_ident.items() if v})
+                        bundle["identity"] = merged_ident
+                    bundle["ai_offset_fix"] = ov
                     if not capture_id:
                         capture_id = uuid.uuid4().hex[:12]
                     with _capture_cache_lock:

@@ -413,30 +413,73 @@ export default function ConfigModal({
           </button>
         </div>
 
-        {/* Language / Jazyk Toggle Bar */}
+        {/* Language / Jazyk + Quick Update Check Bar */}
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2 bg-black/50 border-b border-zinc-800/80 text-xs">
-          <div className="flex items-center space-x-2 text-zinc-300 font-bold">
-            <Globe className="w-3.5 h-3.5 text-[#00F0FF]" />
-            <span>{t('langToggleLabel')}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center space-x-2 text-zinc-300 font-bold">
+              <Globe className="w-3.5 h-3.5 text-[#00F0FF]" />
+              <span>{t('langToggleLabel')}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {SUPPORTED_LANGUAGES.map((l) => {
+                const active = lang === l.id;
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => onChangeLang(l.id)}
+                    className={`px-2.5 py-1 rounded font-bold text-[11px] border transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF]'
+                        : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    {l.label} ({l.short})
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            {SUPPORTED_LANGUAGES.map((l) => {
-              const active = lang === l.id;
-              return (
-                <button
-                  key={l.id}
-                  type="button"
-                  onClick={() => onChangeLang(l.id)}
-                  className={`px-2.5 py-1 rounded font-bold text-[11px] border transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF]'
-                      : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  {l.label} ({l.short})
-                </button>
-              );
-            })}
+
+          <div className="flex items-center gap-2">
+            {updateInfo?.ok && (
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded font-bold border ${
+                  updateInfo.update_available
+                    ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                    : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+                }`}
+              >
+                {updateInfo.update_available
+                  ? t('cfgQuickUpdateAvailable', { build: updateInfo.latest_build })
+                  : t('cfgQuickUpdateUpToDate')}
+              </span>
+            )}
+            <button
+              type="button"
+              disabled={isCheckingUpdates || Boolean(updateProgress?.in_progress)}
+              onClick={() => {
+                setActiveSection('updates');
+                if (onCheckUpdates) onCheckUpdates(true);
+              }}
+              className="flex items-center space-x-1 px-2.5 py-1 rounded font-bold text-[11px] bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 border border-zinc-700 text-cyan-300 cursor-pointer transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
+              <span>{isCheckingUpdates ? t('cfgUpdatesBtnChecking') : t('cfgQuickUpdateCheck')}</span>
+            </button>
+            {updateInfo?.update_available && !updateProgress?.in_progress && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSection('updates');
+                  if (onStartUpdate) onStartUpdate();
+                }}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded font-extrabold text-[11px] bg-emerald-600 hover:bg-emerald-500 text-black cursor-pointer transition-colors"
+              >
+                <Download className="w-3 h-3" />
+                <span>{t('cfgUpdatesBtnInstall', { build: updateInfo.latest_build })}</span>
+              </button>
+            )}
           </div>
         </div>
 
