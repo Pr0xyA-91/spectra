@@ -19,6 +19,7 @@ import sys
 import json
 import io
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -54,6 +55,15 @@ class TestGitHubAuthAndUpload(unittest.TestCase):
         self.mock_which = self.patcher_which.start()
 
         # In-memory mock for keyring so tests don't touch host OS keyring
+        self._installed_keyring_stub = False
+        if "keyring" not in sys.modules:
+            stub = types.ModuleType("keyring")
+            stub.set_password = lambda *args, **kwargs: None
+            stub.get_password = lambda *args, **kwargs: None
+            stub.delete_password = lambda *args, **kwargs: None
+            sys.modules["keyring"] = stub
+            self._installed_keyring_stub = True
+
         self.keyring_storage = {}
         def mock_set_pwd(service, user, pwd):
             self.keyring_storage[(service, user)] = pwd
@@ -73,6 +83,8 @@ class TestGitHubAuthAndUpload(unittest.TestCase):
         self.patcher_keyring_del.stop()
         self.patcher_keyring_get.stop()
         self.patcher_keyring_set.stop()
+        if getattr(self, "_installed_keyring_stub", False):
+            sys.modules.pop("keyring", None)
         self.patcher_which.stop()
         github_auth._CONFIG_DIR_OVERRIDE = self.orig_override
         for k, v in self.orig_env.items():
