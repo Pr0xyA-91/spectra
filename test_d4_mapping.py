@@ -91,9 +91,9 @@ class TestD4Mapping(unittest.TestCase):
             self.assertEqual(session.telemetry["water_hardness_dh"], 14)
             self.assertEqual(session.telemetry["ean_code"], "(01)07610917152216(21)20200115001003")
 
-            # Products: Total: 11,828
+            # Products: Total: 11,828 preparations, 11,826 coffee cups (excluding 7 Hot water)
             self.assertEqual(session.total_preparations, 11828)
-            self.assertEqual(session.total_cups, 11833)
+            self.assertEqual(session.total_cups, 11826)
             self.assertEqual(session.counters[2], 2061)   # Espresso
             self.assertEqual(session.counters[3], 9755)   # Coffee
             self.assertEqual(session.counters[49], 2)     # 2x Espresso

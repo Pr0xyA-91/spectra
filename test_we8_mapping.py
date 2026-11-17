@@ -61,9 +61,9 @@ class TestWE8Mapping(unittest.TestCase):
             self.assertEqual(session.model_family, "WE8 (EA)")
             self.assertEqual(session.telemetry.get("article_number"), "15420")
 
-            # Products: Total: 11,208 preparations, 11,413 cups
+            # Products: Total: 11,208 preparations, 11,083 coffee cups (excludes 72 milk + 183 water + 75 green tea)
             self.assertEqual(session.total_preparations, 11208)
-            self.assertEqual(session.total_cups, 11413)
+            self.assertEqual(session.total_cups, 11083)
 
             # All 17 beverages from WE8.csv
             self.assertEqual(session.counters.get(1), 137)     # Ristretto

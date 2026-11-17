@@ -956,6 +956,50 @@ class TestTxtCalibrationIdentityAndHarvester(unittest.TestCase):
             self.assertEqual(spec["market_regions"], ["US"])
             self.assertEqual(spec["verified_offsets"]["products"][0]["addr_hex"], "0x0001")
 
+    def test_non_coffee_products_excluded_from_total_cups(self):
+        import stats_collector
+        import profiles_db
+
+        # Verify helper classification rules
+        self.assertTrue(stats_collector.is_non_coffee_product("Hot Water"))
+        self.assertTrue(stats_collector.is_non_coffee_product("Portion of milk"))
+        self.assertTrue(stats_collector.is_non_coffee_product("Milk Foam"))
+        self.assertTrue(stats_collector.is_non_coffee_product("Steam"))
+        self.assertFalse(stats_collector.is_non_coffee_product("Cappuccino"))
+        self.assertFalse(stats_collector.is_non_coffee_product("Latte Macchiato"))
+        self.assertFalse(stats_collector.is_non_coffee_product("Espresso"))
+        self.assertFalse(stats_collector.is_non_coffee_product("2x Coffee"))
+
+        # Verify apply_local_offset_override excludes steam/milk/water from total_cups
+        with tempfile.TemporaryDirectory() as td:
+            ov_path = os.path.join(td, "overrides.json")
+            with patch.object(profiles_db, "EEPROM_OVERRIDES_FILE", ov_path):
+                profiles_db.save_eeprom_offset_override({
+                    "ef_code": "EF535M",
+                    "model_name": "WE8 Test",
+                    "products": [
+                        {"code": 2, "name": "Espresso", "addr": 1, "is_double": False},
+                        {"code": 19, "name": "2x Coffee", "addr": 2, "is_double": True},
+                        {"code": 4, "name": "Cappuccino", "addr": 3, "is_double": False},
+                        {"code": 7, "name": "Latte Macchiato", "addr": 4, "is_double": False},
+                        {"code": 10, "name": "Portion of milk", "addr": 5, "is_double": False},
+                        {"code": 8, "name": "Milk Foam", "addr": 6, "is_double": False},
+                        {"code": 13, "name": "Hot Water", "addr": 7, "is_double": False},
+                        {"code": 25, "name": "Steam", "addr": 8, "is_double": False},
+                    ],
+                    "maintenance": [],
+                })
+                sess = stats_collector.JuraStatsSession(port_name="DEMO")
+                sess.ef_code = "EF535M"
+                sess.model_family = "WE8 Test"
+                fake_eeprom = {1: 100, 2: 50, 3: 30, 4: 20, 5: 40, 6: 15, 7: 25, 8: 10}
+                applied = sess.apply_local_offset_override(eeprom=fake_eeprom)
+                self.assertTrue(applied)
+                # total_preparations = 100+50+30+20+40+15+25+10 = 290
+                self.assertEqual(sess.total_preparations, 290)
+                # total_cups = Espresso(100) + 2xCoffee(50*2) + Capp(30) + Latte(20) = 250 (excludes 40+15+25+10)
+                self.assertEqual(sess.total_cups, 250)
+
 
 if __name__ == "__main__":
     unittest.main()
