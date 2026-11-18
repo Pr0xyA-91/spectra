@@ -1000,6 +1000,73 @@ class TestTxtCalibrationIdentityAndHarvester(unittest.TestCase):
                 # total_cups = Espresso(100) + 2xCoffee(50*2) + Capp(30) + Latte(20) = 250 (excludes 40+15+25+10)
                 self.assertEqual(sess.total_cups, 250)
 
+    def test_http_offsets_apply_local_and_overrides_endpoints(self):
+        import threading
+        import urllib.request
+        import profiles_db
+        import web_server
+
+        with tempfile.TemporaryDirectory() as td:
+            ov_path = os.path.join(td, "overrides.json")
+            orig_cache = web_server._last_stats_cache
+            orig_sess = web_server._active_session
+            httpd = web_server.ThreadingHTTPServer(("127.0.0.1", 0), web_server.SpectraApiHandler)
+            port = httpd.server_address[1]
+            t = threading.Thread(target=httpd.serve_forever, daemon=True)
+            t.start()
+            try:
+                web_server._active_session = None
+                web_server._last_stats_cache = {"ef_code": "EF532M", "machine_model": "Generic E8"}
+                with patch.object(profiles_db, "EEPROM_OVERRIDES_FILE", ov_path):
+                    payload = json.dumps({
+                        "override": {
+                            "ef_code": "EF532M",
+                            "model_name": "Jura E8 (NA)",
+                            "article_number": "15364",
+                            "products": [
+                                {"code": 1, "name": "Espresso", "addr": 1, "eeprom_val": 42, "is_double": False},
+                                {"code": 13, "name": "Hot Water", "addr": 2, "eeprom_val": 8, "is_double": False},
+                            ],
+                            "maintenance": [
+                                {"name": "Cleaning", "addr": 8, "eeprom_val": 3},
+                            ],
+                        }
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/offsets/apply_local",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        res = json.loads(resp.read().decode("utf-8"))
+                    self.assertTrue(res["success"])
+                    self.assertEqual(res["saved_key"], "EF532M")
+                    self.assertEqual(res["updated_stats"]["machine_model"], "Jura E8 (NA)")
+                    self.assertEqual(res["updated_stats"]["total_preparations"], 50)
+                    self.assertEqual(res["updated_stats"]["total_cups"], 42)
+
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/offsets/overrides", timeout=5) as resp:
+                        ov_list = json.loads(resp.read().decode("utf-8"))
+                    self.assertTrue(ov_list["success"])
+                    self.assertIn("EF532M", ov_list["overrides"])
+
+                    del_req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/offsets/delete",
+                        data=json.dumps({"key": "EF532M"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(del_req, timeout=5) as resp:
+                        del_res = json.loads(resp.read().decode("utf-8"))
+                    self.assertTrue(del_res["success"])
+                    self.assertTrue(del_res["removed"])
+            finally:
+                web_server._last_stats_cache = orig_cache
+                web_server._active_session = orig_sess
+                httpd.shutdown()
+                httpd.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()
