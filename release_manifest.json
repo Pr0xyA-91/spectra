@@ -2,7 +2,7 @@
   "build": "20261118.1511",
   "main_build": "20261118.1511",
   "windows_build": "20261118.1511",
-  "published_at": "2026-11-18T14:18:39Z",
+  "published_at": "2026-11-18T15:21:25Z",
   "release_notes": "- fix(offsets): Build 20261118.1511 \u2014 import profiles_db in web_server and apply local overrides immediately\n- fix(updater): Build 20261118.1447 \u2014 avoid Windows Job/tree self-kill and add CREATE_BREAKAWAY_FROM_JOB\n- fix(counters): Build 20261117.1914 \u2014 count standalone steam/milk/water in preparations only (coffee-only cups)\n- feat(calibration,updater): Build 20261117.1859 \u2014 .txt AI offset & identity fix, Config update bar, capture prompt & harvester\n- feat(updater): Build 20261117.1403 \u2014 Option A GitHub Release self-updater & startup check\n- feat(ai,onboarding): Build 20261117.1320 \u2014 on-disk AI model detection, unpulled model prompts & persistent onboarding prefs",
   "assets": {
     "spectra_update.exe": {
