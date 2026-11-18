@@ -956,6 +956,110 @@ class TestTxtCalibrationIdentityAndHarvester(unittest.TestCase):
             self.assertEqual(spec["market_regions"], ["US"])
             self.assertEqual(spec["verified_offsets"]["products"][0]["addr_hex"], "0x0001")
 
+    def test_community_calibration_harvester_create_pr_workflow(self):
+        import base64
+        from contrib import sync_community_calibrations as sync_mod
+
+        with tempfile.TemporaryDirectory() as td:
+            models_dir = os.path.join(td, "models")
+            issue_file = os.path.join(td, "issue.json")
+            patch_obj = {
+                "schema": "spectra.offset_patch.v1",
+                "identity": {
+                    "ef_code": "EF999M",
+                    "model_name": "Jura Z10 (NA)",
+                    "article_number": "15501",
+                    "market_region": "US",
+                },
+                "override": {
+                    "ef_code": "EF999M",
+                    "model_name": "Jura Z10 (NA)",
+                    "article_number": "15501",
+                    "market_region": "US",
+                    "products": [{"name": "Espresso", "addr": 1, "addr_hex": "0x0001", "joe_count": 210}],
+                    "maintenance": [{"name": "Cleaning", "addr": 8, "addr_hex": "0x0008", "joe_count": 5}],
+                },
+                "eeprom_words": {"0x0001": 210, "0x0008": 5},
+            }
+            issue_payload = {
+                "number": 7,
+                "title": "[Offset Fix + Capture] Jura Z10 (NA) (15501)",
+                "body": "```json\n" + json.dumps(patch_obj) + "\n```",
+            }
+            with open(issue_file, "w", encoding="utf-8") as f:
+                json.dump(issue_payload, f)
+
+            api_calls = []
+
+            def fake_api(method, url, token=None, payload=None):
+                api_calls.append((method, url, payload))
+                if method == "GET" and url.endswith("/git/ref/heads/main"):
+                    return {"object": {"sha": "abc1234567890"}}
+                if method == "GET" and "/git/ref/heads/calibrations/" in url:
+                    raise RuntimeError("404 Not Found")
+                if method == "POST" and url.endswith("/git/refs"):
+                    return {"ref": payload["ref"]}
+                if method == "GET" and "/contents/docs/models/EF999M_Jura_Z10_NA.json?" in url:
+                    raise RuntimeError("404 Not Found")
+                if method == "PUT" and url.endswith("/contents/docs/models/EF999M_Jura_Z10_NA.json"):
+                    return {"content": {"path": "docs/models/EF999M_Jura_Z10_NA.json"}}
+                if method == "GET" and "/pulls?state=open" in url:
+                    return []
+                if method == "POST" and url.endswith("/pulls"):
+                    return {"number": 42, "html_url": "https://github.com/Pr0xyA-91/spectra/pull/42"}
+                if method == "POST" and url.endswith("/issues/7/comments"):
+                    return {"id": 999}
+                raise AssertionError(f"Unexpected GitHub API call: {method} {url}")
+
+            with patch.object(sync_mod, "_github_api_request", side_effect=fake_api):
+                res = sync_mod.sync_calibrations(
+                    repo="Pr0xyA-91/spectra-captures",
+                    models_dir=models_dir,
+                    apply_changes=False,
+                    input_file=issue_file,
+                    token="ghp_test_token",
+                    create_pr=True,
+                    pr_repo="Pr0xyA-91/spectra",
+                    base_branch="main",
+                    comment_issues=True,
+                )
+
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["verified_calibrations"], 1)
+            self.assertTrue(res["pull_request"]["created"])
+            self.assertEqual(res["pull_request"]["pr_number"], 42)
+            self.assertTrue(res["pull_request"]["pr_url"].endswith("/pull/42"))
+
+            put_calls = [c for c in api_calls if c[0] == "PUT" and c[1].endswith("/contents/docs/models/EF999M_Jura_Z10_NA.json")]
+            self.assertEqual(len(put_calls), 1)
+            committed_spec = json.loads(base64.b64decode(put_calls[0][2]["content"]).decode("utf-8"))
+            self.assertEqual(committed_spec["ef_code"], "EF999M")
+            self.assertIn("15501", committed_spec["article_numbers"])
+
+            pr_calls = [c for c in api_calls if c[0] == "POST" and c[1].endswith("/pulls")]
+            self.assertEqual(len(pr_calls), 1)
+            self.assertIn("Refs Pr0xyA-91/spectra-captures#7", pr_calls[0][2]["body"])
+
+            comment_calls = [c for c in api_calls if c[0] == "POST" and c[1].endswith("/issues/7/comments")]
+            self.assertEqual(len(comment_calls), 1)
+            self.assertIn("[SPECTRA-PR-LINKED]", comment_calls[0][2]["body"])
+
+            # Verify remote issues already linked with [SPECTRA-PR-LINKED] are skipped cleanly
+            with patch.object(sync_mod, "_fetch_github_issues", return_value=[issue_payload]), patch.object(
+                sync_mod, "_issue_has_pr_marker", return_value=True
+            ):
+                skip_res = sync_mod.sync_calibrations(
+                    repo="Pr0xyA-91/spectra-captures",
+                    models_dir=models_dir,
+                    apply_changes=False,
+                    token="ghp_test_token",
+                    create_pr=True,
+                )
+            self.assertEqual(skip_res["verified_calibrations"], 0)
+            self.assertEqual(skip_res["skipped"][0]["issue"], 7)
+            self.assertEqual(skip_res["skipped"][0]["reason"], "Already linked to a calibration PR")
+            self.assertNotIn("pull_request", skip_res)
+
     def test_non_coffee_products_excluded_from_total_cups(self):
         import stats_collector
         import profiles_db

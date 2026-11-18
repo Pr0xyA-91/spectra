@@ -14,8 +14,8 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_BUILD        "20261118.1511"
-#define SPECTRA_VERSION      "Build 20261118.1511"
+#define SPECTRA_BUILD        "20261118.1712"
+#define SPECTRA_VERSION      "Build 20261118.1712"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
