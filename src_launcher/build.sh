@@ -21,6 +21,14 @@ ZIG_CMD="$(command -v "$ZIG_BIN" 2>/dev/null || command -v zig)"
 BUILD_NUMBER="$(python3 -c "import sys; sys.path.insert(0, '$ROOT_DIR'); from version import __build__; print(__build__)")"
 echo "[*] Building SPECTRA Windows Suite for Build: $BUILD_NUMBER"
 
+# Stamp current build identifier into C launcher/installer/updater sources
+for c_src in "$SCRIPT_DIR/launcher.c" "$SCRIPT_DIR/installer.c" "$SCRIPT_DIR/updater.c"; do
+    if [ -f "$c_src" ]; then
+        sed -i -E "s|^#define[[:space:]]+SPECTRA_BUILD[[:space:]]+\"[^\"]*\"|#define SPECTRA_BUILD        \"${BUILD_NUMBER}\"|" "$c_src"
+        sed -i -E "s|^#define[[:space:]]+SPECTRA_VERSION[[:space:]]+\"[^\"]*\"|#define SPECTRA_VERSION      \"Build ${BUILD_NUMBER}\"|" "$c_src"
+    fi
+done
+
 # Check or download python embeddable package and win_amd64 wheels
 WHEELS_CACHE="$ROOT_DIR/vendor/wheels_win_amd64"
 mkdir -p "$WHEELS_CACHE"

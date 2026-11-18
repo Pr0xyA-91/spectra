@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-__build__ = "20261117.1914"
+__build__ = "20261118.1447"
 __version__ = f"Build {__build__}"
 BUILD_NUMBER = __build__
 VERSION = __version__

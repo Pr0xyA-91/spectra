@@ -6,6 +6,7 @@
 #endif
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +14,8 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_BUILD        "20261117.1320"
-#define SPECTRA_VERSION      "Build 20261117.1320"
+#define SPECTRA_BUILD        "20261118.1447"
+#define SPECTRA_VERSION      "Build 20261118.1447"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
@@ -44,26 +45,28 @@ static void create_dir_recursive(const wchar_t *path) {
 }
 
 static void kill_running_spectra(void) {
-    STARTUPINFOW si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    ZeroMemory(&pi, sizeof(pi));
+    DWORD my_pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
 
-    wchar_t cmds[2][64] = {
-        L"taskkill.exe /F /IM spectra-shell.exe /T",
-        L"taskkill.exe /F /IM spectra.exe /T"
-    };
-    for (int i = 0; i < 2; i++) {
-        ZeroMemory(&pi, sizeof(pi));
-        if (CreateProcessW(NULL, cmds[i], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 5000);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
+    PROCESSENTRY32W pe;
+    ZeroMemory(&pe, sizeof(pe));
+    pe.dwSize = sizeof(pe);
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (pe.th32ProcessID == 0 || pe.th32ProcessID == my_pid) continue;
+            if (_wcsicmp(pe.szExeFile, L"spectra-shell.exe") == 0 ||
+                _wcsicmp(pe.szExeFile, L"spectra.exe") == 0) {
+                HANDLE hProc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
+                if (hProc) {
+                    TerminateProcess(hProc, 0);
+                    WaitForSingleObject(hProc, 3000);
+                    CloseHandle(hProc);
+                }
+            }
+        } while (Process32NextW(snap, &pe));
     }
+    CloseHandle(snap);
 }
 
 static BOOL extract_embedded_payload(const wchar_t *target_dir) {
