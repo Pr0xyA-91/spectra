@@ -51,6 +51,7 @@ if PROJECT_DIR not in sys.path:
 
 import serial_io
 import stats_collector as sc
+import profiles_db
 import gui_widgets
 import memory_mapper
 import copy
@@ -2556,6 +2557,15 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         fval = str(data.get(fk) or "").strip()
                         if fval:
                             override[fk] = fval
+                    if not str(override.get("ef_code") or "").strip():
+                        sess_ef = ""
+                        with _session_lock:
+                            if _active_session is not None:
+                                sess_ef = str(getattr(_active_session, "ef_code", "") or "").strip()
+                        if not sess_ef and isinstance(_last_stats_cache, dict):
+                            sess_ef = str(_last_stats_cache.get("ef_code") or "").strip()
+                        if sess_ef:
+                            override["ef_code"] = sess_ef
 
                 has_identity_fields = isinstance(override, dict) and any(
                     str(override.get(k) or "").strip()
@@ -2583,7 +2593,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                                     _active_session.last_eeprom[int(str(k), 16) if str(k).lower().startswith("0x") else int(k)] = int(v)
                                 except Exception:
                                     pass
-                        if _active_session.apply_local_offset_override():
+                        if _active_session.apply_local_offset_override(override_data=saved):
                             updated_stats = _active_session.get_structured_summary()
                             score, cards = compute_advisor_health(updated_stats, {})
                             updated_stats["health_score"] = score
@@ -2601,6 +2611,67 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         _last_stats_cache["serial_number"] = saved["serial_number"]
                     if saved.get("market_region"):
                         _last_stats_cache["market_region"] = saved["market_region"]
+
+                    cached_words: Dict[int, int] = {}
+                    if capture_id:
+                        with _capture_cache_lock:
+                            cb = _cached_captures.get(capture_id) or {}
+                        for k, v in (cb.get("eeprom_words") or {}).items():
+                            try:
+                                cached_words[int(str(k), 16) if str(k).lower().startswith("0x") else int(k)] = int(v)
+                            except Exception:
+                                pass
+
+                    if saved.get("products"):
+                        new_bevs = []
+                        total_preps = 0
+                        coffee_cups = 0
+                        for idx, p in enumerate(saved["products"], start=1):
+                            code = int(p.get("code") or idx)
+                            pname = str(p.get("name") or f"Product #{code}")
+                            is_dbl = bool(p.get("is_double", False))
+                            addr_raw = p.get("addr")
+                            try:
+                                addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
+                            except Exception:
+                                addr_i = None
+                            cnt = cached_words.get(addr_i, p.get("eeprom_val", p.get("joe_count", 0))) if addr_i is not None else p.get("eeprom_val", p.get("joe_count", 0))
+                            cnt_i = int(cnt or 0)
+                            total_preps += cnt_i
+                            if not sc.is_non_coffee_product(pname, code):
+                                coffee_cups += (cnt_i * 2) if is_dbl else cnt_i
+                            new_bevs.append({
+                                "code": code,
+                                "name": pname,
+                                "count": cnt_i,
+                                "is_double": is_dbl,
+                                "active": True,
+                            })
+                        _last_stats_cache["beverages"] = new_bevs
+                        _last_stats_cache["total_preparations"] = total_preps
+                        _last_stats_cache["total_cups"] = coffee_cups
+
+                    if saved.get("maintenance"):
+                        new_maint = []
+                        for idx, m in enumerate(saved["maintenance"]):
+                            mname = str(m.get("name") or "Maintenance")
+                            addr_raw = m.get("addr")
+                            try:
+                                addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
+                            except Exception:
+                                addr_i = None
+                            mcnt = cached_words.get(addr_i, m.get("eeprom_val", m.get("joe_count", 0))) if addr_i is not None else m.get("eeprom_val", m.get("joe_count", 0))
+                            mcnt_i = int(mcnt or 0)
+                            new_maint.append({
+                                "index": idx,
+                                "label": mname,
+                                "name": mname,
+                                "count": mcnt_i,
+                                "percentage": None,
+                                "percent": None,
+                            })
+                        _last_stats_cache["maintenance"] = new_maint
+
                     updated_stats = _last_stats_cache
 
                 updated_bundle = None

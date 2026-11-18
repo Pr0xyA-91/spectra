@@ -1,19 +1,19 @@
 {
-  "build": "20261118.1447",
-  "main_build": "20261118.1447",
-  "windows_build": "20261118.1447",
-  "published_at": "2026-11-18T13:53:25Z",
-  "release_notes": "- fix(updater): Build 20261118.1447 \u2014 avoid Windows Job/tree self-kill and add CREATE_BREAKAWAY_FROM_JOB\n- fix(counters): Build 20261117.1914 \u2014 count standalone steam/milk/water in preparations only (coffee-only cups)\n- feat(calibration,updater): Build 20261117.1859 \u2014 .txt AI offset & identity fix, Config update bar, capture prompt & harvester\n- feat(updater): Build 20261117.1403 \u2014 Option A GitHub Release self-updater & startup check\n- feat(ai,onboarding): Build 20261117.1320 \u2014 on-disk AI model detection, unpulled model prompts & persistent onboarding prefs\n- fix(sweep,watchdog,docs): Build 20261117.1112 \u2014 prevent crash during full EEPROM sweep & add Czech PDF changelog",
+  "build": "20261118.1511",
+  "main_build": "20261118.1511",
+  "windows_build": "20261118.1511",
+  "published_at": "2026-11-18T14:18:39Z",
+  "release_notes": "- fix(offsets): Build 20261118.1511 \u2014 import profiles_db in web_server and apply local overrides immediately\n- fix(updater): Build 20261118.1447 \u2014 avoid Windows Job/tree self-kill and add CREATE_BREAKAWAY_FROM_JOB\n- fix(counters): Build 20261117.1914 \u2014 count standalone steam/milk/water in preparations only (coffee-only cups)\n- feat(calibration,updater): Build 20261117.1859 \u2014 .txt AI offset & identity fix, Config update bar, capture prompt & harvester\n- feat(updater): Build 20261117.1403 \u2014 Option A GitHub Release self-updater & startup check\n- feat(ai,onboarding): Build 20261117.1320 \u2014 on-disk AI model detection, unpulled model prompts & persistent onboarding prefs",
   "assets": {
     "spectra_update.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.1447/spectra_update.exe",
-      "sha256": "261aac9c35d09edb079e239e2100e2b91425fdfcac2b3358273ded3e6943586f",
-      "size": 29913600
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.1511/spectra_update.exe",
+      "sha256": "01de141dda653a4f4a1b68df45b1bc060ebab4f6ff579db29e7449c0559c7f9b",
+      "size": 29916160
     },
     "spectra_setup.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.1447/spectra_setup.exe",
-      "sha256": "975ea6f512a75f1a09e8982b0157f37539a383ec0290ad2e10b478643fae2076",
-      "size": 51990528
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.1511/spectra_setup.exe",
+      "sha256": "5abe29bd2aadb91c69c667665e8a676f473d6fc8b03973a92878006ad333664a",
+      "size": 51993088
     }
   }
 }

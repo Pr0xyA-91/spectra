@@ -1284,6 +1284,7 @@ class JuraStatsSession:
         self,
         eeprom: Optional[Dict[int, int]] = None,
         article_num: Optional[str] = None,
+        override_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Apply a saved local AI/J.O.E.-calibrated EEPROM offset override (if present)
@@ -1291,7 +1292,7 @@ class JuraStatsSession:
         """
         mem = eeprom if eeprom is not None else self.last_eeprom
         art = article_num or self.telemetry.get("article_number")
-        ov = profiles_db.get_eeprom_offset_override(
+        ov = override_data if isinstance(override_data, dict) else profiles_db.get_eeprom_offset_override(
             self.ef_code,
             article_number=art,
             model_name=self.model_family,
