@@ -532,9 +532,19 @@ def _apply_windows_update(
         message="Launching Windows installer and restarting SPECTRA...",
     )
 
-    spawn_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    cmd = [staged_exe, "--silent", "--relaunch", f"--dir={PROJECT_DIR}"]
-    subprocess.Popen(cmd, cwd=stage_dir, close_fds=True, creationflags=spawn_flags)
+    norm_dir = os.path.normpath(PROJECT_DIR)
+    is_nt = os.name == "nt"
+    base_flags = (
+        (getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+        if is_nt
+        else 0
+    )
+    breakaway_flags = (getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000) | base_flags) if is_nt else 0
+    cmd = [staged_exe, "--silent", "--relaunch", f"--dir={norm_dir}"]
+    try:
+        subprocess.Popen(cmd, cwd=stage_dir, close_fds=True, creationflags=breakaway_flags)
+    except OSError:
+        subprocess.Popen(cmd, cwd=stage_dir, close_fds=True, creationflags=base_flags)
 
     time.sleep(0.45)
     if on_before_restart is not None:
