@@ -1292,9 +1292,9 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261118.1712' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261118.2220' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261118.1712'}
+            BUILD {liveBuild || debugSummary?.build || '20261118.2220'}
           </button>
           {updateInfo?.update_available && (
             <button

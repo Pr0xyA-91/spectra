@@ -18,6 +18,24 @@ In accordance with SPECTRA edition guidelines, releases are identified strictly 
 
 ---
 
+## [Build 20261118.2220] — 2026-11-18
+
+### 🔌 Smart Connect / 4:1 Wire Auto-Detection, Mode B Fallback & EEPROM Fixes
+- **3-Mode Physical Transport Auto-Detection & Echo Stripping (`serial_io.py`)**:
+  - Added 3-mode physical transport auto-detection (`raw_ascii`, `wire_4to1_ascii`, `smart_connect`) and optical loopback echo stripping across `query_ascii()` and `query_encrypted()`, enabling seamless switching between plain ASCII service ports, 4:1 wire-encoded ASCII ports, and `@`-cipher Smart Connect links.
+- **Mode A Fast-Fail & Mode B `@T0..@TR:32` Fallback (`stats_collector.py`, `drivers/jura/driver.py`)**:
+  - Added fast-fail detection on `RT:` timeouts or all-zero `RT:` responses with automatic fallback to Mode B (`@T0..@TR:32`), populating `self.last_eeprom` completely and applying local offset overrides in Mode B (`JuraStatsSession` & `JuraDriver`).
+- **Live Sensor Polling Fixes (`stats_collector.py`)**:
+  - Fixed `has_commercial_bean_sensor` `NameError` on Poll #1 in `query_live_sensors()`, prevented `_cached_ef = ""` from flipping Poll #2+ back to ASCII on Smart Connect sessions, and fixed Smart Connect demo override handling.
+- **Memory Mapper & Probe Fallbacks (`memory_mapper.py`, `spectra_probe.py`)**:
+  - Added `RE:` fast-fail detection and Smart Connect `@TR:32,00..1F` sweep fallback in `MemoryMapperEngine` and `spectra_probe.sweep_eeprom()`.
+- **Command Injector `@`-Command Routing (`web_server.py`)**:
+  - Routed read-only `@`-commands sent to `/api/command` through `query_encrypted()`.
+- **Regression Coverage (`test_smart_connect_and_wire_fixes.py`)**:
+  - Added unit test suite covering Smart Connect Poll #1/Poll #2+, Mode A -> Mode B fallback, optical echo stripping, 4:1 wire ASCII auto-detection, and `RE:` fast-fail sweeps.
+
+---
+
 ## [Build 20261117.1320] — 2026-11-17
 
 ### 🤖 Local AI Model Detection, Toggle Guard & Persistent Onboarding Preferences

@@ -260,10 +260,63 @@ def query_gateways(conn) -> Dict[str, str]:
     return gateways
 
 
+def _smart_connect_probe_sweep(conn, on_progress=None) -> Dict[int, int]:
+    """Perform Smart Connect @T0..@t3 handshake and sweep @TR:32,00..1F via conn.query_encrypted."""
+    import jura_protocol as jp
+    eeprom: Dict[int, int] = {}
+    if not hasattr(conn, "query_encrypted"):
+        return eeprom
+
+    if not getattr(conn, "_is_smart_connect", False):
+        t0 = conn.query_encrypted("@T0\r\n", key=0x20, timeout=1.0)
+        if not t0:
+            return eeprom
+        setattr(conn, "_is_smart_connect", True)
+        conn.query_encrypted("@T1\r\n", key=0x21, timeout=0.8)
+        t3 = conn.query_encrypted("@t2:818000\r\n", key=0x22, timeout=1.0)
+        if t3 and "@T3:" in t3:
+            conn.query_encrypted("@t3\r\n", key=0x23, timeout=0.6)
+
+    any_bank = False
+    consecutive_empty = 0
+    for page in range(32):
+        if not getattr(conn, "is_open", True):
+            raise IOError("Serial port disconnected during Smart Connect EEPROM sweep.")
+        if on_progress:
+            on_progress(int((page / 32) * 100), page * 16)
+        resp = conn.query_encrypted(f"@TR:32,{page:02X}\r\n", key=(0x30 + page) & 0xFF, timeout=0.8)
+        if resp:
+            parsed = jp.parse_tr32(resp)
+            if parsed:
+                any_bank = True
+                consecutive_empty = 0
+                _, words = parsed
+                base = page * 16
+                for idx, w in enumerate(words):
+                    eeprom[base + idx] = w
+                continue
+        consecutive_empty += 1
+        if page >= 12 and consecutive_empty >= 2:
+            break
+        if page == 1 and not any_bank and consecutive_empty >= 2:
+            break
+
+    if on_progress and any_bank:
+        on_progress(100, len(eeprom))
+    return eeprom
+
+
 def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]:
-    """Safely sweep EEPROM memory using RT: block reads with RE: word fallbacks."""
+    """Safely sweep EEPROM memory using RT: block reads with RE: fast-fail and Smart Connect fallback."""
+    if getattr(conn, "_is_smart_connect", False):
+        sc_map = _smart_connect_probe_sweep(conn, on_progress=on_progress)
+        if sc_map:
+            return sc_map
+
     eeprom: Dict[int, int] = {}
     num_blocks = (max_words + 15) // 16
+    consecutive_failed_blocks = 0
+    any_block_ok = False
 
     for blk_idx in range(num_blocks):
         if not getattr(conn, "is_open", True):
@@ -294,25 +347,54 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
                 except ValueError:
                     block_ok = False
 
-        if not block_ok:
-            # Fallback to word-by-word reads for this block
-            for offset in range(16):
+        if block_ok:
+            any_block_ok = True
+            consecutive_failed_blocks = 0
+        else:
+            # Probe first word RE:{blk:04X} before falling back to remaining 15 words
+            try:
+                first_ans = conn.query_ascii(f"RE:{blk:04X}", timeout=1.0)
+            except (IOError, OSError) as exc:
                 if not getattr(conn, "is_open", True):
-                    raise IOError("Serial port disconnected during EEPROM sweep.")
-                addr = blk + offset
+                    raise IOError(f"Serial port disconnected at word 0x{blk:04X}: {exc}") from exc
+                first_ans = None
+
+            if first_ans and first_ans.lower().startswith("re:"):
                 try:
-                    w_ans = conn.query_ascii(f"RE:{addr:04X}", timeout=1.0)
-                except (IOError, OSError) as exc:
+                    eeprom[blk] = int(first_ans[3:].strip()[:4], 16)
+                except ValueError:
+                    eeprom[blk] = 0x0000
+                any_block_ok = True
+                consecutive_failed_blocks = 0
+                for offset in range(1, 16):
                     if not getattr(conn, "is_open", True):
-                        raise IOError(f"Serial port disconnected at word 0x{addr:04X}: {exc}") from exc
-                    w_ans = None
-                if w_ans and w_ans.lower().startswith("re:"):
+                        raise IOError("Serial port disconnected during EEPROM sweep.")
+                    addr = blk + offset
                     try:
-                        eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
-                    except ValueError:
+                        w_ans = conn.query_ascii(f"RE:{addr:04X}", timeout=1.0)
+                    except (IOError, OSError) as exc:
+                        if not getattr(conn, "is_open", True):
+                            raise IOError(f"Serial port disconnected at word 0x{addr:04X}: {exc}") from exc
+                        w_ans = None
+                    if w_ans and w_ans.lower().startswith("re:"):
+                        try:
+                            eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
+                        except ValueError:
+                            eeprom[addr] = 0x0000
+                    else:
                         eeprom[addr] = 0x0000
-                else:
-                    eeprom[addr] = 0x0000
+            else:
+                for offset in range(16):
+                    eeprom[blk + offset] = 0x0000
+                consecutive_failed_blocks += 1
+                if not any_block_ok and consecutive_failed_blocks >= 2:
+                    break
+
+    has_nonzero = any(v not in (0, 0xFFFF) for v in eeprom.values())
+    if (not any_block_ok and consecutive_failed_blocks >= 2) or not has_nonzero:
+        sc_map = _smart_connect_probe_sweep(conn, on_progress=on_progress)
+        if sc_map:
+            return sc_map
 
     if on_progress:
         on_progress(100, max_words)

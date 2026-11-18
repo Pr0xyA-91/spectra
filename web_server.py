@@ -1871,11 +1871,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "No command specified", "success": False})
                 return
 
-            # Safety: Filter allowed diagnostic commands
+            # Safety: Filter allowed diagnostic commands (ASCII & Smart Connect read/handshake)
             SAFE_ASCII = (
                 "TY:", "IC:", "HZ:", "CS:", "AS:", "RT:", "RE:", "TL:",
                 "TY$:", "TL$:", "TP$:", "T1$:", "T2$:", "T3$:", "TX$:", "TZ$:",
-                "EX$:", "CS$:", "HZ$:", "RE$:", "RT$:", "DS$:", "GS$:", "SS$:", "ST$:", "IC$:", "RR$:", "AS$:"
+                "EX$:", "CS$:", "HZ$:", "RE$:", "RT$:", "DS$:", "GS$:", "SS$:", "ST$:", "IC$:", "RR$:", "AS$:",
+                "@T0", "@T1", "@T2:", "@T3", "@TR:", "@TG:", "@TF:", "@TM:",
             )
             cmd_upper = cmd.upper()
             if not any(cmd_upper.startswith(prefix) for prefix in SAFE_ASCII):
@@ -1887,12 +1888,20 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
             with _session_lock:
                 try:
+                    def _dispatch_cmd(c_obj):
+                        if cmd.startswith("@"):
+                            enc_key = 0x42 if cmd_upper.startswith("@TF") else 0x20
+                            return c_obj.query_encrypted(cmd + "\r\n", key=enc_key, timeout=1.2)
+                        return c_obj.query_ascii(cmd, timeout=1.2)
+
                     if _active_session is not None and _current_port == port and _active_session.conn and _active_session.conn.is_open:
-                        resp = _active_session.conn.query_ascii(cmd, timeout=1.2)
+                        resp = _dispatch_cmd(_active_session.conn)
                     else:
                         conn = serial_io.JuraSerialConnection(port)
-                        resp = conn.query_ascii(cmd, timeout=1.2)
-                        conn.close()
+                        try:
+                            resp = _dispatch_cmd(conn)
+                        finally:
+                            conn.close()
                     self._send_json({
                         "success": True,
                         "cmd": cmd,
