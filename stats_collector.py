@@ -403,28 +403,34 @@ def query_live_sensors(
         "alerts": []
     }
 
+    has_commercial_bean_sensor = False
     try:
         # Check if ASCII mode responds to TY:
         # In fast_poll mode, avoid redundant TY: and RE:0028 serial queries if cached on connection
-        cached_ef = getattr(conn, "_cached_ef", None)
-        if cached_ef is not None:
-            detected_ef = cached_ef
-            is_ascii = True
+        if getattr(conn, "_is_smart_connect", False) or "SMART CONNECT" in port_name.upper():
+            detected_ef = getattr(conn, "_cached_ef", "") or ""
+            is_ascii = False
         else:
-            ty_resp = conn.query_ascii("TY:")
-            is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
-            if not is_ascii and conn.is_demo:
+            cached_ef = getattr(conn, "_cached_ef", None)
+            if cached_ef:
+                detected_ef = cached_ef
                 is_ascii = True
-            elif not is_ascii and ("tty" in port_name.lower() or "com" in port_name.lower()):
-                hz_check = conn.query_ascii("HZ:")
-                if hz_check and hz_check.startswith("hz:"):
-                    is_ascii = True
-            detected_ef = ""
-            if ty_resp and ty_resp.startswith("ty:"):
-                toks = ty_resp[3:].strip().split()
-                if toks:
-                    detected_ef = toks[0].upper()
-            setattr(conn, "_cached_ef", detected_ef)
+            else:
+                ty_resp = conn.query_ascii("TY:")
+                is_ascii = (ty_resp is not None and ty_resp.startswith("ty:"))
+                if not is_ascii and conn.is_demo:
+                    is_ascii = "SMART CONNECT" not in conn.port_name.upper()
+                elif not is_ascii and ("tty" in port_name.lower() or "com" in port_name.lower()):
+                    hz_check = conn.query_ascii("HZ:")
+                    if hz_check and hz_check.startswith("hz:"):
+                        is_ascii = True
+                detected_ef = ""
+                if ty_resp and ty_resp.startswith("ty:"):
+                    toks = ty_resp[3:].strip().split()
+                    if toks:
+                        detected_ef = toks[0].upper()
+                if is_ascii and detected_ef:
+                    setattr(conn, "_cached_ef", detected_ef)
 
         if is_ascii:
             results["protocol"] = "Plain ASCII (Optical/Serial)"
@@ -1146,14 +1152,35 @@ def query_live_sensors(
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
-            wire_tx = jp.encode_wire(jp.build_encrypted_frame("@TF:\r\n", 0x42))
-            conn.write(wire_tx)
-            raw_rx = conn.read(512, timeout_sec=1.0)
-            tf_resp = None
-            if raw_rx:
-                decoded, _ = jp.decode_wire(raw_rx)
-                if decoded.startswith(b"&"):
-                    tf_resp = jp.decode_encrypted_frame(decoded)
+            if hasattr(conn, "query_encrypted"):
+                tf_resp = conn.query_encrypted("@TF:\r\n", key=0x42, timeout=1.0)
+                if not tf_resp and not getattr(conn, "_is_smart_connect", False):
+                    t0_r = conn.query_encrypted("@T0\r\n", key=0x20, timeout=1.0)
+                    if t0_r:
+                        conn.query_encrypted("@T1\r\n", key=0x21, timeout=0.8)
+                        conn.query_encrypted("@t2:818000\r\n", key=0x22, timeout=0.8)
+                        conn.query_encrypted("@t3\r\n", key=0x23, timeout=0.6)
+                        setattr(conn, "_is_smart_connect", True)
+                        tf_resp = conn.query_encrypted("@TF:\r\n", key=0x42, timeout=1.0)
+                elif tf_resp:
+                    setattr(conn, "_is_smart_connect", True)
+            else:
+                wire_tx = jp.encode_wire(jp.build_encrypted_frame("@TF:\r\n", 0x42))
+                conn.write(wire_tx)
+                raw_rx = conn.read(512, timeout_sec=1.0)
+                tf_resp = None
+                if raw_rx:
+                    if raw_rx.startswith(wire_tx):
+                        raw_rx = raw_rx[len(wire_tx):]
+                    aligned_len = (len(raw_rx) // 4) * 4
+                    if aligned_len >= 4:
+                        decoded, _ = jp.decode_wire(raw_rx[:aligned_len])
+                        amp = decoded.find(b"&")
+                        end = decoded.find(b"\r\n", amp) if amp != -1 else -1
+                        if amp != -1 and end != -1:
+                            pt = jp.decode_encrypted_frame(decoded[amp:end + 2])
+                            if pt and pt.strip() != "@TF:":
+                                tf_resp = pt
 
             results["raw_status"] = tf_resp or "N/A"
             active_alerts = []
@@ -1452,23 +1479,38 @@ class JuraStatsSession:
     def _send_encrypted_cmd(self, cmd_plain: str, key: int = 0x2A, timeout: float = 1.0) -> Optional[str]:
         """Send an encrypted '@'-command over 4:1 wire and wait for decrypted reply."""
         self.log(f"TX (SmartConnect): {cmd_plain.strip()}")
+        if hasattr(self.conn, "query_encrypted"):
+            plain_resp = self.conn.query_encrypted(cmd_plain, key=key, timeout=timeout)
+            if plain_resp:
+                self.log(f"RX (SmartConnect): {plain_resp.strip()}")
+                return plain_resp.strip()
+            self.log(f"TIMEOUT waiting for reply to {cmd_plain.strip()}")
+            return None
+
         wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_plain, key))
         self.conn.write(wire_tx)
 
         start = time.time()
         rx_wire = bytearray()
+        cmd_clean = cmd_plain.strip()
         while time.time() - start < timeout:
             chunk = self.conn.read(max_bytes=1024, timeout_sec=0.15)
             if chunk:
                 rx_wire.extend(chunk)
-                if len(rx_wire) > 4096:
+                if len(rx_wire) > 16384:
                     break
-                decoded, _ = jp.decode_wire(bytes(rx_wire))
-                if b"\r\n" in decoded:
-                    plain_resp = jp.decode_encrypted_frame(decoded)
-                    if plain_resp:
-                        self.log(f"RX (SmartConnect): {plain_resp.strip()}")
-                        return plain_resp.strip()
+                if rx_wire.startswith(wire_tx):
+                    del rx_wire[:len(wire_tx)]
+                aligned_len = (len(rx_wire) // 4) * 4
+                if aligned_len >= 4:
+                    decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
+                    amp = decoded.find(b"&")
+                    end = decoded.find(b"\r\n", amp) if amp != -1 else -1
+                    if amp != -1 and end != -1:
+                        plain_resp = jp.decode_encrypted_frame(decoded[amp:end + 2])
+                        if plain_resp and plain_resp.strip() != cmd_clean:
+                            self.log(f"RX (SmartConnect): {plain_resp.strip()}")
+                            return plain_resp.strip()
             time.sleep(0.01)
 
         self.log(f"TIMEOUT waiting for reply to {cmd_plain.strip()}")
@@ -1479,7 +1521,7 @@ class JuraStatsSession:
         Execute full interrogation sequence:
         1. Open serial connection
         2. Probe ASCII mode (TY:) - handles Jura USB Scanner N 010 & direct serial
-        3. If no ASCII reply, probe Smart Connect mode (@T0)
+        3. If no ASCII reply (or ASCII EEPROM returns empty/all zeros), probe Smart Connect mode (@T0)
         4. Read and parse all beverage counters, maintenance cycles, and telemetry
         """
         def update_prog(pct: float, status: str):
@@ -1500,13 +1542,17 @@ class JuraStatsSession:
             update_prog(0.12, "Probing machine type (TY:)...")
             self.log("Probing ASCII machine identification query (TY:)...")
             ty_resp = self.conn.query_ascii("TY:", timeout=1.0)
+            ascii_model_hint = ""
+            ascii_profile_hint = None
 
             if ty_resp and ty_resp.lower().startswith("ty:"):
                 self.is_legacy_cleartext = True
                 self.protocol_mode = "ASCII Optical (Jura USB Scanner / Direct Serial)"
                 self.raw_model_str = ty_resp[3:].strip()
                 self.ef_code = self.raw_model_str
+                ascii_model_hint = self.raw_model_str
                 self.profile = profiles_db.find_profile(self.raw_model_str)
+                ascii_profile_hint = self.profile
                 self.model_family = self.profile.get("model_family", "Jura Coffee Machine")
                 self.log(f"Machine detected via ASCII: {self.model_family} ({self.raw_model_str})")
 
@@ -1559,6 +1605,8 @@ class JuraStatsSession:
 
                 update_prog(0.30, f"Reading EEPROM diagnostic blocks ({'2-digit' if address_width == 2 else '4-digit'} addressing)...")
                 eeprom: Dict[int, int] = {}
+                rt_blocks_succeeded = 0
+                consecutive_rt_timeouts = 0
 
                 for b_idx, blk in enumerate(blocks):
                     pct = 0.30 + (b_idx / len(blocks)) * 0.50
@@ -1571,9 +1619,15 @@ class JuraStatsSession:
                         words = [int(raw_hex[i * 4: i * 4 + 4], 16) for i in range(len(raw_hex) // 4)]
                         for idx, w in enumerate(words):
                             eeprom[blk + idx] = w
+                        rt_blocks_succeeded += 1
+                        consecutive_rt_timeouts = 0
                         self.log(f"EEPROM [0x{blk_str}]: {len(words)} words read successfully")
                     else:
+                        consecutive_rt_timeouts += 1
                         self.log(f"Notice: Block 0x{blk_str} returned empty/timeout")
+                        if rt_blocks_succeeded == 0 and consecutive_rt_timeouts >= 2:
+                            self.log("Notice: 2 consecutive RT: block timeouts; aborting ASCII RT: sweep early.")
+                            break
 
                 # Explicitly query machine identity, production, and service history EEPROM words
                 # 0x0030: Appliance / Machine Number (Maschinennummer: e.g. 18016)
@@ -1618,409 +1672,435 @@ class JuraStatsSession:
                     id_addrs.append((0x56, "BU Initializations"))
                     id_addrs.append((0xD6, "Machine Switch-On"))
 
-                for addr_int, desc in id_addrs:
-                    if addr_int not in eeprom or eeprom[addr_int] == 0:
-                        addr_str = f"{addr_int:02X}" if address_width == 2 else f"{addr_int:04X}"
-                        ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
-                        if ans and ans.lower().startswith("re:"):
-                            try:
-                                eeprom[addr_int] = int(ans[3:].strip(), 16)
-                                self.log(f"EEPROM [0x{addr_str}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
-                            except ValueError:
-                                pass
+                run_re_fallback = rt_blocks_succeeded > 0
+                if not run_re_fallback:
+                    probe_addr_str = "00" if address_width == 2 else "0000"
+                    re_probe = self.conn.query_ascii(f"RE:{probe_addr_str}", timeout=1.0)
+                    if re_probe and re_probe.lower().startswith("re:"):
+                        try:
+                            eeprom[0] = int(re_probe[3:].strip(), 16)
+                            run_re_fallback = True
+                        except ValueError:
+                            run_re_fallback = False
 
-                update_prog(0.85, "Parsing machine telemetry & statistics...")
-                if is_z5:
-                    esp1 = eeprom.get(0x00, 0)
-                    rist1 = eeprom.get(0x01, 0)
-                    cof1 = eeprom.get(0x02, 0)
-                    spec1 = eeprom.get(0x03, 0)
-                    capp1 = eeprom.get(0x04, 0)
-                    latte1 = eeprom.get(0x05, 0)
-                    ground = eeprom.get(0x06, 0)
+                if run_re_fallback:
+                    for addr_int, desc in id_addrs:
+                        if addr_int not in eeprom or eeprom[addr_int] == 0:
+                            addr_str = f"{addr_int:02X}" if address_width == 2 else f"{addr_int:04X}"
+                            ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
+                            if ans and ans.lower().startswith("re:"):
+                                try:
+                                    eeprom[addr_int] = int(ans[3:].strip(), 16)
+                                    self.log(f"EEPROM [0x{addr_str}] {desc}: 0x{eeprom[addr_int]:04X} ({eeprom[addr_int]})")
+                                except ValueError:
+                                    pass
+                else:
+                    self.log("Notice: RE:0000 returned no reply; skipping 19 individual RE: probes.")
 
-                    esp2 = eeprom.get(0xE0, 0)
-                    rist2 = eeprom.get(0xE1, 0)
-                    cof2 = eeprom.get(0xE2, 0)
-                    spec2 = eeprom.get(0xE3, 0)
-                    capp2 = eeprom.get(0xE4, 0)
-                    latte2 = eeprom.get(0xE5, 0)
+                has_valid_ascii_eeprom = len(eeprom) > 0 and any(v not in (0, 0xFFFF) for v in eeprom.values())
+                if not has_valid_ascii_eeprom:
+                    self.log("Notice: ASCII EEPROM returned no valid non-zero data; attempting Smart Connect (@T0) fallback...")
+                else:
+                    update_prog(0.85, "Parsing machine telemetry & statistics...")
+                    if is_z5:
+                        esp1 = eeprom.get(0x00, 0)
+                        rist1 = eeprom.get(0x01, 0)
+                        cof1 = eeprom.get(0x02, 0)
+                        spec1 = eeprom.get(0x03, 0)
+                        capp1 = eeprom.get(0x04, 0)
+                        latte1 = eeprom.get(0x05, 0)
+                        ground = eeprom.get(0x06, 0)
 
-                    self.counters[1] = esp1
-                    self.counters[2] = rist1
-                    self.counters[3] = cof1
-                    self.counters[4] = spec1
-                    self.counters[5] = capp1
-                    self.counters[6] = latte1
-                    if ground > 0:
-                        self.counters[7] = ground
-                    self.counters[8] = esp2
-                    self.counters[9] = rist2
-                    self.counters[10] = cof2
-                    self.counters[11] = spec2
-                    self.counters[12] = capp2
-                    self.counters[13] = latte2
+                        esp2 = eeprom.get(0xE0, 0)
+                        rist2 = eeprom.get(0xE1, 0)
+                        cof2 = eeprom.get(0xE2, 0)
+                        spec2 = eeprom.get(0xE3, 0)
+                        capp2 = eeprom.get(0xE4, 0)
+                        latte2 = eeprom.get(0xE5, 0)
 
-                    single_preps = esp1 + rist1 + cof1 + spec1 + capp1 + latte1 + ground
-                    double_preps = esp2 + rist2 + cof2 + spec2 + capp2 + latte2
-                    self.total_preparations = single_preps + double_preps
-                    self.total_cups = single_preps + (double_preps * 2)
+                        self.counters[1] = esp1
+                        self.counters[2] = rist1
+                        self.counters[3] = cof1
+                        self.counters[4] = spec1
+                        self.counters[5] = capp1
+                        self.counters[6] = latte1
+                        if ground > 0:
+                            self.counters[7] = ground
+                        self.counters[8] = esp2
+                        self.counters[9] = rist2
+                        self.counters[10] = cof2
+                        self.counters[11] = spec2
+                        self.counters[12] = capp2
+                        self.counters[13] = latte2
 
-                    filter_cycles = eeprom.get(0x22, eeprom.get(20, 0))
-                elif is_d4:
-                    # Jura D4 (EF529M / RL78 platform) stores beverage counters in Block 0x0330
-                    esp1 = eeprom.get(0x0330, 0)
-                    cof1 = eeprom.get(0x0331, 0)
-                    esp2 = eeprom.get(0x0332, 0)
-                    cof2 = eeprom.get(0x0333, 0)
-                    water = eeprom.get(0x0334, 0)
+                        single_preps = esp1 + rist1 + cof1 + spec1 + capp1 + latte1 + ground
+                        double_preps = esp2 + rist2 + cof2 + spec2 + capp2 + latte2
+                        self.total_preparations = single_preps + double_preps
+                        self.total_cups = single_preps + (double_preps * 2)
 
-                    self.counters[2] = esp1
-                    self.counters[3] = cof1
-                    self.counters[49] = esp2
-                    self.counters[54] = cof2
-                    self.counters[13] = water
+                        filter_cycles = eeprom.get(0x22, eeprom.get(20, 0))
+                    elif is_d4:
+                        # Jura D4 (EF529M / RL78 platform) stores beverage counters in Block 0x0330
+                        esp1 = eeprom.get(0x0330, 0)
+                        cof1 = eeprom.get(0x0331, 0)
+                        esp2 = eeprom.get(0x0332, 0)
+                        cof2 = eeprom.get(0x0333, 0)
+                        water = eeprom.get(0x0334, 0)
 
-                    single_preps = esp1 + cof1 + water
-                    double_preps = esp2 + cof2
-                    self.total_preparations = single_preps + double_preps
-                    self.total_cups = esp1 + cof1 + (double_preps * 2)
+                        self.counters[2] = esp1
+                        self.counters[3] = cof1
+                        self.counters[49] = esp2
+                        self.counters[54] = cof2
+                        self.counters[13] = water
 
-                    # D4 Filter changes are stored at 0x000E
-                    filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
-                elif is_a1:
-                    # Jura A1 / ENA Micro single-cup architecture:
-                    # Physical panel features only 3 single-serve coffee buttons:
-                    # 0x0002: Coffee (1 cup)
-                    # 0x0004: Espresso (1 cup)
-                    # 0x0006: Ristretto (1 cup)
-                    # All are single-cup preparations (no 2-cup buttons or modes)
-                    cof = eeprom.get(2, 0)
-                    esp = eeprom.get(4, 0)
-                    rist = eeprom.get(6, 0)
+                        single_preps = esp1 + cof1 + water
+                        double_preps = esp2 + cof2
+                        self.total_preparations = single_preps + double_preps
+                        self.total_cups = esp1 + cof1 + (double_preps * 2)
 
-                    self.counters[1] = rist
-                    self.counters[2] = esp
-                    self.counters[3] = cof
+                        # D4 Filter changes are stored at 0x000E
+                        filter_cycles = eeprom.get(0x000E, eeprom.get(20, 0))
+                    elif is_a1:
+                        # Jura A1 / ENA Micro single-cup architecture:
+                        # Physical panel features only 3 single-serve coffee buttons:
+                        # 0x0002: Coffee (1 cup)
+                        # 0x0004: Espresso (1 cup)
+                        # 0x0006: Ristretto (1 cup)
+                        # All are single-cup preparations (no 2-cup buttons or modes)
+                        cof = eeprom.get(2, 0)
+                        esp = eeprom.get(4, 0)
+                        rist = eeprom.get(6, 0)
 
-                    self.total_preparations = rist + esp + cof
-                    self.total_cups = self.total_preparations
+                        self.counters[1] = rist
+                        self.counters[2] = esp
+                        self.counters[3] = cof
 
-                    filter_cycles = eeprom.get(20, 0)
-                elif is_we8 or is_e8:
-                    # Jura WE8 / E8 TFT platform (EF533 / EF535 / Renesas RL78)
-                    # Block 0x0180 (and 0x017F) holds consolidated beverage statistics
-                    if 0x0180 in eeprom and any(eeprom.get(0x0180 + i, 0) > 0 for i in range(16)):
-                        esp = eeprom.get(0x0180, 0)
-                        rist = eeprom.get(0x0181, 0)
-                        cof = eeprom.get(0x0182, 0)
-                        flat_white = eeprom.get(0x0183, 0)
-                        capp = eeprom.get(0x0184, 0)
-                        latte = eeprom.get(0x0185, 0)
-                        ground = eeprom.get(0x0186, 0)
-                        milk = eeprom.get(0x0187, 0)
-                        water = eeprom.get(0x0188, 0)
-                        esp2 = eeprom.get(0x0189, 0)
-                        rist2 = eeprom.get(0x018A, 0)
-                        cof2 = eeprom.get(0x018B, 0)
-                        spec2 = eeprom.get(0x018C, 0)
-                        spec = eeprom.get(0x018D, 0)
-                        macchiato = eeprom.get(0x018E, 0)
-                        doppio = eeprom.get(0x018F, 0)
-                        green_tea = eeprom.get(0x017F, 0)
-                    else:
-                        # Fallback to lower block registers if 0x0180 is not returned
-                        esp = eeprom.get(0x0000, eeprom.get(1, 0))
-                        rist = eeprom.get(0x0001, 0)
-                        cof = eeprom.get(0x0002, eeprom.get(2, 0))
-                        flat_white = eeprom.get(0x0003, 0)
-                        capp = eeprom.get(0x0004, 0)
-                        latte = eeprom.get(0x0005, 0)
+                        self.total_preparations = rist + esp + cof
+                        self.total_cups = self.total_preparations
+
+                        filter_cycles = eeprom.get(20, 0)
+                    elif is_we8 or is_e8:
+                        # Jura WE8 / E8 TFT platform (EF533 / EF535 / Renesas RL78)
+                        # Block 0x0180 (and 0x017F) holds consolidated beverage statistics
+                        if 0x0180 in eeprom and any(eeprom.get(0x0180 + i, 0) > 0 for i in range(16)):
+                            esp = eeprom.get(0x0180, 0)
+                            rist = eeprom.get(0x0181, 0)
+                            cof = eeprom.get(0x0182, 0)
+                            flat_white = eeprom.get(0x0183, 0)
+                            capp = eeprom.get(0x0184, 0)
+                            latte = eeprom.get(0x0185, 0)
+                            ground = eeprom.get(0x0186, 0)
+                            milk = eeprom.get(0x0187, 0)
+                            water = eeprom.get(0x0188, 0)
+                            esp2 = eeprom.get(0x0189, 0)
+                            rist2 = eeprom.get(0x018A, 0)
+                            cof2 = eeprom.get(0x018B, 0)
+                            spec2 = eeprom.get(0x018C, 0)
+                            spec = eeprom.get(0x018D, 0)
+                            macchiato = eeprom.get(0x018E, 0)
+                            doppio = eeprom.get(0x018F, 0)
+                            green_tea = eeprom.get(0x017F, 0)
+                        else:
+                            # Fallback to lower block registers if 0x0180 is not returned
+                            esp = eeprom.get(0x0000, eeprom.get(1, 0))
+                            rist = eeprom.get(0x0001, 0)
+                            cof = eeprom.get(0x0002, eeprom.get(2, 0))
+                            flat_white = eeprom.get(0x0003, 0)
+                            capp = eeprom.get(0x0004, 0)
+                            latte = eeprom.get(0x0005, 0)
+                            ground = eeprom.get(0x0006, 0)
+                            milk = eeprom.get(0x0013, 0)
+                            water = eeprom.get(0x0014, 0)
+                            esp2 = eeprom.get(0x00E0, eeprom.get(4, 0))
+                            rist2 = eeprom.get(0x00E1, 0)
+                            cof2 = eeprom.get(0x00E2, eeprom.get(5, 0))
+                            spec2 = eeprom.get(0x00E3, eeprom.get(6, 0))
+                            spec = eeprom.get(0x018D, eeprom.get(3, 0))
+                            macchiato = eeprom.get(0x018E, 0)
+                            doppio = eeprom.get(0x018F, 0)
+                            green_tea = eeprom.get(0x017F, 0)
+
+                        self.counters[1] = rist
+                        self.counters[2] = esp
+                        self.counters[3] = cof
+                        self.counters[4] = capp
+                        self.counters[6] = macchiato
+                        self.counters[7] = latte
+                        self.counters[10] = milk
+                        self.counters[13] = water
+                        if ground > 0:
+                            self.counters[15] = ground
+                        self.counters[17] = rist2
+                        self.counters[18] = esp2
+                        self.counters[19] = cof2
+                        self.counters[45] = green_tea
+                        self.counters[46] = flat_white
+                        self.counters[47] = spec
+                        self.counters[48] = doppio
+                        self.counters[63] = spec2
+
+                        single_preps = rist + esp + cof + flat_white + capp + latte + milk + water + spec + macchiato + doppio + green_tea + ground
+                        double_preps = rist2 + esp2 + cof2 + spec2
+                        self.total_preparations = single_preps + double_preps
+                        coffee_single_cups = rist + esp + cof + flat_white + capp + latte + spec + macchiato + doppio + ground
+                        self.total_cups = coffee_single_cups + (double_preps * 2)
+
+                        filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
+                        milk_rinses = eeprom.get(0x0020, 0)
+                        milk_cleanings = eeprom.get(0x0021, 0)
+                    elif is_ena7:
+                        # Jura ENA 7 / EF634 platform:
+                        # 0x0000: 1 Espresso (Single)
+                        # 0x0001: 2 Espressi (Double)
+                        # 0x0002: 1 Coffee (Single)
+                        # 0x0003: 2 Coffees (Double)
+                        # 0x0004: 1 Aroma-Boost (Single)
+                        # 0x0005: Steam / Hot Water valve cycles
+                        # 0x0006: Ground Coffee bypass (Single)
+                        esp1 = eeprom.get(0x0000, 0)
+                        esp2 = eeprom.get(0x0001, 0)
+                        cof1 = eeprom.get(0x0002, 0)
+                        cof2 = eeprom.get(0x0003, 0)
+                        aroma = eeprom.get(0x0004, 0)
+                        hotwater = eeprom.get(0x0005, 0)
                         ground = eeprom.get(0x0006, 0)
-                        milk = eeprom.get(0x0013, 0)
-                        water = eeprom.get(0x0014, 0)
-                        esp2 = eeprom.get(0x00E0, eeprom.get(4, 0))
-                        rist2 = eeprom.get(0x00E1, 0)
-                        cof2 = eeprom.get(0x00E2, eeprom.get(5, 0))
-                        spec2 = eeprom.get(0x00E3, eeprom.get(6, 0))
-                        spec = eeprom.get(0x018D, eeprom.get(3, 0))
-                        macchiato = eeprom.get(0x018E, 0)
-                        doppio = eeprom.get(0x018F, 0)
-                        green_tea = eeprom.get(0x017F, 0)
 
-                    self.counters[1] = rist
-                    self.counters[2] = esp
-                    self.counters[3] = cof
-                    self.counters[4] = capp
-                    self.counters[6] = macchiato
-                    self.counters[7] = latte
-                    self.counters[10] = milk
-                    self.counters[13] = water
-                    if ground > 0:
-                        self.counters[15] = ground
-                    self.counters[17] = rist2
-                    self.counters[18] = esp2
-                    self.counters[19] = cof2
-                    self.counters[45] = green_tea
-                    self.counters[46] = flat_white
-                    self.counters[47] = spec
-                    self.counters[48] = doppio
-                    self.counters[63] = spec2
+                        self.counters[1] = esp1
+                        self.counters[2] = esp2
+                        self.counters[3] = cof1
+                        self.counters[4] = cof2
+                        self.counters[5] = aroma
+                        if ground > 0:
+                            self.counters[6] = ground
+                        if hotwater > 0:
+                            self.counters[13] = hotwater
 
-                    single_preps = rist + esp + cof + flat_white + capp + latte + milk + water + spec + macchiato + doppio + green_tea + ground
-                    double_preps = rist2 + esp2 + cof2 + spec2
-                    self.total_preparations = single_preps + double_preps
-                    coffee_single_cups = rist + esp + cof + flat_white + capp + latte + spec + macchiato + doppio + ground
-                    self.total_cups = coffee_single_cups + (double_preps * 2)
+                        single_preps = esp1 + cof1 + aroma + ground
+                        double_preps = esp2 + cof2
+                        self.total_preparations = single_preps + double_preps + hotwater
+                        self.total_cups = single_preps + (double_preps * 2)
 
-                    filter_cycles = eeprom.get(0x0022, eeprom.get(20, 0))
-                    milk_rinses = eeprom.get(0x0020, 0)
-                    milk_cleanings = eeprom.get(0x0021, 0)
-                elif is_ena7:
-                    # Jura ENA 7 / EF634 platform:
-                    # 0x0000: 1 Espresso (Single)
-                    # 0x0001: 2 Espressi (Double)
-                    # 0x0002: 1 Coffee (Single)
-                    # 0x0003: 2 Coffees (Double)
-                    # 0x0004: 1 Aroma-Boost (Single)
-                    # 0x0005: Steam / Hot Water valve cycles
-                    # 0x0006: Ground Coffee bypass (Single)
-                    esp1 = eeprom.get(0x0000, 0)
-                    esp2 = eeprom.get(0x0001, 0)
-                    cof1 = eeprom.get(0x0002, 0)
-                    cof2 = eeprom.get(0x0003, 0)
-                    aroma = eeprom.get(0x0004, 0)
-                    hotwater = eeprom.get(0x0005, 0)
-                    ground = eeprom.get(0x0006, 0)
-
-                    self.counters[1] = esp1
-                    self.counters[2] = esp2
-                    self.counters[3] = cof1
-                    self.counters[4] = cof2
-                    self.counters[5] = aroma
-                    if ground > 0:
-                        self.counters[6] = ground
-                    if hotwater > 0:
-                        self.counters[13] = hotwater
-
-                    single_preps = esp1 + cof1 + aroma + ground
-                    double_preps = esp2 + cof2
-                    self.total_preparations = single_preps + double_preps + hotwater
-                    self.total_cups = single_preps + (double_preps * 2)
-
-                    filter_cycles = eeprom.get(0x0052, 0)
-                else:
-                    # Map standard Jura EEPROM statistics addresses
-                    esp1 = eeprom.get(1, 0)
-                    cof1 = eeprom.get(2, 0)
-                    spec1 = eeprom.get(3, 0)
-                    esp2 = eeprom.get(4, 0)
-                    cof2 = eeprom.get(5, 0)
-                    spec2 = eeprom.get(6, 0)
-
-                    self.counters[1] = esp1
-                    self.counters[2] = cof1
-                    if spec1 > 0:
-                        self.counters[3] = spec1
-                    self.counters[4] = esp2
-                    self.counters[5] = cof2
-                    if spec2 > 0:
-                        self.counters[6] = spec2
-
-                    self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
-                    self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
-
-                    filter_cycles = eeprom.get(20, 0)
-
-                rinses = eeprom.get(7, 0)
-                cleanings = eeprom.get(8, 0)
-                descalings = eeprom.get(9, 0)
-                grinder_sec = eeprom.get(10, 0)
-
-                water_dl = eeprom.get(16, 0)
-                decalc_dl = eeprom.get(18, 0)
-                since_serv = eeprom.get(21, 0)
-                water_since_decalc = eeprom.get(31, 0)
-
-                # Hardware and Serial Identification
-                machine_num = eeprom.get(0x30, 0)
-                serial_word = eeprom.get(0x31, 0)
-                prod_val = eeprom.get(0x32, 0)
-                country_word = eeprom.get(0xDA, 0)
-                spdl_dl_val = eeprom.get(0xDB, 0)
-                spdl_lang_val = eeprom.get(0xDC, 0)
-                since_prep = eeprom.get(0x15, 0)
-                retail_high = eeprom.get(0xE9, 0)
-                retail_low = eeprom.get(0xEA, 0)
-                c3_val = eeprom.get(0xC3, 0)
-
-                app_code = f"{machine_num:04X}{prod_val:04X}" if (machine_num or prod_val) else "N/A"
-
-                # Jura Production Date decoding:
-                # 16-bit bitfield: Day (bits 0..4), Month (bits 5..8), Year = 1990 + (bits 9..15)
-                prod_dt = decode_jura_date(prod_val)
-                prod_date_str = f"{prod_dt.day}.{prod_dt.month}.{prod_dt.year}" if prod_dt else "N/A"
-                date_prefix = prod_dt.strftime("%Y%m%d") if prod_dt else ""
-
-                # Jura 14-digit Serial Number format (GS1 Application Identifier 21):
-                # Formed by YYYYMMDD (Production Date) + 6-digit zero-padded Appliance Number
-                # Example: 20130530 + 018016 -> "20130530018016"
-                if date_prefix and machine_num:
-                    serial_number = f"{date_prefix}{machine_num:06d}"
-                elif machine_num:
-                    serial_number = f"{machine_num:06d}"
-                else:
-                    serial_number = "N/A"
-
-                # Country Code decoding:
-                # 0x00DA stores two ASCII characters for destination market (e.g. 0x435A -> 'CZ')
-                country_code = "N/A"
-                if country_word and country_word > 0:
-                    hi = (country_word >> 8) & 0xFF
-                    lo = country_word & 0xFF
-                    chars = "".join(chr(c) for c in (hi, lo) if 32 <= c <= 126).strip()
-                    if chars:
-                        country_code = chars
-
-                # SPDL Dates:
-                spdl_dl_dt = decode_jura_date(spdl_dl_val)
-                spdl_dl_str = f"{spdl_dl_dt.day}.{spdl_dl_dt.month}.{spdl_dl_dt.year}" if spdl_dl_dt else "N/A"
-
-                spdl_lang_dt = decode_jura_date(spdl_lang_val)
-                spdl_lang_str = f"{spdl_lang_dt.day}.{spdl_lang_dt.month}.{spdl_lang_dt.year}" if spdl_lang_dt else "N/A"
-
-                # Water Hardness:
-                if is_d4 and 0x11 in eeprom and eeprom[0x11] > 0:
-                    water_hardness = eeprom[0x11]
-                else:
-                    water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
-
-                # Cups and preparations since last service intervention:
-                retail_ref = (retail_high * 65536) + retail_low
-                cups_since_intervention = max(0, self.total_cups - retail_ref) if (retail_ref > 0 or retail_high or retail_low) else self.total_cups
-                prep_since_intervention = since_prep if since_prep > 0 else since_serv
-
-                # Article Number and Full EAN Code:
-                # Hardware EEPROM Article Number (words 0x7E/0x7F on EF509/A1/ENA platforms)
-                hw_article = None
-                if 0x7E in eeprom and 0x7F in eeprom:
-                    hi_w = eeprom.get(0x7E, 0)
-                    lo_w = eeprom.get(0x7F, 0)
-                    hi_b = (hi_w >> 8) if (hi_w & 0xFF00) else (hi_w & 0xFF)
-                    lo_b = (lo_w >> 8) if (lo_w & 0xFF00) else (lo_w & 0xFF)
-                    if hi_b > 0 and lo_b > 0:
-                        cand = (hi_b << 8) | lo_b
-                        if 10000 <= cand <= 99999:
-                            hw_article = str(cand)
-
-                if hw_article:
-                    article_num = hw_article
-                    if hw_article in ARTICLE_MODEL_MAP:
-                        fam, app_desc, _ = ARTICLE_MODEL_MAP[hw_article]
-                        self.model_family = fam
-                        app_type = app_desc
-                        # If hardware article specifies a refined model (e.g. WE8 vs E8), switch to its profile
-                        art_profile = profiles_db.get_model_spec(hw_article) or profiles_db.find_profile(fam)
-                        if art_profile and art_profile != profiles_db.DEFAULT_PROFILE:
-                            self.profile = art_profile
-                    else:
-                        app_type = f"{hw_article} {self.model_family}"
-                else:
-                    article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else ("13500" if is_ena7 else "13705")))))
-                    app_type = self.profile.get("appliance_type", self.model_family)
-
-                ean_code = "N/A"
-                if article_num and serial_number != "N/A":
-                    try:
-                        base_ean = f"07610917{int(article_num):05d}"
-                        gtin14 = f"{base_ean}{calculate_gs1_check_digit(base_ean)}"
-                        ean_code = f"(01){gtin14}(21){serial_number}"
-                    except Exception:
-                        pass
-
-                if is_we8 or is_e8:
-                    clean_pct = eeprom.get(0x0163, 0) & 0xFF if 0x0163 in eeprom else None
-                    decalc_pct = eeprom.get(0x0162, 0) & 0xFF if 0x0162 in eeprom else None
-                    filter_pct = eeprom.get(0x01E1, 0) & 0xFF if 0x01E1 in eeprom else None
-                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles, milk_rinses, milk_cleanings]
-                    self.maint_pcts = [clean_pct, decalc_pct, None, filter_pct, None, None]
-                else:
-                    if is_ena7:
                         filter_cycles = eeprom.get(0x0052, 0)
-                    self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
-                    self.maint_pcts = [None, None, None, None]
+                    else:
+                        # Map standard Jura EEPROM statistics addresses
+                        esp1 = eeprom.get(1, 0)
+                        cof1 = eeprom.get(2, 0)
+                        spec1 = eeprom.get(3, 0)
+                        esp2 = eeprom.get(4, 0)
+                        cof2 = eeprom.get(5, 0)
+                        spec2 = eeprom.get(6, 0)
 
-                gh = grinder_sec // 3600
-                gm = (grinder_sec % 3600) // 60
-                gs = grinder_sec % 60
+                        self.counters[1] = esp1
+                        self.counters[2] = cof1
+                        if spec1 > 0:
+                            self.counters[3] = spec1
+                        self.counters[4] = esp2
+                        self.counters[5] = cof2
+                        if spec2 > 0:
+                            self.counters[6] = spec2
 
-                self.telemetry = {
-                    "serial_number": serial_number,
-                    "production_date": prod_date_str,
-                    "appliance_number": machine_num,
-                    "machine_number": machine_num,
-                    "serial_number_word": serial_word,
-                    "article_number": article_num,
-                    "ean_code": ean_code,
-                    "appliance_code": app_code,
-                    "appliance_type": app_type,
-                    "software_version_display": display_fw,
-                    "spdl_download_date": spdl_dl_str,
-                    "spdl_country_code": country_code,
-                    "spdl_language_date": spdl_lang_str,
-                    "water_hardness_dh": water_hardness,
-                    "total_cups": self.total_cups,
-                    "total_preparations": self.total_preparations,
-                    "preparations_since_intervention": prep_since_intervention,
-                    "cups_since_intervention": cups_since_intervention,
-                    "grinder_seconds": grinder_sec,
-                    "grinder_formatted": f"{gh}h {gm}m {gs}s",
-                    "water_dispensed_liters": round(water_dl / 10.0, 1),
-                    "descaling_agent_liters": round(decalc_dl / 10.0, 1),
-                    "since_last_service_preparations": prep_since_intervention,
-                    "water_since_decalc_liters": round(water_since_decalc / 10.0, 1),
-                    "power_spec": self.power_spec,
-                }
+                        self.total_preparations = esp1 + cof1 + spec1 + esp2 + cof2 + spec2
+                        self.total_cups = esp1 + cof1 + spec1 + (esp2 * 2) + (cof2 * 2) + (spec2 * 2)
 
-                # Store swept EEPROM and apply any saved local AI/J.O.E. offset override immediately
-                self.last_eeprom = dict(eeprom)
-                self.address_width = address_width
-                self.apply_local_offset_override(self.last_eeprom, article_num=article_num)
+                        filter_cycles = eeprom.get(20, 0)
 
-                # Interrogate Live Hardware Sensors & Switches
-                update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
-                self.live_sensors = self.query_live_sensors()
-                if self.live_sensors.get("alerts"):
-                    self.active_alerts = []
-                    for a in self.live_sensors["alerts"]:
-                        name = a.get("name")
-                        details = a.get("details", "")
-                        msg = a.get("message") or (f"{name}: {details}" if name else str(a))
-                        self.active_alerts.append({
-                            "bit": 0,
-                            "blocking": a.get("blocking", True),
-                            "name": msg
-                        })
-                else:
-                    self.active_alerts = [
-                        {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}
-                    ]
+                    rinses = eeprom.get(7, 0)
+                    cleanings = eeprom.get(8, 0)
+                    descalings = eeprom.get(9, 0)
+                    grinder_sec = eeprom.get(10, 0)
 
-                update_prog(1.0, "Interrogation completed successfully!")
-                self.log(f"ASCII Interrogation successful: {self.total_cups:,} cups read!")
-                return True
+                    water_dl = eeprom.get(16, 0)
+                    decalc_dl = eeprom.get(18, 0)
+                    since_serv = eeprom.get(21, 0)
+                    water_since_decalc = eeprom.get(31, 0)
+
+                    # Hardware and Serial Identification
+                    machine_num = eeprom.get(0x30, 0)
+                    serial_word = eeprom.get(0x31, 0)
+                    prod_val = eeprom.get(0x32, 0)
+                    country_word = eeprom.get(0xDA, 0)
+                    spdl_dl_val = eeprom.get(0xDB, 0)
+                    spdl_lang_val = eeprom.get(0xDC, 0)
+                    since_prep = eeprom.get(0x15, 0)
+                    retail_high = eeprom.get(0xE9, 0)
+                    retail_low = eeprom.get(0xEA, 0)
+                    c3_val = eeprom.get(0xC3, 0)
+
+                    app_code = f"{machine_num:04X}{prod_val:04X}" if (machine_num or prod_val) else "N/A"
+
+                    # Jura Production Date decoding:
+                    # 16-bit bitfield: Day (bits 0..4), Month (bits 5..8), Year = 1990 + (bits 9..15)
+                    prod_dt = decode_jura_date(prod_val)
+                    prod_date_str = f"{prod_dt.day}.{prod_dt.month}.{prod_dt.year}" if prod_dt else "N/A"
+                    date_prefix = prod_dt.strftime("%Y%m%d") if prod_dt else ""
+
+                    # Jura 14-digit Serial Number format (GS1 Application Identifier 21):
+                    # Formed by YYYYMMDD (Production Date) + 6-digit zero-padded Appliance Number
+                    # Example: 20130530 + 018016 -> "20130530018016"
+                    if date_prefix and machine_num:
+                        serial_number = f"{date_prefix}{machine_num:06d}"
+                    elif machine_num:
+                        serial_number = f"{machine_num:06d}"
+                    else:
+                        serial_number = "N/A"
+
+                    # Country Code decoding:
+                    # 0x00DA stores two ASCII characters for destination market (e.g. 0x435A -> 'CZ')
+                    country_code = "N/A"
+                    if country_word and country_word > 0:
+                        hi = (country_word >> 8) & 0xFF
+                        lo = country_word & 0xFF
+                        chars = "".join(chr(c) for c in (hi, lo) if 32 <= c <= 126).strip()
+                        if chars:
+                            country_code = chars
+
+                    # SPDL Dates:
+                    spdl_dl_dt = decode_jura_date(spdl_dl_val)
+                    spdl_dl_str = f"{spdl_dl_dt.day}.{spdl_dl_dt.month}.{spdl_dl_dt.year}" if spdl_dl_dt else "N/A"
+
+                    spdl_lang_dt = decode_jura_date(spdl_lang_val)
+                    spdl_lang_str = f"{spdl_lang_dt.day}.{spdl_lang_dt.month}.{spdl_lang_dt.year}" if spdl_lang_dt else "N/A"
+
+                    # Water Hardness:
+                    if is_d4 and 0x11 in eeprom and eeprom[0x11] > 0:
+                        water_hardness = eeprom[0x11]
+                    else:
+                        water_hardness = (c3_val >> 8) & 0xFF if c3_val else 30
+
+                    # Cups and preparations since last service intervention:
+                    retail_ref = (retail_high * 65536) + retail_low
+                    cups_since_intervention = max(0, self.total_cups - retail_ref) if (retail_ref > 0 or retail_high or retail_low) else self.total_cups
+                    prep_since_intervention = since_prep if since_prep > 0 else since_serv
+
+                    # Article Number and Full EAN Code:
+                    # Hardware EEPROM Article Number (words 0x7E/0x7F on EF509/A1/ENA platforms)
+                    hw_article = None
+                    if 0x7E in eeprom and 0x7F in eeprom:
+                        hi_w = eeprom.get(0x7E, 0)
+                        lo_w = eeprom.get(0x7F, 0)
+                        hi_b = (hi_w >> 8) if (hi_w & 0xFF00) else (hi_w & 0xFF)
+                        lo_b = (lo_w >> 8) if (lo_w & 0xFF00) else (lo_w & 0xFF)
+                        if hi_b > 0 and lo_b > 0:
+                            cand = (hi_b << 8) | lo_b
+                            if 10000 <= cand <= 99999:
+                                hw_article = str(cand)
+
+                    if hw_article:
+                        article_num = hw_article
+                        if hw_article in ARTICLE_MODEL_MAP:
+                            fam, app_desc, _ = ARTICLE_MODEL_MAP[hw_article]
+                            self.model_family = fam
+                            app_type = app_desc
+                            # If hardware article specifies a refined model (e.g. WE8 vs E8), switch to its profile
+                            art_profile = profiles_db.get_model_spec(hw_article) or profiles_db.find_profile(fam)
+                            if art_profile and art_profile != profiles_db.DEFAULT_PROFILE:
+                                self.profile = art_profile
+                        else:
+                            app_type = f"{hw_article} {self.model_family}"
+                    else:
+                        article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else ("13500" if is_ena7 else "13705")))))
+                        app_type = self.profile.get("appliance_type", self.model_family)
+
+                    ean_code = "N/A"
+                    if article_num and serial_number != "N/A":
+                        try:
+                            base_ean = f"07610917{int(article_num):05d}"
+                            gtin14 = f"{base_ean}{calculate_gs1_check_digit(base_ean)}"
+                            ean_code = f"(01){gtin14}(21){serial_number}"
+                        except Exception:
+                            pass
+
+                    if is_we8 or is_e8:
+                        clean_pct = eeprom.get(0x0163, 0) & 0xFF if 0x0163 in eeprom else None
+                        decalc_pct = eeprom.get(0x0162, 0) & 0xFF if 0x0162 in eeprom else None
+                        filter_pct = eeprom.get(0x01E1, 0) & 0xFF if 0x01E1 in eeprom else None
+                        self.maint_counts = [cleanings, descalings, rinses, filter_cycles, milk_rinses, milk_cleanings]
+                        self.maint_pcts = [clean_pct, decalc_pct, None, filter_pct, None, None]
+                    else:
+                        if is_ena7:
+                            filter_cycles = eeprom.get(0x0052, 0)
+                        self.maint_counts = [cleanings, descalings, rinses, filter_cycles]
+                        self.maint_pcts = [None, None, None, None]
+
+                    gh = grinder_sec // 3600
+                    gm = (grinder_sec % 3600) // 60
+                    gs = grinder_sec % 60
+
+                    self.telemetry = {
+                        "serial_number": serial_number,
+                        "production_date": prod_date_str,
+                        "appliance_number": machine_num,
+                        "machine_number": machine_num,
+                        "serial_number_word": serial_word,
+                        "article_number": article_num,
+                        "ean_code": ean_code,
+                        "appliance_code": app_code,
+                        "appliance_type": app_type,
+                        "software_version_display": display_fw,
+                        "spdl_download_date": spdl_dl_str,
+                        "spdl_country_code": country_code,
+                        "spdl_language_date": spdl_lang_str,
+                        "water_hardness_dh": water_hardness,
+                        "total_cups": self.total_cups,
+                        "total_preparations": self.total_preparations,
+                        "preparations_since_intervention": prep_since_intervention,
+                        "cups_since_intervention": cups_since_intervention,
+                        "grinder_seconds": grinder_sec,
+                        "grinder_formatted": f"{gh}h {gm}m {gs}s",
+                        "water_dispensed_liters": round(water_dl / 10.0, 1),
+                        "descaling_agent_liters": round(decalc_dl / 10.0, 1),
+                        "since_last_service_preparations": prep_since_intervention,
+                        "water_since_decalc_liters": round(water_since_decalc / 10.0, 1),
+                        "power_spec": self.power_spec,
+                    }
+
+                    # Store swept EEPROM and apply any saved local AI/J.O.E. offset override immediately
+                    self.last_eeprom = dict(eeprom)
+                    self.address_width = address_width
+                    self.apply_local_offset_override(self.last_eeprom, article_num=article_num)
+
+                    # Interrogate Live Hardware Sensors & Switches
+                    update_prog(0.96, "Reading live sensors & hardware switches (HZ:, RE:0028)...")
+                    self.live_sensors = self.query_live_sensors()
+                    if self.live_sensors.get("alerts"):
+                        self.active_alerts = []
+                        for a in self.live_sensors["alerts"]:
+                            name = a.get("name")
+                            details = a.get("details", "")
+                            msg = a.get("message") or (f"{name}: {details}" if name else str(a))
+                            self.active_alerts.append({
+                                "bit": 0,
+                                "blocking": a.get("blocking", True),
+                                "name": msg
+                            })
+                    else:
+                        self.active_alerts = [
+                            {"bit": 0, "blocking": False, "name": "System Nominal / Ready to Brew"}
+                        ]
+
+                    update_prog(1.0, "Interrogation completed successfully!")
+                    self.log(f"ASCII Interrogation successful: {self.total_cups:,} cups read!")
+                    return True
 
             # ================================================================
             # Mode B: Smart Connect Handshake (@T0) - Encrypted 4:1 Wire
             # ================================================================
-            self.log("No response to TY:; initiating Smart Connect handshake (@T0)...")
+            self.log("Initiating Smart Connect handshake (@T0)...")
             update_prog(0.20, "Initiating Smart Connect handshake (@T0)...")
             t0_resp = self._send_encrypted_cmd("@T0\r\n", key=0x20, timeout=1.2)
 
             if not t0_resp:
-                self.log("ERROR: Machine did not respond to ASCII (TY:) or Smart Connect (@T0).")
+                if ascii_model_hint:
+                    self.log("Notice: Smart Connect (@T0) also returned no reply; returning ASCII identity without valid EEPROM.")
+                else:
+                    self.log("ERROR: Machine did not respond to ASCII (TY:) or Smart Connect (@T0).")
                 return False
 
+            self.is_legacy_cleartext = False
+            if self.conn is not None:
+                setattr(self.conn, "_is_smart_connect", True)
+                if getattr(self.conn, "wire_mode", None) is None:
+                    setattr(self.conn, "wire_mode", "smart_connect")
             self.protocol_mode = "Encrypted Smart Connect (@-Protocol)"
             update_prog(0.28, "Sending handshake step 2 (@T1)...")
             t1_resp = self._send_encrypted_cmd("@T1\r\n", key=0x21, timeout=1.2)
@@ -2036,28 +2116,49 @@ class JuraStatsSession:
                 idx = t3_resp.find("@T3:")
                 self.raw_model_str = t3_resp[idx + 4:].strip()
                 self._send_encrypted_cmd("@t3\r\n", key=0x23, timeout=0.6)
+            elif ascii_model_hint:
+                self.raw_model_str = ascii_model_hint
             else:
                 self.raw_model_str = "EF536M V02.01 (Smart Connect)"
 
             self.profile = profiles_db.find_profile(self.raw_model_str)
+            if (self.profile == profiles_db.DEFAULT_PROFILE or not self.profile) and ascii_profile_hint:
+                self.profile = ascii_profile_hint
             self.model_family = self.profile.get("model_family", "Modern Jura")
             self.ef_code = self.raw_model_str
             self.log(f"Smart Connect machine identified: {self.model_family} ({self.raw_model_str})")
 
-            # Beverage Counters (@TR:32,00 .. 0B)
-            update_prog(0.45, "Reading beverage counters...")
-            for bank in range(12):
-                update_prog(0.45 + (bank / 12.0) * 0.35, f"Reading beverage counters (Bank {bank}/11)...")
+            # Beverage Counters & EEPROM Banks (@TR:32,00 .. 1F)
+            update_prog(0.45, "Reading beverage counters & Smart Connect memory banks...")
+            sc_eeprom: Dict[int, int] = {}
+            consecutive_tr_empty = 0
+            for bank in range(32):
+                if bank >= 12 and consecutive_tr_empty >= 2:
+                    break
+                update_prog(0.45 + (min(bank, 12) / 12.0) * 0.35, f"Reading beverage counters (Bank {bank})...")
                 cmd = f"@TR:32,{bank:02X}\r\n"
-                resp = self._send_encrypted_cmd(cmd, key=0x30 + bank, timeout=0.8)
+                resp = self._send_encrypted_cmd(cmd, key=(0x30 + bank) & 0xFF, timeout=0.8)
                 if resp:
                     parsed = jp.parse_tr32(resp)
                     if parsed:
+                        consecutive_tr_empty = 0
                         _, words = parsed
+                        base_addr = bank * 16
                         for w_idx, count_val in enumerate(words):
-                            code = bank * 4 + w_idx
-                            if count_val != 0xFFFF:
-                                self.counters[code] = count_val
+                            sc_eeprom[base_addr + w_idx] = count_val
+                            if bank < 12:
+                                code = bank * 4 + w_idx
+                                if count_val != 0xFFFF:
+                                    self.counters[code] = count_val
+                    else:
+                        consecutive_tr_empty += 1
+                else:
+                    consecutive_tr_empty += 1
+                    if bank == 1 and consecutive_tr_empty >= 2:
+                        break
+
+            self.last_eeprom = dict(sc_eeprom)
+            self.address_width = 4
 
             per_prod = {k: v for k, v in self.counters.items() if k != 0 and v > 0}
             if per_prod:
@@ -2105,15 +2206,19 @@ class JuraStatsSession:
                 if raw_tf:
                     self.active_alerts = profiles_db.get_active_alerts(self.profile, raw_tf)
 
+            sc_article_num = str(self.profile.get("article_number") or "")
             if not self.telemetry:
                 self.telemetry = {
                     "total_cups": self.total_cups,
                     "total_preparations": self.total_preparations,
+                    "article_number": sc_article_num or "N/A",
                     "serial_number": "2018041544012" if (self.conn and self.conn.is_demo) else "N/A",
                     "production_date": "15.04.2018" if (self.conn and self.conn.is_demo) else "N/A",
                     "machine_number": 44012 if (self.conn and self.conn.is_demo) else "N/A",
                     "country_code": "EU" if (self.conn and self.conn.is_demo) else "N/A",
                 }
+            if self.last_eeprom:
+                self.apply_local_offset_override(self.last_eeprom, article_num=sc_article_num)
 
             # Interrogate Live Telemetry & Alerts
             self.live_sensors = self.query_live_sensors()

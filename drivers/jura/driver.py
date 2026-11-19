@@ -56,19 +56,39 @@ class JuraDriver(BaseApplianceDriver):
                 )
 
             # 2. Smart Connect @-protocol probe
-            import jura_protocol as jp
-            t0_raw = jp.encode_wire(jp.build_encrypted_frame("@T0\r\n", 0x20))
-            conn.write(t0_raw)
-            rx = conn.read(256, timeout_sec=0.8)
-            if rx and len(rx) >= 4:
-                decoded, _ = jp.decode_wire(rx)
-                if b"\r\n" in decoded or decoded.startswith(b"&"):
+            if hasattr(conn, "query_encrypted"):
+                t0_pt = conn.query_encrypted("@T0\r\n", key=0x20, timeout=0.8)
+                if t0_pt and ("@t0" in t0_pt.lower() or t0_pt.strip().startswith("@")):
+                    setattr(conn, "_is_smart_connect", True)
                     return ApplianceIdentification(
                         vendor="Jura",
                         model="Jura Smart Connect Appliance",
                         protocol_name="Encrypted Smart Connect (@-Protocol)",
                         raw_ident="Smart Connect Detected"
                     )
+            else:
+                import jura_protocol as jp
+                t0_raw = jp.encode_wire(jp.build_encrypted_frame("@T0\r\n", 0x20))
+                conn.write(t0_raw)
+                rx = conn.read(256, timeout_sec=0.8)
+                if rx and len(rx) >= 4:
+                    if rx.startswith(t0_raw):
+                        rx = rx[len(t0_raw):]
+                    aligned_len = (len(rx) // 4) * 4
+                    if aligned_len >= 4:
+                        decoded, _ = jp.decode_wire(rx[:aligned_len])
+                        amp = decoded.find(b"&")
+                        end = decoded.find(b"\r\n", amp) if amp != -1 else -1
+                        if amp != -1 and end != -1:
+                            pt = jp.decode_encrypted_frame(decoded[amp:end + 2])
+                            if pt and pt.strip() != "@T0":
+                                setattr(conn, "_is_smart_connect", True)
+                                return ApplianceIdentification(
+                                    vendor="Jura",
+                                    model="Jura Smart Connect Appliance",
+                                    protocol_name="Encrypted Smart Connect (@-Protocol)",
+                                    raw_ident="Smart Connect Detected"
+                                )
         except Exception:
             pass
 

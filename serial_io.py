@@ -130,6 +130,9 @@ class JuraSerialConnection:
         self.fd: Optional[int] = None
         self.py_serial = None
         self.is_open = False
+        self.wire_mode: Optional[str] = None
+        self._is_smart_connect: bool = "SMART CONNECT" in (port_name or "").upper()
+        self.vendor: str = "jura"
 
         if self.is_demo:
             p_up = port_name.upper()
@@ -141,6 +144,7 @@ class JuraSerialConnection:
                 self.demo_vendor = "lamanti-jn"
             else:
                 self.demo_vendor = "jura"
+            self.vendor = self.demo_vendor
 
             if "XJ5" in p_up:
                 self.mock_machine = MockJuraMachine(model_ef="EF518M V02.20", model_name="IMPRESSA XJ5")
@@ -160,10 +164,13 @@ class JuraSerialConnection:
                 self.mock_machine = MockJuraMachine(model_ef="EF634 V01.31", model_name="ENA 7")
             else:
                 self.mock_machine = MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
+            if self._is_smart_connect:
+                self.wire_mode = "smart_connect"
             self._init_mock_eeprom()
             self.is_open = True
         else:
             self.demo_vendor = "hardware"
+            self.vendor = "jura"
             self._open_hardware_port()
 
     def _init_mock_eeprom(self):
@@ -607,6 +614,10 @@ class JuraSerialConnection:
             return None
             return None
 
+        return self._query_hardware_ascii(cmd_clean, timeout=timeout)
+
+    def _query_raw_ascii(self, cmd_clean: str, timeout: float = 1.0) -> Optional[str]:
+        """Send plain unencoded ASCII command terminated with CRLF and strip local echo."""
         self.drain_rx()
         tx_data = (cmd_clean + "\r\n").encode("ascii")
         self.write(tx_data)
@@ -641,6 +652,164 @@ class JuraSerialConnection:
                         # Give machine UART 40ms to settle before next command
                         time.sleep(0.04)
                         return replies[0]
+
+        return None
+
+    def _query_wire_4to1_ascii(self, cmd_clean: str, timeout: float = 0.8) -> Optional[str]:
+        """Send 4:1 wire-encoded ASCII command, strip optical loopback echo, and decode 4-byte aligned RX."""
+        import jura_protocol as jp
+
+        self.drain_rx()
+        tx_ascii = (cmd_clean + "\r\n").encode("ascii")
+        wire_tx = jp.encode_wire(tx_ascii)
+        self.write(wire_tx)
+
+        rx_wire = bytearray()
+        start = time.time()
+        echo_stripped = False
+
+        while time.time() - start < timeout:
+            if not self.is_open:
+                return None
+            chunk = self.read(max_bytes=512, timeout_sec=0.05)
+            if not self.is_open:
+                return None
+            if chunk:
+                rx_wire.extend(chunk)
+                if len(rx_wire) > 16384:
+                    break
+                if not echo_stripped and len(rx_wire) >= len(wire_tx):
+                    if bytes(rx_wire[:len(wire_tx)]) == wire_tx:
+                        del rx_wire[:len(wire_tx)]
+                    echo_stripped = True
+                aligned_len = (len(rx_wire) // 4) * 4
+                if aligned_len >= 4:
+                    decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
+                    if b"\r\n" in decoded:
+                        lines = [l.strip().decode("latin1", errors="ignore") for l in decoded.split(b"\r\n")]
+                        complete_lines = lines[:-1]
+                        replies = []
+                        found_echo = False
+                        for l in complete_lines:
+                            if not found_echo and l == cmd_clean:
+                                found_echo = True
+                                continue
+                            if l:
+                                replies.append(l)
+                        if replies:
+                            time.sleep(0.04)
+                            return replies[0]
+
+        return None
+
+    def _query_hardware_ascii(self, cmd_clean: str, timeout: float = 1.0) -> Optional[str]:
+        """Dispatch physical ASCII query with 4:1 wire carrier auto-negotiation."""
+        wire_mode = getattr(self, "wire_mode", None)
+        if wire_mode == "wire_4to1_ascii":
+            return self._query_wire_4to1_ascii(cmd_clean, timeout=timeout)
+        if wire_mode == "raw_ascii":
+            return self._query_raw_ascii(cmd_clean, timeout=timeout)
+
+        # First probe (wire_mode is None): try raw ASCII first, then 4:1 wire-encoded ASCII for Jura/auto
+        ans = self._query_raw_ascii(cmd_clean, timeout=timeout)
+        if ans is not None:
+            self.wire_mode = "raw_ascii"
+            return ans
+
+        if getattr(self, "vendor", "jura") in ("jura", "auto", None):
+            ans_wire = self._query_wire_4to1_ascii(cmd_clean, timeout=min(timeout, 0.8))
+            if ans_wire and ":" in ans_wire:
+                self.wire_mode = "wire_4to1_ascii"
+                return ans_wire
+
+        return None
+
+    def query_encrypted(self, cmd_str: str, key: int = 0x20, timeout: float = 1.2) -> Optional[str]:
+        """
+        Send an encrypted Jura Smart Connect '@'-command over 4:1 wire and return
+        the decrypted response frame, stripping optical loopback echo and scanning
+        4-byte aligned '&'...CRLF frames safely.
+        """
+        if not self.is_open:
+            raise IOError("Serial port is not open.")
+
+        import jura_protocol as jp
+
+        cmd_clean = cmd_str.strip()
+        cmd_line = cmd_clean if cmd_str.endswith("\r\n") else f"{cmd_clean}\r\n"
+        wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_line, key))
+
+        if self.is_demo:
+            self.drain_rx()
+            self.write(wire_tx)
+            rx = self.read(2048, timeout_sec=timeout)
+            if not rx:
+                return None
+            aligned_len = (len(rx) // 4) * 4
+            if aligned_len < 4:
+                return None
+            decoded, _ = jp.decode_wire(rx[:aligned_len])
+            search_idx = 0
+            while True:
+                amp = decoded.find(b"&", search_idx)
+                if amp == -1:
+                    break
+                end = decoded.find(b"\r\n", amp)
+                if end == -1:
+                    break
+                frame = decoded[amp:end + 2]
+                search_idx = end + 2
+                pt = jp.decode_encrypted_frame(frame)
+                if pt is None:
+                    continue
+                if pt.strip() == cmd_clean:
+                    continue
+                return pt
+            return None
+
+        self.drain_rx()
+        self.write(wire_tx)
+
+        rx_wire = bytearray()
+        start = time.time()
+        echo_stripped = False
+
+        while time.time() - start < timeout:
+            if not self.is_open:
+                return None
+            chunk = self.read(max_bytes=512, timeout_sec=0.05)
+            if not self.is_open:
+                return None
+            if chunk:
+                rx_wire.extend(chunk)
+                if len(rx_wire) > 16384:
+                    break
+                if not echo_stripped and len(rx_wire) >= len(wire_tx):
+                    if bytes(rx_wire[:len(wire_tx)]) == wire_tx:
+                        del rx_wire[:len(wire_tx)]
+                    echo_stripped = True
+                aligned_len = (len(rx_wire) // 4) * 4
+                if aligned_len < 4:
+                    continue
+                decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
+                search_idx = 0
+                while True:
+                    amp = decoded.find(b"&", search_idx)
+                    if amp == -1:
+                        break
+                    end = decoded.find(b"\r\n", amp)
+                    if end == -1:
+                        break
+                    frame = decoded[amp:end + 2]
+                    search_idx = end + 2
+                    pt = jp.decode_encrypted_frame(frame)
+                    if pt is None:
+                        continue
+                    # Never mistake an optical loopback echo of our own command for the machine's reply
+                    if pt.strip() == cmd_clean:
+                        continue
+                    time.sleep(0.04)
+                    return pt
 
         return None
 

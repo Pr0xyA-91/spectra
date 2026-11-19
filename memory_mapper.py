@@ -354,12 +354,76 @@ class MemoryMapperEngine:
                 "custom_registers": {}
             }
 
+    def _smart_connect_handshake(self) -> Optional[str]:
+        """Run Smart Connect @T0..@t3 handshake via conn.query_encrypted and return model string if detected."""
+        if not hasattr(self.conn, "query_encrypted"):
+            return None
+        t0 = self.conn.query_encrypted("@T0\r\n", key=0x20, timeout=1.0)
+        if not t0:
+            return None
+        setattr(self.conn, "_is_smart_connect", True)
+        self.conn.query_encrypted("@T1\r\n", key=0x21, timeout=0.8)
+        t3 = self.conn.query_encrypted("@t2:818000\r\n", key=0x22, timeout=1.0)
+        model_str = None
+        if t3 and "@T3:" in t3:
+            model_str = t3[t3.find("@T3:") + 4:].strip()
+            self.conn.query_encrypted("@t3\r\n", key=0x23, timeout=0.6)
+        return model_str or "Smart Connect"
+
+    def _smart_connect_sweep_eeprom(self, progress_callback=None) -> bool:
+        """Sweep Smart Connect memory banks via @TR:32,00..1F into self.current_eeprom."""
+        import jura_protocol as jp
+        if not hasattr(self.conn, "query_encrypted"):
+            return False
+        if not getattr(self.conn, "_is_smart_connect", False):
+            if not self._smart_connect_handshake():
+                return False
+        else:
+            # Ensure session is active; re-handshake if @TR:32,00 returns None
+            test_r = self.conn.query_encrypted("@TR:32,00\r\n", key=0x30, timeout=0.8)
+            if not test_r:
+                if not self._smart_connect_handshake():
+                    return False
+
+        any_bank = False
+        consecutive_empty = 0
+        for page in range(32):
+            if not getattr(self.conn, "is_open", True):
+                raise IOError("Serial port disconnected during Smart Connect EEPROM sweep.")
+            if progress_callback:
+                progress_callback(page + 1, 32, f"Reading Smart Connect Bank 0x{page:02X}...")
+            resp = self.conn.query_encrypted(f"@TR:32,{page:02X}\r\n", key=(0x30 + page) & 0xFF, timeout=0.8)
+            if resp:
+                parsed = jp.parse_tr32(resp)
+                if parsed:
+                    any_bank = True
+                    consecutive_empty = 0
+                    _, words = parsed
+                    base = page * 16
+                    for idx, w in enumerate(words):
+                        self.current_eeprom[base + idx] = w
+                    continue
+            consecutive_empty += 1
+            if page >= 12 and consecutive_empty >= 2:
+                break
+            if page == 1 and not any_bank and consecutive_empty >= 2:
+                break
+        return any_bank
+
     def sweep_eeprom(self, progress_callback=None) -> Dict[int, int]:
         """
         Perform complete EEPROM sweep (16 blocks for 2-digit models, 32/64 blocks for 4-digit models),
-        falling back to individual word reads (RE:) where blocks fail.
+        probing first word before 16-word RE: fallback and falling back to Smart Connect @TR:32 if needed.
         """
+        if getattr(self.conn, "_is_smart_connect", False):
+            if self._smart_connect_sweep_eeprom(progress_callback=progress_callback):
+                self.classify_all()
+                return dict(self.current_eeprom)
+
         total_blocks = max(1, self.max_words // 16)
+        consecutive_failed_blocks = 0
+        any_block_succeeded = False
+
         for b_idx in range(total_blocks):
             if not getattr(self.conn, "is_open", True):
                 raise IOError("Serial port disconnected during EEPROM sweep.")
@@ -401,26 +465,55 @@ class MemoryMapperEngine:
                         if parsed_ok:
                             block_success = True
 
-            if not block_success:
-                # Fallback to single word queries
-                for i in range(16):
+            if block_success:
+                any_block_succeeded = True
+                consecutive_failed_blocks = 0
+            else:
+                # Probe first word RE:{blk} before looping across remaining 15 words
+                first_addr_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
+                try:
+                    first_ans = self.query_safe(f"RE:{first_addr_str}", timeout=1.0)
+                except (IOError, OSError) as exc:
                     if not getattr(self.conn, "is_open", True):
-                        raise IOError("Serial port disconnected during EEPROM sweep.")
-                    addr = blk + i
-                    addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
+                        raise IOError(f"Serial port disconnected at word 0x{first_addr_str}: {exc}") from exc
+                    first_ans = None
+
+                if first_ans and first_ans.lower().startswith("re:"):
                     try:
-                        w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
-                    except (IOError, OSError) as exc:
+                        self.current_eeprom[blk] = int(first_ans[3:].strip()[:4], 16)
+                    except ValueError:
+                        self.current_eeprom[blk] = 0x0000
+                    consecutive_failed_blocks = 0
+                    any_block_succeeded = True
+                    for i in range(1, 16):
                         if not getattr(self.conn, "is_open", True):
-                            raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
-                        w_ans = None
-                    if w_ans and w_ans.lower().startswith("re:"):
+                            raise IOError("Serial port disconnected during EEPROM sweep.")
+                        addr = blk + i
+                        addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
                         try:
-                            self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
-                        except ValueError:
+                            w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                        except (IOError, OSError) as exc:
+                            if not getattr(self.conn, "is_open", True):
+                                raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
+                            w_ans = None
+                        if w_ans and w_ans.lower().startswith("re:"):
+                            try:
+                                self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
+                            except ValueError:
+                                self.current_eeprom[addr] = 0x0000
+                        else:
                             self.current_eeprom[addr] = 0x0000
-                    else:
-                        self.current_eeprom[addr] = 0x0000
+                else:
+                    for i in range(16):
+                        self.current_eeprom[blk + i] = 0x0000
+                    consecutive_failed_blocks += 1
+                    if not any_block_succeeded and consecutive_failed_blocks >= 2:
+                        break
+
+        # Fall back to Smart Connect @TR:32 if initial ASCII blocks failed or returned all zeros
+        has_nonzero = any(v not in (0, 0xFFFF) for v in self.current_eeprom.values())
+        if (not any_block_succeeded and consecutive_failed_blocks >= 2) or not has_nonzero:
+            self._smart_connect_sweep_eeprom(progress_callback=progress_callback)
 
         self.classify_all()
         return dict(self.current_eeprom)
@@ -432,6 +525,19 @@ class MemoryMapperEngine:
             return []
         if not getattr(self.conn, "is_open", True):
             raise IOError("Serial port disconnected during block sweep.")
+
+        if getattr(self.conn, "_is_smart_connect", False) and hasattr(self.conn, "query_encrypted"):
+            import jura_protocol as jp
+            blk = b_idx * 16
+            resp = self.conn.query_encrypted(f"@TR:32,{b_idx:02X}\r\n", key=(0x30 + b_idx) & 0xFF, timeout=0.8)
+            if resp:
+                parsed = jp.parse_tr32(resp)
+                if parsed:
+                    _, words = parsed
+                    for i, w in enumerate(words):
+                        self.current_eeprom[blk + i] = w
+            self.classify_all()
+            return [r for r in self.classified_registers if blk <= r.addr < blk + 16]
 
         blk = b_idx * 16
         blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
@@ -459,24 +565,40 @@ class MemoryMapperEngine:
                     block_success = True
 
         if not block_success:
-            for i in range(16):
+            first_addr_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
+            try:
+                first_ans = self.query_safe(f"RE:{first_addr_str}", timeout=1.0)
+            except (IOError, OSError) as exc:
                 if not getattr(self.conn, "is_open", True):
-                    raise IOError("Serial port disconnected during block sweep.")
-                addr = blk + i
-                addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
+                    raise IOError(f"Serial port disconnected at word 0x{first_addr_str}: {exc}") from exc
+                first_ans = None
+
+            if first_ans and first_ans.lower().startswith("re:"):
                 try:
-                    w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
-                except (IOError, OSError) as exc:
+                    self.current_eeprom[blk] = int(first_ans[3:].strip()[:4], 16)
+                except ValueError:
+                    self.current_eeprom[blk] = 0x0000
+                for i in range(1, 16):
                     if not getattr(self.conn, "is_open", True):
-                        raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
-                    w_ans = None
-                if w_ans and w_ans.lower().startswith("re:"):
+                        raise IOError("Serial port disconnected during block sweep.")
+                    addr = blk + i
+                    addr_str = f"{addr:02X}" if self.address_width == 2 else f"{addr:04X}"
                     try:
-                        self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
-                    except ValueError:
+                        w_ans = self.query_safe(f"RE:{addr_str}", timeout=1.0)
+                    except (IOError, OSError) as exc:
+                        if not getattr(self.conn, "is_open", True):
+                            raise IOError(f"Serial port disconnected at word 0x{addr_str}: {exc}") from exc
+                        w_ans = None
+                    if w_ans and w_ans.lower().startswith("re:"):
+                        try:
+                            self.current_eeprom[addr] = int(w_ans[3:].strip()[:4], 16)
+                        except ValueError:
+                            self.current_eeprom[addr] = 0x0000
+                    else:
                         self.current_eeprom[addr] = 0x0000
-                else:
-                    self.current_eeprom[addr] = 0x0000
+            else:
+                for i in range(16):
+                    self.current_eeprom[blk + i] = 0x0000
 
         self.classify_all()
         return [r for r in self.classified_registers if blk <= r.addr < blk + 16]
