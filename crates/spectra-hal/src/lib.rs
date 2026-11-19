@@ -76,7 +76,7 @@ pub use serial::{SerialConfig, SerialTransport};
 pub mod jura_codec {
     use super::HalResult;
 
-    const BASE_MASK: u8 = 0b0101_1011; // 0x5B base carrier byte
+    const BASE_MASK: u8 = 0b1101_1011; // 0xDB base carrier byte
 
     /// Encodes 1 ASCII byte into 4 UART wire bytes (2 payload bits per wire byte at bit 2 & bit 5)
     pub fn encode_byte(byte: u8) -> [u8; 4] {
@@ -98,5 +98,22 @@ pub mod jura_codec {
             out |= (b0 << (i * 2)) | (b1 << (i * 2 + 1));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jura_codec;
+
+    #[test]
+    fn test_jura_codec_base_mask_and_roundtrip() {
+        for b in [0x00u8, 0x26, b'T', b'Y', b':', b'\r', b'\n', 0xFF] {
+            let enc = jura_codec::encode_byte(b);
+            for &w in &enc {
+                assert_eq!(w & !((1 << 2) | (1 << 5)), 0b1101_1011);
+            }
+            let dec = jura_codec::decode_quad(&enc).unwrap();
+            assert_eq!(dec, b);
+        }
     }
 }

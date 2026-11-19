@@ -1,19 +1,19 @@
 {
-  "build": "20261118.2220",
-  "main_build": "20261118.2220",
-  "windows_build": "20261118.2220",
-  "published_at": "2026-11-19T08:37:48Z",
-  "release_notes": "- docs(rules): update GEMINI.md with learned coffee-cups, Win32 updater, and calibration pipeline rules\n- fix(protocol): Build 20261118.2220 \u2014 Smart Connect / 4:1 wire auto-detection and EEPROM Mode B fixes\n- feat(calibrations): Build 20261118.1712 \u2014 hybrid Issue-to-PR community harvester with dynamic repo detection\n- fix(offsets): Build 20261118.1511 \u2014 import profiles_db in web_server and apply local overrides immediately\n- fix(updater): Build 20261118.1447 \u2014 avoid Windows Job/tree self-kill and add CREATE_BREAKAWAY_FROM_JOB\n- fix(counters): Build 20261117.1914 \u2014 count standalone steam/milk/water in preparations only (coffee-only cups)",
+  "build": "20261119.1125",
+  "main_build": "20261119.1125",
+  "windows_build": "20261119.1125",
+  "published_at": "2026-11-19T13:05:13Z",
+  "release_notes": "- Official JURA USB Service Interface hardware 4:1 bridge auto-detection (raw '&'-frame vs. 4:1 wire framing) to prevent double 4:1 encoding on Smart Connect machines\n- Fixed Smart Connect Mode B @TR:32 bank stride (4 words/bank) and Memory Mapper block-by-block Smart Connect fallback with ~4s fast-fail abort_sweep\n- Hardened web_server security (static path traversal 403, Origin CSRF check, strict JSON validation, ~/Downloads HMI containment, _session_lock cache sync & non-blocking diagnostics)\n- Hardened self-updater (mandatory SHA-256 verification, HTTPS GitHub host allowlist, safe tarball extraction) and atomic 0600 GitHub OAuth token persistence\n- Fixed Local AI duplicate definitions, OCR NameError, warm model retention across upload calibration, and strict eeprom_words proof verification for community calibrations\n- Added frontend AbortController sweep cancellation, cross-port race guards, and 3-retry Device Flow network tolerance",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "e71d8ef2626b13f7c486aba77d1a296db207a96eafaa375129d7f85ba5ab436e",
-      "size": 29847040
+      "sha256": "a6195bc608f7a034383307651eebf2a6ecc17455519170dc9708e731390ad41e",
+      "size": 29950976
     },
     "spectra_setup.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "11c06401c95b8eeb047f6199b8a5108ead1e92a5506f0cb787daba2cdc94e675",
-      "size": 51923968
+      "sha256": "017415f09f86a1241d02cac8539f38262fa35cec674009386d6f55f7a7807224",
+      "size": 52027904
     }
   }
 }

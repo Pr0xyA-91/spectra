@@ -268,6 +268,161 @@ class TestSmartConnectAndWireFixes(unittest.TestCase):
             web_server.cleanup_resources()
             spectra_app.shutdown_spectra_cleanly(httpd)
 
+    def test_official_usb_service_interface_raw_frame_autodetection(self):
+        """Official Jura USB Service Interface box accepts raw '&'-frames without double 4:1 encoding."""
+        class RawFrameBridgeTransport(serial_io.JuraSerialConnection):
+            def __init__(self):
+                self.port_name = "/dev/ttyUSB0"
+                self.raw_port_label = "/dev/ttyUSB0"
+                self.baudrate = 9600
+                self.timeout = 0.2
+                self._applied_timeout = 0.2
+                self.is_demo = False
+                self.mock_machine = jp.MockJuraMachine(model_ef="EF536M V02.01", model_name="S8")
+                self.fd = None
+                self.py_serial = None
+                self.is_open = True
+                self.wire_mode = None
+                self.encrypted_wire_mode = None
+                self._is_smart_connect = False
+                self.vendor = "jura"
+                self.demo_vendor = "hardware"
+                self._rx_queue = bytearray()
+                self.written_frames = []
+
+            def drain_rx(self):
+                self._rx_queue.clear()
+
+            def write(self, data: bytes, inter_byte_delay: float = 0.0) -> int:
+                self.written_frames.append(data)
+                # Only respond to raw '&'-frames (not 4:1 encoded carrier bytes starting with 0xDB/0xDF/etc.)
+                if data.startswith(b"&") and data.endswith(b"\r\n"):
+                    # Echo raw frame first, then feed into MockJuraMachine by encoding to wire and unwrapping
+                    self._rx_queue.extend(data)
+                    reply_wire = self.mock_machine.process_input(jp.encode_wire(data))
+                    if reply_wire:
+                        reply_raw, _ = jp.decode_wire(reply_wire)
+                        self._rx_queue.extend(reply_raw)
+                return len(data)
+
+            def read(self, max_bytes: int = 2048, timeout_sec=None) -> bytes:
+                if not self._rx_queue:
+                    return b""
+                chunk = bytes(self._rx_queue[:max_bytes])
+                del self._rx_queue[:max_bytes]
+                return chunk
+
+        conn = RawFrameBridgeTransport()
+        # Shorten 4:1 fallback timeout so auto-negotiation is fast in unit tests
+        orig_w41 = conn._query_encrypted_wire_4to1
+        conn._query_encrypted_wire_4to1 = lambda cmd_str, key=0x20, timeout=1.2: orig_w41(cmd_str, key=key, timeout=0.02)
+
+        with patch("time.sleep", return_value=None):
+            t0 = conn.query_encrypted("@T0\r\n", key=0x20, timeout=0.4)
+            self.assertIsNotNone(t0)
+            self.assertIn("@t0", t0.lower())
+            self.assertEqual(conn.encrypted_wire_mode, "raw_frame")
+            self.assertTrue(conn._is_smart_connect)
+
+            # Subsequent commands go straight to raw_frame without probing wire_4to1_frame
+            conn.written_frames.clear()
+            conn.query_encrypted("@T1\r\n", key=0x21, timeout=0.4)
+            t3 = conn.query_encrypted("@t2:818000\r\n", key=0x22, timeout=0.4)
+            self.assertIn("@T3:", t3)
+            self.assertTrue(all(f.startswith(b"&") for f in conn.written_frames))
+
+    def test_sweep_block_smart_connect_4_banks_and_dead_bus_abort(self):
+        """sweep_block() reads 4 banks (16 words) on Smart Connect and aborts after 2 failed blocks on dead bus."""
+        conn = FakeSmartConnectWireTransport(ty_reply=None, echo_tx=True)
+        orig_qa = conn.query_ascii
+        conn.query_ascii = lambda cmd, timeout=1.0: orig_qa(cmd, timeout=0.02)
+
+        with patch("time.sleep", return_value=None):
+            engine = memory_mapper.MemoryMapperEngine(conn)
+            res0 = engine.sweep_block(0)
+            self.assertIsInstance(res0, dict)
+            self.assertFalse(res0.get("abort_sweep"))
+            self.assertEqual(len(res0["registers"]), 16)
+            # 4 banks * 4 words = 16 words populated in block 0 (addrs 0..15)
+            # Mock counters: 0->8420, 1->14, 2->320, 3->6810, 4->215, 5->84, 6->62, 7->490, 8->55, 10->22, 13->130
+            self.assertEqual(engine.current_eeprom[0], 8420)
+            self.assertEqual(engine.current_eeprom[4], 215)
+            self.assertEqual(engine.current_eeprom[8], 55)
+            self.assertEqual(engine.current_eeprom[13], 130)
+
+        # Dead bus: silent on both ASCII and Smart Connect
+        dead_conn = FakeSmartConnectWireTransport(ty_reply=None, echo_tx=True)
+        dead_conn.mock_machine.process_input = lambda _b: b""
+        orig_qa_dead = dead_conn.query_ascii
+        dead_conn.query_ascii = lambda cmd, timeout=1.0: orig_qa_dead(cmd, timeout=0.02)
+        orig_qe_dead = dead_conn.query_encrypted
+        dead_conn.query_encrypted = lambda cmd, key=0x20, timeout=1.2: orig_qe_dead(cmd, key=key, timeout=0.02)
+
+        with patch("time.sleep", return_value=None):
+            dead_engine = memory_mapper.MemoryMapperEngine(dead_conn)
+            r0 = dead_engine.sweep_block(0)
+            self.assertFalse(r0.get("abort_sweep"))
+            r1 = dead_engine.sweep_block(1)
+            self.assertTrue(r1.get("abort_sweep"))
+            self.assertIn("abort_reason", r1)
+
+    def test_query_live_sensors_hz_none_after_ty_no_unbound_local_error(self):
+        """query_live_sensors() must not raise UnboundLocalError on 'parts' when TY: succeeds and HZ: returns None."""
+        conn = FakeSmartConnectWireTransport(ty_reply="ty:EF518M V02.20", echo_tx=False)
+        orig_qa = conn.query_ascii
+
+        def mock_qa(cmd, timeout=1.0):
+            if cmd == "TY:":
+                return "ty:EF518M V02.20"
+            return None
+
+        conn.query_ascii = mock_qa
+        with patch("time.sleep", return_value=None):
+            res = sc.query_live_sensors("/dev/ttyUSB0", conn=conn, fast_poll=True)
+        self.assertNotIn("error", res)
+        self.assertEqual(res.get("raw_status"), "N/A")
+        self.assertTrue(len(res.get("switches", [])) > 0)
+
+    def test_run_interrogation_uppercase_rt_corrupt_hex_and_bank4_stride(self):
+        """run_interrogation handles uppercase RT: with corrupt hex cleanly and uses bank * 4 stride in Mode B."""
+        # 1. Uppercase RT: + corrupt hex falls through cleanly without crashing
+        conn = FakeSmartConnectWireTransport(ty_reply="ty:EF536M V02.01", echo_tx=True)
+        orig_qa = conn.query_ascii
+
+        def custom_qa(cmd, timeout=1.0):
+            if cmd == "TY:":
+                return "ty:EF536M V02.01"
+            if cmd.startswith("RT:"):
+                return "RT:" + ("ZZZZ" * 16)
+            return orig_qa(cmd, timeout=0.02)
+
+        conn.query_ascii = custom_qa
+        sess = sc.JuraStatsSession("/dev/ttyUSB0")
+        sess.conn = conn
+        with patch("time.sleep", return_value=None):
+            ok = sess.run_interrogation()
+        self.assertTrue(ok)
+        # Mode B bank * 4 stride: bank 0 -> addr 0..3, bank 1 -> addr 4..7, bank 2 -> addr 8..11, bank 3 -> addr 12..15
+        self.assertEqual(sess.last_eeprom.get(0), 8420)
+        self.assertEqual(sess.last_eeprom.get(4), 215)
+        self.assertEqual(sess.last_eeprom.get(8), 55)
+        self.assertEqual(sess.last_eeprom.get(13), 130)
+
+    def test_profiles_db_find_profile_preserves_base_fields_with_model_spec(self):
+        """find_profile() resolves base profiles_data.json first and preserves fields when docs/models spec exists."""
+        import profiles_db
+        profiles_db.invalidate_model_specs_cache()
+        prof = profiles_db.find_profile("EF518M V02.20")
+        # Spec fields from docs/models/EF518M_*.json are merged on top
+        self.assertIn("custom_registers", prof)
+        # Base fields from profiles_data.json (e.g. alerts / maintenance_counters) are preserved
+        self.assertIn("alerts", prof)
+        self.assertTrue(len(prof["alerts"]) > 0)
+        # Returned dict is a deep copy; mutating it must not pollute cached profile
+        prof["alerts"].append({"bit": 999, "blocking": False, "name": "polluted"})
+        prof2 = profiles_db.find_profile("EF518M V02.20")
+        self.assertFalse(any(a.get("bit") == 999 for a in prof2["alerts"]))
+
 
 if __name__ == "__main__":
     unittest.main()

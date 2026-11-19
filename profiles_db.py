@@ -7,6 +7,7 @@ for over 75 modern Jura coffee machines.
 
 import os
 import re
+import copy
 import json
 import datetime
 import threading
@@ -60,80 +61,102 @@ _PROFILES_CACHE = None
 _MODEL_SPECS_CACHE = None
 _PROFILE_LOOKUP_CACHE = {}
 _MODEL_SPEC_LOOKUP_CACHE = {}
+_CACHE_LOCK = threading.RLock()
+
+
+def invalidate_model_specs_cache() -> None:
+    """Thread-safe invalidation of model specs and profile lookup caches."""
+    global _MODEL_SPECS_CACHE
+    with _CACHE_LOCK:
+        _MODEL_SPECS_CACHE = None
+        _MODEL_SPEC_LOOKUP_CACHE.clear()
+        _PROFILE_LOOKUP_CACHE.clear()
+
 
 def load_profiles() -> dict:
     global _PROFILES_CACHE
-    if _PROFILES_CACHE is None:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                _PROFILES_CACHE = json.load(f)
-        else:
-            _PROFILES_CACHE = {}
-    return _PROFILES_CACHE
+    with _CACHE_LOCK:
+        if _PROFILES_CACHE is None:
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    _PROFILES_CACHE = json.load(f)
+            else:
+                _PROFILES_CACHE = {}
+        return _PROFILES_CACHE
+
 
 def load_model_specs() -> dict:
     """Load all structured model specification overrides from docs/models/*.json."""
     global _MODEL_SPECS_CACHE
-    if _MODEL_SPECS_CACHE is not None:
+    with _CACHE_LOCK:
+        if _MODEL_SPECS_CACHE is not None:
+            return _MODEL_SPECS_CACHE
+
+        specs = {}
+        candidates = [
+            DOCS_MODELS_DIR,
+            os.path.join(os.path.dirname(__file__), "..", "docs", "models"),
+            os.path.join(os.getcwd(), "docs", "models")
+        ]
+        for d in candidates:
+            if os.path.exists(d):
+                import glob
+                for fpath in glob.glob(os.path.join(d, "*.json")):
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        ef = data.get("ef_code")
+                        if ef:
+                            specs[ef.upper()] = data
+                        for art in data.get("article_numbers", []):
+                            specs[str(art)] = data
+                    except Exception:
+                        pass
+                break
+        _MODEL_SPECS_CACHE = specs
         return _MODEL_SPECS_CACHE
 
-    specs = {}
-    candidates = [
-        DOCS_MODELS_DIR,
-        os.path.join(os.path.dirname(__file__), "..", "docs", "models"),
-        os.path.join(os.getcwd(), "docs", "models")
-    ]
-    for d in candidates:
-        if os.path.exists(d):
-            import glob
-            for fpath in glob.glob(os.path.join(d, "*.json")):
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    ef = data.get("ef_code")
-                    if ef:
-                        specs[ef.upper()] = data
-                    for art in data.get("article_numbers", []):
-                        specs[str(art)] = data
-                except Exception:
-                    pass
-            break
-    _MODEL_SPECS_CACHE = specs
-    return _MODEL_SPECS_CACHE
 
 def get_model_spec(ef_code_or_art: str) -> Optional[dict]:
     """Retrieve detailed model specification if available in docs/models/."""
     if not ef_code_or_art:
         return None
     cache_key = str(ef_code_or_art).strip().upper()
-    if cache_key in _MODEL_SPEC_LOOKUP_CACHE:
-        return _MODEL_SPEC_LOOKUP_CACHE[cache_key]
+    with _CACHE_LOCK:
+        if cache_key in _MODEL_SPEC_LOOKUP_CACHE:
+            cached = _MODEL_SPEC_LOOKUP_CACHE[cache_key]
+            return copy.deepcopy(cached) if cached is not None else None
 
-    specs = load_model_specs()
-    if not specs:
-        _MODEL_SPEC_LOOKUP_CACHE[cache_key] = None
-        return None
+        specs = load_model_specs()
+        if not specs:
+            _MODEL_SPEC_LOOKUP_CACHE[cache_key] = None
+            return None
 
-    raw = cache_key
-    spec = None
-    if raw in specs:
-        spec = specs[raw]
-    else:
-        m = re.search(r'(EF\w+)', raw)
-        if m and m.group(1) in specs:
-            spec = specs[m.group(1)]
+        raw = cache_key
+        spec = None
+        if raw in specs:
+            spec = specs[raw]
         else:
-            simplified = re.sub(r'V\d+$', '', raw)
-            if simplified in specs:
-                spec = specs[simplified]
+            m = re.search(r'(EF\w+)', raw)
+            if m and m.group(1) in specs:
+                spec = specs[m.group(1)]
             else:
-                for k, v in specs.items():
-                    if k in raw or raw in k:
-                        spec = v
-                        break
+                simplified = re.sub(r'V\d+$', '', raw)
+                if simplified in specs:
+                    spec = specs[simplified]
+                elif len(raw) >= 4:
+                    best_k = None
+                    best_len = 0
+                    for k, v in specs.items():
+                        if len(k) >= 4 and (k in raw or raw in k):
+                            if len(k) > best_len:
+                                best_k = k
+                                best_len = len(k)
+                                spec = v
 
-    _MODEL_SPEC_LOOKUP_CACHE[cache_key] = spec
-    return spec
+        _MODEL_SPEC_LOOKUP_CACHE[cache_key] = spec
+        return copy.deepcopy(spec) if spec is not None else None
+
 
 def find_profile(raw_model_or_ef: str) -> dict:
     """
@@ -142,71 +165,73 @@ def find_profile(raw_model_or_ef: str) -> dict:
     Automatically enriches matched profile with model specification from docs/models/ if present.
     """
     cache_key = str(raw_model_or_ef).strip().upper()
-    if cache_key in _PROFILE_LOOKUP_CACHE:
-        return dict(_PROFILE_LOOKUP_CACHE[cache_key])
+    with _CACHE_LOCK:
+        if cache_key in _PROFILE_LOOKUP_CACHE:
+            return copy.deepcopy(_PROFILE_LOOKUP_CACHE[cache_key])
 
-    profiles = load_profiles()
-    matched_profile = None
+        profiles = load_profiles()
+        matched_profile = None
 
-    # 1. Direct match in model specifications (docs/models/*.json) by EF code or Article Number
-    spec = get_model_spec(raw_model_or_ef)
-    if spec:
-        matched_profile = dict(spec)
+        # 1. Resolve base profile from profiles_data.json FIRST so base fields (alerts, products, etc.) are preserved
+        if profiles:
+            # Extract EF code from string if prefixed
+            m = re.search(r'(EF\w+)', cache_key)
+            target = m.group(1) if m else cache_key
 
-    if profiles and matched_profile is None:
-        # Extract EF code from string if prefixed
-        m = re.search(r'(EF\w+)', raw_model_or_ef.upper())
-        target = m.group(1) if m else raw_model_or_ef.strip().upper()
+            # Exact match first
+            if target in profiles:
+                matched_profile = copy.deepcopy(profiles[target])
 
-        # Exact match first
-        if target in profiles:
-            matched_profile = dict(profiles[target])
+            # Try removing suffixes like V2, _C, PP, etc.
+            if matched_profile is None:
+                simplified = re.sub(r'V\d+$', '', target)
+                simplified = re.sub(r'_C$', '', simplified)
+                simplified = re.sub(r'(COFFEEONLY|PP|UL|ULV\d+)$', '', simplified)
+                if simplified in profiles:
+                    matched_profile = copy.deepcopy(profiles[simplified])
 
-        # Try removing suffixes like V2, _C, PP, etc.
-        if matched_profile is None:
-            simplified = re.sub(r'V\d+$', '', target)
-            simplified = re.sub(r'_C$', '', simplified)
-            simplified = re.sub(r'(COFFEEONLY|PP|UL|ULV\d+)$', '', simplified)
-            if simplified in profiles:
-                matched_profile = dict(profiles[simplified])
+            # Longest prefix match
+            if matched_profile is None:
+                best_key = None
+                best_len = 0
+                for key in profiles:
+                    if target.startswith(key.upper()) and len(key) > best_len:
+                        best_key = key
+                        best_len = len(key)
+                if best_key:
+                    matched_profile = copy.deepcopy(profiles[best_key])
 
-        # Longest prefix match
-        if matched_profile is None:
-            best_key = None
-            best_len = 0
-            for key in profiles:
-                if target.startswith(key.upper()) and len(key) > best_len:
-                    best_key = key
-                    best_len = len(key)
-            if best_key:
-                matched_profile = dict(profiles[best_key])
-
-        # Check model family match (exact match first, then word-boundary match)
-        if matched_profile is None:
-            for key, p in profiles.items():
-                fam = p.get("model_family", "")
-                if fam and fam.upper() == target:
-                    matched_profile = dict(p)
-                    break
+            # Check model family match (exact match first, then word-boundary match)
             if matched_profile is None:
                 for key, p in profiles.items():
                     fam = p.get("model_family", "")
-                    if fam and re.search(r'\b' + re.escape(fam.upper()) + r'\b', target):
-                        matched_profile = dict(p)
+                    if fam and fam.upper() == target:
+                        matched_profile = copy.deepcopy(p)
                         break
+                if matched_profile is None:
+                    for key, p in profiles.items():
+                        fam = p.get("model_family", "")
+                        if fam and re.search(r'\b' + re.escape(fam.upper()) + r'\b', target):
+                            matched_profile = copy.deepcopy(p)
+                            break
 
-    if matched_profile is None:
-        matched_profile = dict(DEFAULT_PROFILE)
+        # 2. Load model specification from docs/models/*.json
+        spec = get_model_spec(raw_model_or_ef)
 
-    # Dynamic Enrichment: Merge model-specific specifications from docs/models/*.json if available
-    spec = get_model_spec(raw_model_or_ef)
-    if spec:
-        for k in ("model_family", "article_number", "appliance_type", "series", "products", "hardware", "custom_registers", "recipe_buttons", "article_numbers"):
-            if k in spec:
-                matched_profile[k] = spec[k]
+        if matched_profile is None:
+            if spec:
+                matched_profile = copy.deepcopy(DEFAULT_PROFILE)
+                matched_profile.update(spec)
+            else:
+                matched_profile = copy.deepcopy(DEFAULT_PROFILE)
+        elif spec:
+            # Merge model-specific specifications on top of base profiles_data.json fields
+            for k, v in spec.items():
+                if v is not None:
+                    matched_profile[k] = copy.deepcopy(v)
 
-    _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile
-    return dict(matched_profile)
+        _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile
+        return copy.deepcopy(matched_profile)
 
 def get_product_name(profile: dict, code: int) -> str:
     """Find human-readable product name for a numeric product code."""

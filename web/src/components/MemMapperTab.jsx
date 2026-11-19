@@ -110,16 +110,27 @@ export default function MemMapperTab({
   const sweepSeqRef = useRef(0);
   const diffInFlightRef = useRef(false);
   const rawSensorsInFlightRef = useRef(false);
+  const activePortRef = useRef(selectedPort);
+  const sweepAbortRef = useRef(null);
+
+  useEffect(() => {
+    activePortRef.current = selectedPort;
+  }, [selectedPort]);
 
   // --------------------------------------------------------------------------
   // 1. Fetch Mapper Identity & Summary
   // --------------------------------------------------------------------------
-  const fetchMapperInfo = useCallback(async () => {
-    if (!selectedPort) return null;
+  const fetchMapperInfo = useCallback(async (signal = null) => {
+    const port = selectedPort;
+    if (!port) return null;
     try {
-      const res = await fetch(`/api/mapper/info?port=${encodeURIComponent(selectedPort)}`);
+      const res = await fetch(
+        `/api/mapper/info?port=${encodeURIComponent(port)}`,
+        signal ? { signal } : undefined
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (port !== activePortRef.current) return null;
       if (data.error) {
         setStatusMessage(data.error);
         setStatusType('warn');
@@ -131,6 +142,7 @@ export default function MemMapperTab({
       }
       return data;
     } catch (err) {
+      if (err?.name === 'AbortError') return null;
       console.warn('Failed to fetch mapper info:', err);
       return null;
     }
@@ -140,8 +152,14 @@ export default function MemMapperTab({
   // 2. Full Memory Sweep (Block-by-Block with Live Progress & Heartbeat Safety)
   // --------------------------------------------------------------------------
   const handleFullSweep = useCallback(async (infoOverride = null) => {
-    if (!selectedPort) return;
+    const port = selectedPort;
+    if (!port) return;
     if (isSweeping && !infoOverride) return;
+    if (sweepAbortRef.current) {
+      try { sweepAbortRef.current.abort(); } catch {}
+    }
+    const controller = new AbortController();
+    sweepAbortRef.current = controller;
     const mySeq = sweepSeqRef.current + 1;
     sweepSeqRef.current = mySeq;
     setIsSweeping(true);
@@ -150,9 +168,9 @@ export default function MemMapperTab({
     try {
       let info = infoOverride || mapperInfo;
       if (!info || !info.max_words) {
-        info = await fetchMapperInfo();
+        info = await fetchMapperInfo(controller.signal);
       }
-      if (sweepSeqRef.current !== mySeq) return;
+      if (sweepSeqRef.current !== mySeq || port !== activePortRef.current) return;
       if (!info || info.error) {
         if (info?.error) {
           setStatusMessage(`Sweep failed: ${info.error}`);
@@ -169,17 +187,21 @@ export default function MemMapperTab({
 
       let lastSummary = info.summary || null;
       const mergedMap = new Map();
+      let completedBlocks = 0;
 
       for (let bIdx = 0; bIdx < totalBlocks; bIdx += 1) {
-        if (sweepSeqRef.current !== mySeq) return;
+        if (sweepSeqRef.current !== mySeq || port !== activePortRef.current) return;
 
         setSweepProgress({ current: bIdx + 1, total: totalBlocks });
         setStatusMessage(`Reading EEPROM Block ${bIdx + 1}/${totalBlocks} (0x${(bIdx * 16).toString(16).toUpperCase().padStart(info.address_width || 4, '0')})...`);
 
-        const res = await fetch(`/api/mapper/sweep?port=${encodeURIComponent(selectedPort)}&block=${bIdx}`);
+        const res = await fetch(
+          `/api/mapper/sweep?port=${encodeURIComponent(port)}&block=${bIdx}`,
+          { signal: controller.signal }
+        );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (sweepSeqRef.current !== mySeq) return;
+        if (sweepSeqRef.current !== mySeq || port !== activePortRef.current) return;
 
         if (data.error) {
           setStatusMessage(`Sweep stopped at block ${bIdx + 1}/${totalBlocks}: ${data.error}`);
@@ -203,13 +225,27 @@ export default function MemMapperTab({
           lastSummary = data.summary;
           setSummary(data.summary);
         }
+        completedBlocks = bIdx + 1;
+
+        if (data.abort_sweep) {
+          setStatusMessage(
+            data.abort_reason ||
+            `Sweep stopped early at block ${bIdx + 1}/${totalBlocks}: No ASCII or Smart Connect response.`
+          );
+          setStatusType('warn');
+          return;
+        }
+        if (data.end_of_table) {
+          break;
+        }
       }
 
-      if (sweepSeqRef.current !== mySeq) return;
+      if (sweepSeqRef.current !== mySeq || port !== activePortRef.current) return;
       if (lastSummary) setSummary(lastSummary);
-      setStatusMessage(`Sweep complete: ${mergedMap.size || maxWords} words verified across ${totalBlocks} blocks.`);
+      setStatusMessage(`Sweep complete: ${mergedMap.size || maxWords} words verified across ${completedBlocks} blocks.`);
       setStatusType('success');
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       if (sweepSeqRef.current === mySeq) {
         setStatusMessage(`Sweep error: ${err.message}`);
         setStatusType('warn');
@@ -254,12 +290,14 @@ export default function MemMapperTab({
   // 4. Live Differential Polling
   // --------------------------------------------------------------------------
   const pollDiff = useCallback(async () => {
-    if (!selectedPort || !isLiveDiff || isSweeping || diffInFlightRef.current) return;
+    const port = selectedPort;
+    if (!port || !isLiveDiff || isSweeping || diffInFlightRef.current) return;
     diffInFlightRef.current = true;
     try {
-      const res = await fetch(`/api/mapper/diff?port=${encodeURIComponent(selectedPort)}`);
+      const res = await fetch(`/api/mapper/diff?port=${encodeURIComponent(port)}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (port !== activePortRef.current) return;
 
       if (data.summary) setSummary(data.summary);
 
@@ -294,12 +332,16 @@ export default function MemMapperTab({
     }
   }, [selectedPort, isLiveDiff, isSweeping, isDiffPaused]);
 
-  // Diff polling timer
+  // Diff polling timer (pause workspace sensor polling while active to prevent _session_lock contention)
   useEffect(() => {
     if (!isLiveDiff || isSweeping) return;
+    onSweepStateChange?.(true);
     const interval = setInterval(pollDiff, 1500);
-    return () => clearInterval(interval);
-  }, [isLiveDiff, isSweeping, pollDiff]);
+    return () => {
+      clearInterval(interval);
+      onSweepStateChange?.(false);
+    };
+  }, [isLiveDiff, isSweeping, pollDiff, onSweepStateChange]);
 
   // --------------------------------------------------------------------------
   // 5. Register Selection & Form Population
@@ -474,12 +516,14 @@ export default function MemMapperTab({
   // 7. Sub-Tab 2: Query Raw Sensors Telemetry
   // --------------------------------------------------------------------------
   const queryRawSensors = useCallback(async () => {
-    if (!selectedPort || isSweeping || rawSensorsInFlightRef.current) return;
+    const port = selectedPort;
+    if (!port || isSweeping || rawSensorsInFlightRef.current) return;
     rawSensorsInFlightRef.current = true;
     try {
-      const res = await fetch(`/api/mapper/raw_sensors?port=${encodeURIComponent(selectedPort)}`);
+      const res = await fetch(`/api/mapper/raw_sensors?port=${encodeURIComponent(port)}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (port !== activePortRef.current) return;
       if (!data.error) {
         setRawSensorData(data);
       }
@@ -492,11 +536,15 @@ export default function MemMapperTab({
 
   useEffect(() => {
     if (subTab === 'raw_sensors' && isRawPolling && !isSweeping) {
+      onSweepStateChange?.(true);
       queryRawSensors();
       const interval = setInterval(queryRawSensors, 1200);
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+        onSweepStateChange?.(false);
+      };
     }
-  }, [subTab, isRawPolling, isSweeping, queryRawSensors]);
+  }, [subTab, isRawPolling, isSweeping, queryRawSensors, onSweepStateChange]);
 
   // Populate Sensor Form when selected field changes
   const selectedSensorField = rawSensorData.fields?.find((f) => f.key === selectedFieldKey) || {
@@ -576,14 +624,19 @@ export default function MemMapperTab({
   // Initial load: fetch metadata first, then sweep sequentially block-by-block
   useEffect(() => {
     let cancelled = false;
+    const initController = new AbortController();
     (async () => {
-      const info = await fetchMapperInfo();
+      const info = await fetchMapperInfo(initController.signal);
       if (!cancelled && info && !info.error) {
         await handleFullSweep(info);
       }
     })();
     return () => {
       cancelled = true;
+      initController.abort();
+      if (sweepAbortRef.current) {
+        try { sweepAbortRef.current.abort(); } catch {}
+      }
       sweepSeqRef.current += 1;
       onSweepStateChange?.(false);
     };
