@@ -18,6 +18,35 @@ In accordance with SPECTRA edition guidelines, releases are identified strictly 
 
 ---
 
+## [Build 20261119.1125] — 2026-11-19
+
+### 🔌 Hardware Bridge / Smart Connect & Protocol Engine Fixes
+- **Official JURA USB Service Interface Auto-Detection (`serial_io.py`)**:
+  - Added `encrypted_wire_mode` auto-detection (`raw_frame` vs. `wire_4to1_frame`) in `query_encrypted()` so hardware 4:1 bridge probes (such as the official JURA USB Service Interface box) send raw `&`-frames instead of double-encoding 4:1 (`16:1`), while direct TTL adapters continue using 4:1 wire framing with `8 ms` inter-byte pacing.
+  - Replaced offset-0 echo stripping with substring echo matching (`rx.find(tx)`), added `_scan_decrypted_frames()` advancing safely past stray `&` bytes, short-circuited ASCII fallback on active Smart Connect links, and hardened Windows `pyserial` disconnect handling to close stale file descriptors immediately.
+- **Correct Smart Connect EEPROM Bank Stride & Fast-Fail Sweeps (`stats_collector.py`, `memory_mapper.py`, `spectra_probe.py`, `drivers/jura/driver.py`, `web_server.py`)**:
+  - Fixed Mode B `@TR:32,NN` bank stride from `bank * 16` to `bank * 4` (4 words per 8-byte bank) across `stats_collector.py`, `memory_mapper.py`, and `spectra_probe.py`.
+  - Upgraded `MemoryMapperEngine.sweep_block()` (used by `08 // MEM MAPPER`) to automatically fall back to Smart Connect 4-bank reads (`16` words/block) when block 0 ASCII fails, and emit `abort_sweep` / `end_of_table` after 2 consecutive unresponsive blocks (~4 s instead of 131+ s hangs).
+  - Fixed `UnboundLocalError` on `parts` when `HZ:` returns `None`, guarded `apply_local_offset_override` against `RE:` reads on Smart Connect, clamped maintenance percentages to `0..100`, and made Mode A `RT:` parsing case-insensitive with `ValueError` guards.
+- **Rust Core & HAL Alignment (`crates/spectra-core/src/jura.rs`, `crates/spectra-hal/src/lib.rs`, `crates/spectra-hal/src/serial.rs`)**:
+  - Fixed `SmartConnectCipher::build_frame()` framing (`key` prefix + `\r\n`), added `unescape_frame()` + `decode_frame()`, aligned `build_read_block_frame()` (`@TR:32,NN`) and `BASE_MASK` (`0xDB`), added UTF-8 `is_ascii()` guards on ASCII parsers, and added `tokio::time::timeout` around `SerialTransport::write_raw()`.
+
+### 🛡️ Security, Concurrency & Frontend Stability Hardening
+- **Web Server Security & Thread Safety (`web_server.py`)**:
+  - Blocked directory traversal in `_serve_static()` via `unquote()` + `os.path.realpath()` containment against `DIST_DIR` (`403 Forbidden`), enforced `Origin` allowlist checks (removing `"null"`) on `POST` requests (`403`), enforced strict JSON object validation (`400`), hardened `COM` port validation regex, enforced `~/Downloads` containment on API-supplied HMI output paths (`403`), and replaced wildcard CORS on `/api/export` with `_send_security_headers()`.
+  - Synchronized `_last_stats_cache` and `_last_sensor_payload` reads/mutations under `_session_lock`, switched `get_debug_diagnostics()` to a `50 ms` timed lock (reporting `BUSY` during hardware I/O instead of stalling), wrapped `/api/export` captures in `long_hardware_operation()`, fixed `_deferred_exit_if_not_reloaded()` heartbeat lookup, and added structured `try/except` error responses across threshold and mapper endpoints.
+- **Self-Updater & Auth Supply-Chain Hardening (`updater.py`, `github_auth.py`)**:
+  - Enforced mandatory SHA-256 verification (`require_sha256=True`) on Windows updater binaries by backfilling release checksums from the manifest, enforced HTTPS + GitHub host allowlist (`_validate_download_url`) and `Content-Length` completeness checks, blocked symlinks/hardlinks/device nodes in `_safe_extract_tarball()`, and locked update cache state under `_state_lock`.
+  - Made token persistence atomic (`0o600` temp file + `os.replace`), parsed `HTTPError` JSON bodies in `poll_device_flow()`, and ensured `get_auth_status()` returns `authenticated: False` on any token validation failure.
+- **Local AI, Profiles DB & Community Calibration Verification (`spectra_ai.py`, `profiles_db.py`, `contrib/sync_community_calibrations.py`)**:
+  - Removed duplicate `_merge_joe_dicts` / `extract_joe_from_text_with_ai` definitions, fixed `_parse_counters_from_ocr_text` `NameError`, validated screenshot base64 early, tightened Ollama model tag matching (`:`), and kept models warm across upload extraction + EEPROM correlation (`auto_unload=False`).
+  - Added thread-safe `_CACHE_LOCK` + deep-copy returns + `invalidate_model_specs_cache()` in `profiles_db.py`.
+  - Required matching positive-integer `eeprom_words` proof for every product/maintenance offset in `verify_calibration_patch()`, hardened `_issue_has_pr_marker()` to fail closed on API errors, and escaped Markdown table cells (`_md_cell`).
+- **Frontend Stability (`web/src/components/MemMapperTab.jsx`, `web/src/components/SpectraWorkspace.jsx`)**:
+  - Added `AbortController` sweep cancellation + `activePortRef` cross-port guards across sweeps, sensors, and interrogations; paused background polling during live-diff/raw-sensor reads; stopped `handleFullSweep` early on `abort_sweep`/`end_of_table`; fixed update timer leaks and duplicate `/api/ai/status` refetches; and added 3-retry transient network tolerance to GitHub Device Flow polling.
+
+---
+
 ## [Build 20261118.2220] — 2026-11-18
 
 ### 🔌 Smart Connect / 4:1 Wire Auto-Detection, Mode B Fallback & EEPROM Fixes

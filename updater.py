@@ -225,11 +225,12 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
     global _cached_check, _cached_check_ts
 
     now = time.time()
-    if not force and _cached_check is not None and (now - _cached_check_ts) < CHECK_CACHE_TTL_SEC:
-        snap = dict(_cached_check)
-        snap["current_build"] = get_local_build()
-        snap["update_available"] = is_remote_build_newer(snap["current_build"], snap.get("latest_build", ""))
-        return snap
+    with _state_lock:
+        if not force and _cached_check is not None and (now - _cached_check_ts) < CHECK_CACHE_TTL_SEC:
+            snap = dict(_cached_check)
+            snap["current_build"] = get_local_build()
+            snap["update_available"] = is_remote_build_newer(snap["current_build"], snap.get("latest_build", ""))
+            return snap
 
     platform_name = _current_platform()
     current_build = get_local_build()
@@ -243,6 +244,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
     errors: List[str] = []
     manifest_data: Optional[Dict[str, Any]] = None
     release_data: Optional[Dict[str, Any]] = None
+    gh_release_candidate: Optional[Dict[str, Any]] = None
 
     # 1. Try GitHub Releases API
     try:
@@ -277,37 +279,57 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                         win_asset_size = int(wmeta["size"])
 
         if tag_build:
-            candidates.append(
-                {
-                    "build": tag_build,
-                    "priority": 3,
-                    "source": "github_release",
-                    "release_name": str(release_data.get("name") or f"Build {tag_build}"),
-                    "release_url": str(release_data.get("html_url") or f"https://github.com/{PUBLIC_REPO}/releases"),
-                    "release_notes": _extract_release_notes_snippet(str(release_data.get("body") or "")),
-                    "published_at": str(release_data.get("published_at") or ""),
-                    "download_url": (win_asset_url or RAW_WIN_UPDATER_URL)
-                    if platform_name == "windows"
-                    else RAW_LINUX_TARBALL_URL,
-                    "expected_sha256": win_asset_sha if platform_name == "windows" else "",
-                    "expected_size": win_asset_size if platform_name == "windows" else 0,
-                }
-            )
+            gh_release_candidate = {
+                "build": tag_build,
+                "priority": 3,
+                "source": "github_release",
+                "release_name": str(release_data.get("name") or f"Build {tag_build}"),
+                "release_url": str(release_data.get("html_url") or f"https://github.com/{PUBLIC_REPO}/releases"),
+                "release_notes": _extract_release_notes_snippet(str(release_data.get("body") or "")),
+                "published_at": str(release_data.get("published_at") or ""),
+                "download_url": (win_asset_url or RAW_WIN_UPDATER_URL)
+                if platform_name == "windows"
+                else RAW_LINUX_TARBALL_URL,
+                "expected_sha256": win_asset_sha if platform_name == "windows" else "",
+                "expected_size": win_asset_size if platform_name == "windows" else 0,
+            }
+            candidates.append(gh_release_candidate)
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
             errors.append(f"GitHub Releases HTTP {exc.code}")
     except Exception as exc:
         errors.append(f"GitHub Releases: {exc}")
 
-    # 2. Try raw release_manifest.json from main branch
-    if manifest_data is None:
-        manifest_data = _fetch_manifest(RAW_MANIFEST_URL, timeout=min(timeout, 3.5))
+    # 2. Try raw release_manifest.json from main branch (always cross-check when release asset manifest is missing or stale)
+    raw_manifest = _fetch_manifest(RAW_MANIFEST_URL, timeout=min(timeout, 3.5))
+    if isinstance(raw_manifest, dict):
+        if manifest_data is None:
+            manifest_data = raw_manifest
+        else:
+            m_old = extract_build_from_text(str(manifest_data.get("build") or ""))
+            m_new = extract_build_from_text(str(raw_manifest.get("build") or ""))
+            if is_remote_build_newer(m_old, m_new):
+                manifest_data = raw_manifest
+
     if isinstance(manifest_data, dict):
         m_build_key = "windows_build" if platform_name == "windows" else "main_build"
         m_build = extract_build_from_text(str(manifest_data.get(m_build_key) or manifest_data.get("build") or ""))
         if m_build:
             assets_map = manifest_data.get("assets") or {}
             wmeta = assets_map.get(WINDOWS_UPDATER_ASSET_NAME, {}) if isinstance(assets_map, dict) else {}
+            m_sha = str(wmeta.get("sha256") or "") if platform_name == "windows" else ""
+            m_size = int(wmeta.get("size") or 0) if platform_name == "windows" else 0
+            # Backfill verified SHA-256 / size onto github_release candidate when matching build lacks attachment metadata
+            if (
+                gh_release_candidate is not None
+                and platform_name == "windows"
+                and gh_release_candidate.get("build") == m_build
+                and not gh_release_candidate.get("expected_sha256")
+                and m_sha
+            ):
+                gh_release_candidate["expected_sha256"] = m_sha
+                if not gh_release_candidate.get("expected_size") and m_size:
+                    gh_release_candidate["expected_size"] = m_size
             candidates.append(
                 {
                     "build": m_build,
@@ -320,8 +342,8 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                     "download_url": str(wmeta.get("url") or RAW_WIN_UPDATER_URL)
                     if platform_name == "windows"
                     else RAW_LINUX_TARBALL_URL,
-                    "expected_sha256": str(wmeta.get("sha256") or "") if platform_name == "windows" else "",
-                    "expected_size": int(wmeta.get("size") or 0) if platform_name == "windows" else 0,
+                    "expected_sha256": m_sha,
+                    "expected_size": m_size,
                 }
             )
 
@@ -390,20 +412,42 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
         "checked_at": now,
         "source": best["source"],
     }
-    _cached_check = dict(result)
-    _cached_check_ts = now
+    with _state_lock:
+        _cached_check = dict(result)
+        _cached_check_ts = now
     return result
+
+
+_ALLOWED_DOWNLOAD_HOSTS = {
+    "github.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "codeload.github.com",
+    "release-assets.githubusercontent.com",
+}
+
+
+def _validate_download_url(url: str) -> str:
+    """Validate that update download URLs use HTTPS on trusted GitHub hosts."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or host not in _ALLOWED_DOWNLOAD_HOSTS:
+        raise UpdateError(f"Untrusted update download URL rejected: {url}")
+    return url.strip()
 
 
 def verify_windows_updater_binary(
     file_path: str,
     expected_sha256: Optional[str] = None,
     min_bytes: int = MIN_UPDATER_EXE_BYTES,
+    require_sha256: bool = True,
 ) -> str:
     """
     Verify that a downloaded Windows updater binary exists, meets the minimum
     payload size floor, starts with a valid PE `MZ` signature, and matches
-    expected_sha256 when provided. Returns the computed SHA-256 hex digest.
+    expected_sha256 (required by default). Returns the computed SHA-256 hex digest.
     """
     if not os.path.isfile(file_path):
         raise UpdateError("Downloaded updater binary not found on disk")
@@ -426,6 +470,8 @@ def verify_windows_updater_binary(
 
     actual_sha = sha.hexdigest().lower()
     expected = (expected_sha256 or "").strip().lower()
+    if require_sha256 and not expected:
+        raise UpdateError("Missing expected SHA-256 checksum for updater binary")
     if expected and actual_sha != expected:
         raise UpdateError(f"SHA-256 mismatch: expected {expected}, got {actual_sha}")
     return actual_sha
@@ -438,6 +484,7 @@ def _download_file_with_progress(
     timeout: float = 30.0,
 ) -> None:
     """Stream download to dest_path while updating _update_state and checking cancellation."""
+    url = _validate_download_url(url)
     req = urllib.request.Request(
         url,
         headers={
@@ -460,7 +507,8 @@ def _download_file_with_progress(
 
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-            content_len = int(resp.headers.get("Content-Length") or expected_size or 0)
+            hdr_len = int(resp.headers.get("Content-Length") or 0)
+            content_len = hdr_len or expected_size or 0
             downloaded = 0
             with open(dest_path, "wb") as out:
                 while True:
@@ -484,6 +532,8 @@ def _download_file_with_progress(
                             else f"Downloading update... {downloaded // 1024} KB"
                         ),
                     )
+            if hdr_len > 0 and downloaded != hdr_len:
+                raise UpdateError(f"Incomplete download: received {downloaded} of {hdr_len} bytes")
     except urllib.error.URLError as exc:
         if _current_platform() == "windows" and isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError):
             tls_utils.windows_schannel_download(
@@ -523,7 +573,7 @@ def _apply_windows_update(
         raise UpdateCancelledError("Update cancelled by user")
 
     _set_state(status="verifying", percent=85, message="Verifying updater integrity (PE + SHA-256)...")
-    verify_windows_updater_binary(staged_exe, expected_sha256=expected_sha or None)
+    verify_windows_updater_binary(staged_exe, expected_sha256=expected_sha, require_sha256=True)
 
     _set_state(
         status="restarting",
@@ -556,22 +606,21 @@ def _apply_windows_update(
 
 
 def _safe_extract_tarball(tar_path: str, dest_dir: str) -> str:
-    """Safely extract GitHub tarball to dest_dir, preventing path traversal, returning root folder."""
-    abs_dest = os.path.abspath(dest_dir)
+    """Safely extract GitHub tarball to dest_dir, preventing path/link traversal, returning root folder."""
+    abs_dest = os.path.realpath(dest_dir)
     root_name = ""
     with tarfile.open(tar_path, "r:gz") as tf:
         members = tf.getmembers()
         for member in members:
             if not root_name and "/" in member.name:
                 root_name = member.name.split("/", 1)[0]
-            target = os.path.abspath(os.path.join(abs_dest, member.name))
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                raise UpdateError(f"Unsupported special tarball entry: {member.name}")
+            target = os.path.realpath(os.path.join(abs_dest, member.name))
             if target != abs_dest and not target.startswith(abs_dest + os.sep):
                 raise UpdateError(f"Unsafe tarball member path detected: {member.name}")
-            if member.issym() or member.islnk():
-                link_target = os.path.abspath(os.path.join(os.path.dirname(target), member.linkname))
-                if link_target != abs_dest and not link_target.startswith(abs_dest + os.sep):
-                    raise UpdateError(f"Unsafe tarball symlink target detected: {member.name}")
-        tf.extractall(abs_dest)
+        extract_kwargs: Dict[str, Any] = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        tf.extractall(abs_dest, **extract_kwargs)
     extracted_root = os.path.join(abs_dest, root_name) if root_name else abs_dest
     if not os.path.isdir(extracted_root):
         raise UpdateError("Extracted update archive root directory not found")

@@ -350,20 +350,37 @@ export default function SpectraWorkspace({
     return () => clearTimeout(timer);
   }, [checkForUpdates]);
 
+  const updatePollTimerRef = useRef(null);
+  const updateStatusTimerRef = useRef(null);
+  const aiModelRef = useRef(aiModel);
+  useEffect(() => {
+    aiModelRef.current = aiModel;
+  }, [aiModel]);
+
+  useEffect(() => {
+    return () => {
+      if (updatePollTimerRef.current) clearInterval(updatePollTimerRef.current);
+      if (updateStatusTimerRef.current) clearInterval(updateStatusTimerRef.current);
+    };
+  }, []);
+
   const pollServerAfterRestart = useCallback(() => {
     setIsReconnectingAfterUpdate(true);
+    if (updatePollTimerRef.current) clearInterval(updatePollTimerRef.current);
     let attempts = 0;
-    const pollTimer = setInterval(async () => {
+    updatePollTimerRef.current = setInterval(async () => {
       attempts += 1;
       try {
         const res = await fetch(`/api/version?ts=${Date.now()}`);
         if (res.ok) {
-          clearInterval(pollTimer);
+          clearInterval(updatePollTimerRef.current);
+          updatePollTimerRef.current = null;
           window.location.reload();
         }
       } catch {}
       if (attempts >= 35) {
-        clearInterval(pollTimer);
+        clearInterval(updatePollTimerRef.current);
+        updatePollTimerRef.current = null;
         setIsReconnectingAfterUpdate(false);
       }
     }, 800);
@@ -382,20 +399,24 @@ export default function SpectraWorkspace({
       }
       if (!data?.ok) return;
 
-      const statusTimer = setInterval(async () => {
+      if (updateStatusTimerRef.current) clearInterval(updateStatusTimerRef.current);
+      updateStatusTimerRef.current = setInterval(async () => {
         try {
           const stRes = await fetch('/api/update/status');
           if (!stRes.ok) throw new Error('status unavailable');
           const st = await stRes.json();
           setUpdateProgress(st);
           if (st.restart_required || st.status === 'restarting') {
-            clearInterval(statusTimer);
+            clearInterval(updateStatusTimerRef.current);
+            updateStatusTimerRef.current = null;
             pollServerAfterRestart();
           } else if (!st.in_progress && ['up_to_date', 'error', 'cancelled'].includes(st.status)) {
-            clearInterval(statusTimer);
+            clearInterval(updateStatusTimerRef.current);
+            updateStatusTimerRef.current = null;
           }
         } catch {
-          clearInterval(statusTimer);
+          clearInterval(updateStatusTimerRef.current);
+          updateStatusTimerRef.current = null;
           pollServerAfterRestart();
         }
       }, 450);
@@ -423,7 +444,7 @@ export default function SpectraWorkspace({
       const data = await res.json();
       if (data && data.success) {
         setAiEnabled(Boolean(data.ai_enabled));
-        if (data.preferred_model && !aiModel) {
+        if (data.preferred_model && !aiModelRef.current) {
           setAiModel(data.preferred_model);
         }
         if (typeof data.auto_unload === 'boolean') {
@@ -436,7 +457,7 @@ export default function SpectraWorkspace({
         }
       }
     } catch {}
-  }, [aiModel]);
+  }, []);
 
   const handleSaveAiConfig = useCallback(async ({ model, auto_unload }) => {
     if (model !== undefined) {
@@ -582,9 +603,13 @@ export default function SpectraWorkspace({
     fetchAiGlobalStatus();
   }, [fetchAiGlobalStatus]);
 
-  // In-flight guard and failure debounce for non-blocking auto-poll
+  // In-flight guard, active-port guard, and failure debounce for non-blocking auto-poll
   const inFlightPollRef = useRef(false);
   const pollFailCountRef = useRef(0);
+  const activePortRef = useRef(selectedPort);
+  useEffect(() => {
+    activePortRef.current = selectedPort;
+  }, [selectedPort]);
 
   // --------------------------------------------------------------------------
   // 1. Query Live Sensors (Hardware or Demo)
@@ -602,6 +627,7 @@ export default function SpectraWorkspace({
       const res = await fetch(`/api/sensors?port=${encodeURIComponent(port)}&fast=${isFast ? '1' : '0'}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (activePortRef.current && port !== activePortRef.current) return;
 
       if (data.error) {
         pollFailCountRef.current += 1;
@@ -627,6 +653,7 @@ export default function SpectraWorkspace({
       }
 
     } catch (err) {
+      if (activePortRef.current && port !== activePortRef.current) return;
       pollFailCountRef.current += 1;
       if (!silent || pollFailCountRef.current >= 3) {
         setConnectionStatusText(createTranslator(langRef.current)('connError', { err: err.message }));
@@ -651,6 +678,7 @@ export default function SpectraWorkspace({
           ports.find((p) => p.includes('ttyUSB') || p.includes('ttyACM') || p.includes('USB') || p.includes('by-id') || p.toUpperCase().startsWith('COM')) ||
           ports.find((p) => p.includes('DEMO')) ||
           ports[0];
+        activePortRef.current = hwPort;
         setSelectedPort(hwPort);
         setIsPolling(true);
         querySensors(true, hwPort);
@@ -692,11 +720,12 @@ export default function SpectraWorkspace({
   // 4. Full Interrogation Routine (Read Statistics & EEPROM with Progress)
   // --------------------------------------------------------------------------
   const runFullInterrogation = async () => {
-    if (!selectedPort) return;
+    const port = selectedPort;
+    if (!port) return;
     setIsInterrogating(true);
     setInterrogationProgress(8);
     setInterrogationStage(t('stageProbeIdentity'));
-    setConnectionStatusText(t('connInterrogating', { port: selectedPort }));
+    setConnectionStatusText(t('connInterrogating', { port }));
 
     const t1 = setTimeout(() => {
       setInterrogationProgress(28);
@@ -719,9 +748,10 @@ export default function SpectraWorkspace({
     }, 3400);
 
     try {
-      const res = await fetch(`/api/stats?port=${encodeURIComponent(selectedPort)}`);
+      const res = await fetch(`/api/stats?port=${encodeURIComponent(port)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (port !== activePortRef.current) return;
       if (data.error) {
         setConnectionStatusText(t('connInterrogateFailed', { err: data.error }));
         setHardwareError(data.error);
@@ -733,6 +763,7 @@ export default function SpectraWorkspace({
         setConnectionStatusText(t('connInterrogateComplete', { model: data.machine_model || 'Appliance', preps: data.total_preparations || 0 }));
       }
     } catch (err) {
+      if (port !== activePortRef.current) return;
       setConnectionStatusText(t('connInterrogateError', { err: err.message }));
       setHardwareError(err.message);
       setInterrogationStage(t('stageError', { err: err.message }));
@@ -849,6 +880,7 @@ export default function SpectraWorkspace({
     if (!deviceFlow?.device_code) return;
     let cancelled = false;
     let pollTimer = null;
+    let consecutiveErrors = 0;
 
     const poll = async (intervalSec) => {
       if (cancelled) return;
@@ -858,8 +890,12 @@ export default function SpectraWorkspace({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ device_code: deviceFlow.device_code, interval: intervalSec }),
         });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
         const data = await res.json();
         if (cancelled) return;
+        consecutiveErrors = 0;
 
         if (data.status === 'complete' && data.login) {
           setGithubAuth({ authenticated: true, login: data.login, method: 'device_flow', device_flow_available: true });
@@ -884,6 +920,12 @@ export default function SpectraWorkspace({
         setExportStatus({ loading: false, msg: data.error || 'Device authorization ended.', error: true });
       } catch (err) {
         if (!cancelled) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors < 3) {
+            const retrySec = Math.max(intervalSec, 5);
+            pollTimer = setTimeout(() => poll(retrySec), retrySec * 1000);
+            return;
+          }
           setDeviceFlow(null);
           setExportStatus({ loading: false, msg: `Device poll error: ${err.message}`, error: true });
         }
@@ -1292,9 +1334,9 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261118.2220' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261119.1125' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261118.2220'}
+            BUILD {liveBuild || debugSummary?.build || '20261119.1125'}
           </button>
           {updateInfo?.update_available && (
             <button
