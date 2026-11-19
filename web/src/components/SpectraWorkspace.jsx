@@ -46,22 +46,54 @@ import {
   Github,
   Power,
   Settings,
+  Flag,
 } from 'lucide-react';
 
 import OscilloscopeStripChart from './OscilloscopeStripChart';
 import DigitalTwinSchematic from './DigitalTwinSchematic';
+import RawFrameInspector from './RawFrameInspector';
 import DiagnosticAdvisorTab from './DiagnosticAdvisorTab';
 import MemMapperTab from './MemMapperTab';
 import HmiInspectorTab from './HmiInspectorTab';
 import AiStatusBar from './AiStatusBar';
 import ConfigModal from './ConfigModal';
 import InteractiveGuideModal from './InteractiveGuideModal';
+import IssueReportModal from './IssueReportModal';
 import {
   createTranslator,
   txVal,
   txBeverageName,
   txMaintenanceLabel,
 } from '../i18n/translations';
+
+const WIN_RESERVED_PREFIXES = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
+
+function sanitizeExportPrefix(raw, maxLen = 48) {
+  if (!raw) return '';
+  let normalized = String(raw)
+    .trim()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '');
+  normalized = normalized
+    .replace(/\.\./g, '_')
+    .replace(/[\\/]/g, '_')
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '');
+  if (!normalized) return '';
+  if (normalized.length > maxLen) {
+    normalized = normalized.slice(0, maxLen).replace(/[._-]+$/g, '');
+  }
+  if (WIN_RESERVED_PREFIXES.has(normalized.toUpperCase())) {
+    normalized = `tkt_${normalized}`;
+  }
+  return normalized;
+}
 
 // ============================================================================
 // 1. THEME DEFINITION
@@ -236,6 +268,7 @@ export default function SpectraWorkspace({
 
   // Export Modal Dialog State
   const [showExportModal, setShowExportModal] = useState(false);
+  const [exportPrefix, setExportPrefix] = useState('');
   const [joeCsvContent, setJoeCsvContent] = useState('');
   const [joeFileName, setJoeFileName] = useState('');
   const [isDumping, setIsDumping] = useState(false);
@@ -252,6 +285,8 @@ export default function SpectraWorkspace({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [isReportingIssue, setIsReportingIssue] = useState(false);
 
   // Beverage Filter
   const [bevSearch, setBevSearch] = useState('');
@@ -648,7 +683,22 @@ export default function SpectraWorkspace({
       // Append to live bus event stream if not paused
       if (!isStreamPaused) {
         const tb = data.telemetry || {};
-        const logLine = `[${data.timestamp || new Date().toLocaleTimeString()}] TB1: ${tb.heater_coffee_c ?? '--'}°C | BU: ${tb.bu_encoder_pos ?? '--'} ticks | FLOW: ${tb.flow_rate_ml_s ?? 0} ml/s | BEANS: ${tb.beans_ok ? 'OK' : 'EMPTY'} | STATE: ${tb.machine_state_status || 'Ready'}`;
+        const cap = data.capabilities || {};
+        const ts = data.timestamp || new Date().toLocaleTimeString();
+        const segs = [];
+        if (cap.topology === 'jura_smart_connect') {
+          segs.push(`@TF: ALERTS=${tb.active_alert_count ?? 0}`);
+        } else {
+          if (tb.heater_coffee_c != null) segs.push(`TB1: ${Number(tb.heater_coffee_c).toFixed(1)}°C`);
+          if (tb.heater_steam_c != null) segs.push(`TB2: ${Number(tb.heater_steam_c).toFixed(1)}°C`);
+          if (tb.pump_pressure_bar != null) segs.push(`P: ${Number(tb.pump_pressure_bar).toFixed(1)} bar`);
+          if (cap.has_bu_encoder && tb.bu_encoder_pos != null) segs.push(`BU: ${tb.bu_encoder_pos} tk`);
+          if (cap.has_flowmeter !== false && tb.flow_rate_ml_s != null) segs.push(`FLOW: ${tb.flow_rate_ml_s} ml/s`);
+        }
+        if (tb.beans_ok === true) segs.push('BEANS: OK');
+        else if (tb.beans_ok === false) segs.push('BEANS: EMPTY');
+        segs.push(`STATE: ${tb.machine_state_status || data.readiness || (cap.has_live_frame === false ? 'No Frame' : 'Ready')}`);
+        const logLine = `[${ts}] ${segs.join(' | ')}`;
         setBusEvents((prev) => [logLine, ...prev.slice(0, 99)]);
       }
 
@@ -966,7 +1016,8 @@ export default function SpectraWorkspace({
     if (!selectedPort) return;
     setExportStatus({ loading: true, msg: 'Prompting file save location...', error: false });
     try {
-      const res = await fetch(`/api/export?port=${encodeURIComponent(selectedPort)}&format=${fmt}&save_dialog=1`);
+      const prefixParam = exportPrefix.trim() ? `&prefix=${encodeURIComponent(exportPrefix.trim())}` : '';
+      const res = await fetch(`/api/export?port=${encodeURIComponent(selectedPort)}&format=${fmt}&save_dialog=1${prefixParam}`);
       let data;
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
@@ -1030,6 +1081,7 @@ export default function SpectraWorkspace({
         body: JSON.stringify({
           port: selectedPort,
           joe_csv: joeCsvContent,
+          prefix: exportPrefix.trim() || undefined,
           save_dialog: false,
           use_ollama: usingAi,
           model: aiModel || undefined,
@@ -1158,6 +1210,7 @@ export default function SpectraWorkspace({
           capture_id: capturedId,
           port: selectedPort,
           joe_csv: joeCsvContent,
+          prefix: exportPrefix.trim() || undefined,
           save_dialog: true,
         })
       });
@@ -1312,14 +1365,130 @@ export default function SpectraWorkspace({
       String(b.code || '').includes(bevSearch)
   );
 
+  // Live SPECTRA Application Activity Indicator (replaces static ONLINE pill)
+  const spectraActivity = (() => {
+    if (isReconnectingAfterUpdate) {
+      return {
+        label: t('activityReconnecting'),
+        detail: updateProgress?.message || 'Reconnecting to updated SPECTRA server...',
+        dot: 'bg-amber-400 animate-ping',
+        cls: 'bg-amber-950/70 border-amber-500/70 text-amber-200',
+      };
+    }
+    if (updateProgress?.in_progress) {
+      const pct = Math.round(updateProgress.percent || 0);
+      return {
+        label: t('activityUpdating', { pct }),
+        detail: updateProgress.message || `Downloading & installing update (${pct}%)`,
+        dot: 'bg-cyan-400 animate-pulse',
+        cls: 'bg-cyan-950/70 border-cyan-500/70 text-cyan-200',
+      };
+    }
+    if (isInterrogating) {
+      return {
+        label: t('activityReading', { pct: interrogationProgress }),
+        detail: interrogationStage || `Interrogating ${selectedPort}`,
+        dot: 'bg-[#FCEE09] animate-pulse',
+        cls: 'bg-purple-950/80 border-purple-400/80 text-purple-100',
+      };
+    }
+    if (isDumping) {
+      return {
+        label: t('activityCapturing'),
+        detail: `Capturing full EEPROM bundle from ${selectedPort}`,
+        dot: 'bg-purple-400 animate-pulse',
+        cls: 'bg-purple-950/70 border-purple-500/70 text-purple-200',
+      };
+    }
+    if (isHardwareBusy) {
+      return {
+        label: t('activityMapping'),
+        detail: 'Memory Mapper EEPROM sweep active',
+        dot: 'bg-sky-400 animate-pulse',
+        cls: 'bg-sky-950/70 border-sky-500/70 text-sky-200',
+      };
+    }
+    if (aiDownload?.active) {
+      return {
+        label: t('activityPullingAi'),
+        detail: aiDownload.model ? `Downloading ${aiDownload.model}` : 'Downloading Local AI model',
+        dot: 'bg-fuchsia-400 animate-pulse',
+        cls: 'bg-fuchsia-950/70 border-fuchsia-500/70 text-fuchsia-200',
+      };
+    }
+    if (aiTask?.active || aiBusyCount > 0 || isCalibratingOffsets) {
+      const pct = aiTask?.active && aiTask.percent != null ? Math.round(aiTask.percent) : null;
+      return {
+        label: pct != null ? t('activityAiWorkingPct', { pct }) : t('activityAiWorking'),
+        detail: aiTask?.label || (isCalibratingOffsets ? 'Calibrating EEPROM offsets with Local AI' : 'Local AI inference running'),
+        dot: 'bg-purple-400 animate-pulse',
+        cls: 'bg-purple-950/70 border-purple-400/70 text-purple-200',
+      };
+    }
+    if (isUploading || isReportingIssue) {
+      return {
+        label: t('activityGithubSync'),
+        detail: isReportingIssue ? 'Submitting GitHub issue' : 'Uploading capture to GitHub',
+        dot: 'bg-indigo-400 animate-pulse',
+        cls: 'bg-indigo-950/70 border-indigo-400/70 text-indigo-200',
+      };
+    }
+    if (exportStatus?.loading) {
+      return {
+        label: t('activityExporting'),
+        detail: exportStatus.msg || 'Exporting diagnostic data',
+        dot: 'bg-sky-400 animate-pulse',
+        cls: 'bg-sky-950/70 border-sky-500/70 text-sky-200',
+      };
+    }
+    if (isCheckingUpdates) {
+      return {
+        label: t('activityCheckingUpdates'),
+        detail: 'Checking GitHub releases for SPECTRA updates',
+        dot: 'bg-sky-400 animate-pulse',
+        cls: 'bg-zinc-900/80 border-sky-700/70 text-sky-300',
+      };
+    }
+    if (hardwareError) {
+      return {
+        label: t('activityCommError'),
+        detail: hardwareError,
+        dot: 'bg-rose-500',
+        cls: 'bg-rose-950/70 border-rose-500/70 text-rose-200',
+      };
+    }
+    if (isConnected && isPolling) {
+      return {
+        label: t('activityMonitoring'),
+        detail: selectedPort ? `Live polling ${selectedPort}` : 'Live telemetry polling',
+        dot: 'bg-emerald-400 animate-pulse',
+        cls: 'bg-black/40 border-emerald-500/40 text-emerald-400',
+      };
+    }
+    if (isConnected) {
+      return {
+        label: t('activityReady'),
+        detail: selectedPort ? `Connected to ${selectedPort}` : 'Ready',
+        dot: 'bg-emerald-400',
+        cls: 'bg-black/40 border-emerald-600/35 text-emerald-300',
+      };
+    }
+    return {
+      label: t('activityIdle'),
+      detail: connectionStatusText || 'Idle',
+      dot: 'bg-zinc-500',
+      cls: 'bg-black/40 border-zinc-700 text-zinc-400',
+    };
+  })();
+
   return (
     <div className={`min-h-screen flex flex-col justify-between ${theme.bg} ${theme.font} transition-opacity duration-300 ${bootReady ? 'opacity-100' : 'opacity-0'} select-none ${theme.isScanline ? 'cyber-scanlines' : ''}`}>
       {/* ==================================================================== */}
       {/* ZONE 1: TOP BRANDING & HARDWARE CONNECTION BAR */}
       {/* ==================================================================== */}
       <header className={`sticky top-0 z-50 px-4 py-2 flex flex-wrap items-center justify-between border-b ${theme.border} ${theme.headerBg} backdrop-blur-md gap-3`}>
-        {/* Left: Professional Brand Header */}
-        <div className="flex items-center space-x-3">
+        {/* Left: Professional Brand Header + Live SPECTRA Activity Status */}
+        <div className="flex items-center space-x-2.5">
           <div className="flex items-center space-x-2">
             <Zap className="w-5 h-5 text-[#FCEE09] animate-pulse" />
             <span className="text-sm font-black tracking-widest text-[#FCEE09] font-mono uppercase">
@@ -1334,10 +1503,17 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261119.1125' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261119.1612' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261119.1125'}
+            BUILD {liveBuild || debugSummary?.build || '20261119.1612'}
           </button>
+          <div
+            className={`flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${spectraActivity.cls}`}
+            title={`${t('activityTooltipPrefix')}: ${spectraActivity.detail}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${spectraActivity.dot}`} />
+            <span className="tracking-wider uppercase">{spectraActivity.label}</span>
+          </div>
           {updateInfo?.update_available && (
             <button
               type="button"
@@ -1352,7 +1528,7 @@ export default function SpectraWorkspace({
               <span>{t('headerUpdateBtn', { build: updateInfo.latest_build })}</span>
             </button>
           )}
-          <span className="text-xs text-zinc-400 font-mono hidden xl:inline">
+          <span className="text-xs text-zinc-400 font-mono hidden 2xl:inline">
             {t('appSubtitle')}
           </span>
         </div>
@@ -1366,8 +1542,11 @@ export default function SpectraWorkspace({
               value={selectedPort}
               onChange={(e) => {
                 const newPort = e.target.value;
+                activePortRef.current = newPort;
                 setSelectedPort(newPort);
                 setHardwareError(null);
+                setBusEvents([]);
+                setLiveData({ switches: [], sensors: [], telemetry: {}, alerts: [] });
                 querySensors(true, newPort);
               }}
               className="bg-transparent text-gray-200 text-xs font-mono outline-none cursor-pointer max-w-[200px]"
@@ -1544,11 +1723,16 @@ export default function SpectraWorkspace({
             ) : null}
           </button>
 
-          {/* Hardware Online Pill */}
-          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-black/40 border border-emerald-500/30 text-emerald-400">
-            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
-            <span>{isConnected ? t('statusOnline') : t('statusStandby')}</span>
-          </div>
+          {/* Report Issue to GitHub Button (End of Top Control Panel after Debug Toggle) */}
+          <button
+            type="button"
+            onClick={() => setShowIssueModal(true)}
+            className="flex items-center space-x-1 px-2.5 py-0.5 rounded text-[11px] font-mono font-bold bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/70 text-rose-300 hover:text-rose-100 transition-colors cursor-pointer"
+            title={t('btnReportIssueTitle')}
+          >
+            <Flag className="w-3 h-3 text-rose-400" />
+            <span>{t('btnReportIssue')}</span>
+          </button>
         </div>
       </header>
 
@@ -1785,8 +1969,18 @@ export default function SpectraWorkspace({
           />
         )}
 
-        {/* TAB 2: SENSORS & OSCILLOSCOPE STRIP CHART (MATCHING GTK _create_sensors_tab) */}
-        {activeTab === 'sensors' && (
+        {/* TAB 2: SENSORS & OSCILLOSCOPE STRIP CHART (DEVICE-AWARE TELEMETRY) */}
+        {activeTab === 'sensors' && (() => {
+          const liveCaps = liveData?.capabilities || {};
+          const showAsShuntCard = Boolean(
+            liveCaps.has_as_shunt ||
+            telem.bean_adcs ||
+            telem.heater_ntc_shunt_ratio != null
+          );
+          const switchesList = Array.isArray(liveData?.switches) ? liveData.switches : [];
+          const sensorsList = Array.isArray(liveData?.sensors) ? liveData.sensors : [];
+          const okSensorsCount = sensorsList.filter((s) => s.ok !== false).length;
+          return (
           <div className="space-y-4">
             {/* Top Paned Layout: Left Digital Twin / Right Oscilloscope & Event Stream */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -1799,41 +1993,52 @@ export default function SpectraWorkspace({
                   statsData={statsData}
                 />
 
-                {/* Coffee Heater NTC Diagnostic Sensor Card (AS: Check Sensor) */}
-                <div className={`p-3.5 border rounded ${theme.surfaceClass}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 mb-2">
-                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
-                      <SlidersHorizontal className="w-3.5 h-3.5" />
-                      <span>{t('ntcSensorCardTitle')}</span>
-                    </span>
-                    <span className="text-[11px] font-mono text-gray-400">
-                      {t('shuntLabel')} <strong className="text-amber-400">{telem.heater_ntc_shunt_ratio ? `${telem.heater_ntc_shunt_ratio} (+${telem.heater_ntc_shunt_gain_pct}%)` : (opticalDelta != null ? `Delta: ${opticalDelta}` : t('kpiStandby'))}</strong>
-                    </span>
-                  </div>
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between font-mono text-[11px]">
-                      <span className="text-gray-400">{t('selfTestLabel')} <strong className={telem.heater_ntc_self_test_ok ? "text-emerald-400" : "text-amber-400"}>{telem.heater_ntc_self_test_ok ? t('nominalShuntOk') : (telem.heater_ntc_self_test_ok === false ? t('outOfRange') : t('kpiStandby'))}</strong></span>
-                      <span className="text-amber-400">{t('p518ValidRange')}</span>
-                    </div>
-                    <div className="flex items-center justify-between pt-1">
+                {/* Coffee Heater NTC Diagnostic Sensor Card (AS: Check Sensor — shown only when supported) */}
+                {showAsShuntCard && (
+                  <div className={`p-3.5 border rounded ${theme.surfaceClass}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-1.5 mb-2">
+                      <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        <span>{t('ntcSensorCardTitle')}</span>
+                      </span>
                       <span className="text-[11px] font-mono text-gray-400">
-                        {t('ambientOffOn', { off: telem.bean_adcs?.[0] ?? '--', on: telem.bean_adcs?.[1] ?? '--' })}
-                      </span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${beansOk ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
-                        {beansOk ? t('kpiBeansOk') : t('kpiFillBeans')}
+                        {t('shuntLabel')} <strong className="text-amber-400">{telem.heater_ntc_shunt_ratio ? `${telem.heater_ntc_shunt_ratio} (+${telem.heater_ntc_shunt_gain_pct}%)` : (opticalDelta != null ? `Delta: ${opticalDelta}` : t('kpiStandby'))}</strong>
                       </span>
                     </div>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between font-mono text-[11px]">
+                        <span className="text-gray-400">{t('selfTestLabel')} <strong className={telem.heater_ntc_self_test_ok ? "text-emerald-400" : "text-amber-400"}>{telem.heater_ntc_self_test_ok ? t('nominalShuntOk') : (telem.heater_ntc_self_test_ok === false ? t('outOfRange') : t('kpiStandby'))}</strong></span>
+                        <span className="text-amber-400">{t('p518ValidRange')}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[11px] font-mono text-gray-400">
+                          {t('ambientOffOn', { off: telem.bean_adcs?.[0] ?? '--', on: telem.bean_adcs?.[1] ?? '--' })}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            beansOk === true
+                              ? 'bg-emerald-950 text-emerald-400 border-emerald-700'
+                              : beansOk === false
+                              ? 'bg-rose-950 text-rose-400 border-rose-700'
+                              : 'bg-zinc-900 text-zinc-400 border-zinc-700'
+                          }`}
+                        >
+                          {beansOk === true ? t('kpiBeansOk') : beansOk === false ? t('kpiFillBeans') : t('kpiStandby')}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* RIGHT COLUMN: Oscilloscope Strip Chart (Temp over Time) & Event Stream Log */}
               <div className="lg:col-span-6 space-y-3">
-                {/* 1. Real-Time Oscilloscope Strip Chart (Exact parity with old UI OscilloscopeWidget) */}
+                {/* 1. Real-Time Oscilloscope Strip Chart */}
                 <OscilloscopeStripChart
                   theme={theme}
                   lang={lang}
                   liveData={liveData}
+                  selectedPort={selectedPort}
                   maxSamples={60}
                 />
 
@@ -1880,29 +2085,47 @@ export default function SpectraWorkspace({
               </div>
             </div>
 
-            {/* Bottom Row: 7 Physical Microswitches & 15 Hardware Safety Registers */}
+            {/* Live Raw Telemetry Frame Inspector (Collapsible Multi-Device Engineering Strip) */}
+            <RawFrameInspector
+              theme={theme}
+              lang={lang}
+              liveData={liveData}
+              statsData={statsData}
+              selectedPort={selectedPort}
+              liveBuild={liveBuild || debugSummary?.build || '20261119.1612'}
+            />
+
+            {/* Bottom Row: Dynamic Physical Microswitches & Component Fault / Safety Registers */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Microswitches */}
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
                 <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
                   <span>{t('microswitchesTitle')}</span>
-                  <span className="text-[10px] font-mono text-emerald-400">{t('microswitchesCount')}</span>
+                  <span className="text-[10px] font-mono text-emerald-400">
+                    {t('microswitchesDynamicCount', { count: switchesList.length })}
+                  </span>
                 </div>
                 <div className="space-y-1.5">
-                  {liveData.switches.map((sw) => (
-                    <div key={sw.id} className="flex items-center justify-between p-2 bg-black/40 border border-gray-800/80 rounded text-xs font-mono">
-                      <div className="flex items-center space-x-2">
-                        <span>{sw.icon}</span>
-                        <span className="font-bold text-gray-200">{txVal(lang, sw.name)}</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-gray-400">{txVal(lang, sw.status)}</span>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sw.ok ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
-                          {txVal(lang, sw.badge)}
-                        </span>
-                      </div>
+                  {switchesList.length === 0 ? (
+                    <div className="p-4 text-center text-xs font-mono text-gray-500 italic">
+                      {t('microswitchesEmpty')}
                     </div>
-                  ))}
+                  ) : (
+                    switchesList.map((sw) => (
+                      <div key={sw.id} className="flex items-center justify-between p-2 bg-black/40 border border-gray-800/80 rounded text-xs font-mono">
+                        <div className="flex items-center space-x-2">
+                          <span>{sw.icon}</span>
+                          <span className="font-bold text-gray-200">{txVal(lang, sw.name)}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-400">{txVal(lang, sw.status)}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sw.ok ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
+                            {txVal(lang, sw.badge)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -1910,25 +2133,34 @@ export default function SpectraWorkspace({
               <div className={`p-4 border rounded ${theme.surfaceClass}`}>
                 <div className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2.5 flex items-center justify-between border-b border-gray-800 pb-2">
                   <span>{t('faultRegistersTitle')}</span>
-                  <span className="text-[10px] font-mono text-sky-400">{t('faultRegistersCount')}</span>
+                  <span className="text-[10px] font-mono text-sky-400">
+                    {t('faultRegistersDynamicCount', { ok: okSensorsCount, total: sensorsList.length })}
+                  </span>
                 </div>
                 <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-1">
-                  {liveData.sensors.map((s) => (
-                    <div key={s.id} className="flex items-center justify-between p-1.5 bg-black/40 border border-gray-800/60 rounded text-xs font-mono">
-                      <span className="text-gray-300">{txVal(lang, s.name)}</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-[11px] text-gray-400">{txVal(lang, s.status)}</span>
-                        <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${s.ok ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
-                          {txVal(lang, s.badge)}
-                        </span>
-                      </div>
+                  {sensorsList.length === 0 ? (
+                    <div className="p-4 text-center text-xs font-mono text-gray-500 italic">
+                      {t('faultRegistersEmpty')}
                     </div>
-                  ))}
+                  ) : (
+                    sensorsList.map((s) => (
+                      <div key={s.id} className="flex items-center justify-between p-1.5 bg-black/40 border border-gray-800/60 rounded text-xs font-mono">
+                        <span className="text-gray-300">{txVal(lang, s.name)}</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[11px] text-gray-400">{txVal(lang, s.status)}</span>
+                          <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${s.ok ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
+                            {txVal(lang, s.badge)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* TAB 3: BEVERAGE REGISTRY TABLE */}
         {activeTab === 'beverages' && (
@@ -2384,6 +2616,48 @@ export default function SpectraWorkspace({
               <p className="text-gray-300">
                 {t('exportModalDesc')}
               </p>
+
+              {/* Ticket Number / Custom Filename Prefix */}
+              <div className="p-2.5 rounded bg-black/40 border border-gray-800 space-y-1.5">
+                <label className="block text-[11px] font-bold text-gray-300 font-mono">
+                  {t('exportPrefixLabel')}
+                </label>
+                <div className="flex items-center space-x-1.5">
+                  <input
+                    type="text"
+                    value={exportPrefix}
+                    onChange={(e) => setExportPrefix(e.target.value)}
+                    maxLength={48}
+                    placeholder={t('exportPrefixPlaceholder')}
+                    className="flex-1 px-2.5 py-1.5 bg-black/60 border border-gray-700 focus:border-sky-500 rounded text-xs text-white placeholder-gray-500 outline-none font-mono select-text"
+                  />
+                  {exportPrefix && (
+                    <button
+                      type="button"
+                      onClick={() => setExportPrefix('')}
+                      className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-gray-400 hover:text-white cursor-pointer"
+                      title={t('exportPrefixClear')}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {(() => {
+                  const cleanPre = sanitizeExportPrefix(exportPrefix);
+                  const safeMod = String(statsData?.model_family || statsData?.identity?.model_name || 'appliance')
+                    .replace(/[^\w\-_]/g, '_')
+                    .replace(/^_+|_+$/g, '') || 'appliance';
+                  const previewName = `${cleanPre ? `${cleanPre}_` : ''}spectra_export_${safeMod}_YYYYMMDD_HHMMSS.json`;
+                  return (
+                    <div className="text-[10px] font-mono text-gray-400 truncate">
+                      <span className="text-gray-500">{t('exportPrefixPreview')} </span>
+                      <span className={cleanPre ? 'text-sky-300 font-semibold' : 'text-gray-400'}>
+                        {previewName}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
 
               {exportStatus.msg && (
                 <div className={`p-2.5 rounded text-xs font-mono border ${exportStatus.error ? 'bg-red-950/50 border-red-800 text-red-300' : 'bg-emerald-950/50 border-emerald-800 text-emerald-300'} flex items-center justify-between gap-2`}>
@@ -2994,6 +3268,26 @@ export default function SpectraWorkspace({
             handleToggleAi(true);
           }
         }}
+      />
+
+      {/* ==================================================================== */}
+      {/* ZONE 5d: REPORT ISSUE TO GITHUB MODAL */}
+      {/* ==================================================================== */}
+      <IssueReportModal
+        isOpen={showIssueModal}
+        onClose={() => setShowIssueModal(false)}
+        theme={theme}
+        lang={lang}
+        githubAuth={githubAuth}
+        statsData={statsData}
+        liveData={liveData}
+        selectedPort={selectedPort}
+        liveBuild={liveBuild || debugSummary?.build || '20261119.1612'}
+        onOpenGitHubConfig={() => {
+          setConfigInitialSection('github');
+          setShowConfigModal(true);
+        }}
+        onSubmittingChange={setIsReportingIssue}
       />
 
       {/* ==================================================================== */}

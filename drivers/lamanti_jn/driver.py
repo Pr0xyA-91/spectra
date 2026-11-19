@@ -127,16 +127,21 @@ class LamantiJNDriver(BaseApplianceDriver):
             conn.write(req)
             resp = conn.read(64, timeout_sec=0.8)
 
+            is_demo_conn = bool(getattr(conn, "is_demo", False))
+            got_frame = bool(resp and len(resp) >= 10 and resp[0] == 0xFE)
+
             door_closed = True
             cup_detected = False
             waste_tray_ok = True
             grounds_box_ok = True
             water_inlet_ok = True
-            boiler_es_temp = 93.0
-            boiler_inst_temp = 88.0
-            pressure_bar = 9.2
+            boiler_es_temp: Optional[float] = 93.0 if is_demo_conn else None
+            boiler_inst_temp: Optional[float] = 88.0 if is_demo_conn else None
+            pressure_bar: Optional[float] = 9.2 if (got_frame or is_demo_conn) else None
+            byte_tokens: List[str] = []
 
-            if resp and len(resp) >= 10 and resp[0] == 0xFE:
+            if got_frame:
+                byte_tokens = [f"{b:02X}" for b in resp[:24]]
                 # Parse Jetinno heartbeat payload
                 # Byte 4 is action (0x14), Byte 5-8 are status flags
                 status_byte = resp[6] if len(resp) > 6 else 0
@@ -154,48 +159,49 @@ class LamantiJNDriver(BaseApplianceDriver):
                     if 20 <= raw_t2 <= 120:
                         boiler_inst_temp = float(raw_t2)
 
+            has_valid = got_frame or is_demo_conn
             switches.append({
                 "id": "cabinet_door",
                 "name": "Cabinet Door Interlock",
-                "status": "Door Closed" if door_closed else "Door Open",
-                "ok": door_closed,
-                "badge": "LOCKED" if door_closed else "OPEN",
+                "status": ("Door Closed" if door_closed else "Door Open") if has_valid else "No Heartbeat Reply",
+                "ok": door_closed if has_valid else False,
+                "badge": ("LOCKED" if door_closed else "OPEN") if has_valid else "NO FRAME",
                 "details": "Chassis security switch (STUM cabinet IO)",
                 "icon": "🚪"
             })
             switches.append({
                 "id": "cup_detector",
                 "name": "Dispense Area Cup Sensor",
-                "status": "Cup Present" if cup_detected else "No Cup Detected",
-                "ok": True,
-                "badge": "CUP DETECTED" if cup_detected else "EMPTY",
+                "status": ("Cup Present" if cup_detected else "No Cup Detected") if has_valid else "No Heartbeat Reply",
+                "ok": has_valid,
+                "badge": ("CUP DETECTED" if cup_detected else "EMPTY") if has_valid else "NO FRAME",
                 "details": "Infrared optical beam in cup station",
                 "icon": "🥤"
             })
             switches.append({
                 "id": "drip_tray",
                 "name": "Wastewater Drip Tray",
-                "status": "Normal Level" if waste_tray_ok else "Tray Full / Overflow",
-                "ok": waste_tray_ok,
-                "badge": "OK" if waste_tray_ok else "FULL",
+                "status": ("Normal Level" if waste_tray_ok else "Tray Full / Overflow") if has_valid else "No Heartbeat Reply",
+                "ok": waste_tray_ok if has_valid else False,
+                "badge": ("OK" if waste_tray_ok else "FULL") if has_valid else "NO FRAME",
                 "details": "Liquid level electrode probe",
                 "icon": "📥"
             })
             switches.append({
                 "id": "grounds_container",
                 "name": "Spent Coffee Puck Bin",
-                "status": "Empty / Ready" if grounds_box_ok else "Waste Bin Full",
-                "ok": grounds_box_ok,
-                "badge": "OK" if grounds_box_ok else "EMPTY",
+                "status": ("Empty / Ready" if grounds_box_ok else "Waste Bin Full") if has_valid else "No Heartbeat Reply",
+                "ok": grounds_box_ok if has_valid else False,
+                "badge": ("OK" if grounds_box_ok else "EMPTY") if has_valid else "NO FRAME",
                 "details": "Grounds box capacity counter & optical check",
                 "icon": "🗑️"
             })
             switches.append({
                 "id": "water_inlet",
                 "name": "Mains Water Supply Inlet",
-                "status": "Pressure OK" if water_inlet_ok else "No Water Pressure",
-                "ok": water_inlet_ok,
-                "badge": "OK" if water_inlet_ok else "LOW PRESSURE",
+                "status": ("Pressure OK" if water_inlet_ok else "No Water Pressure") if has_valid else "No Heartbeat Reply",
+                "ok": water_inlet_ok if has_valid else False,
+                "badge": ("OK" if water_inlet_ok else "LOW PRESSURE") if has_valid else "NO FRAME",
                 "details": "Inlet pressure transducer / safety switch",
                 "icon": "💧"
             })
@@ -203,50 +209,50 @@ class LamantiJNDriver(BaseApplianceDriver):
             sensors.append({
                 "id": "boiler_espresso",
                 "name": "Espresso Pressure Boiler",
-                "status": f"{boiler_es_temp:.1f} °C",
-                "ok": (20.0 <= boiler_es_temp <= 105.0),
-                "badge": f"{boiler_es_temp:.1f} °C",
+                "status": f"{boiler_es_temp:.1f} °C" if boiler_es_temp is not None else "No Reply",
+                "ok": (20.0 <= boiler_es_temp <= 105.0) if boiler_es_temp is not None else False,
+                "badge": f"{boiler_es_temp:.1f} °C" if boiler_es_temp is not None else "NO FRAME",
                 "details": "High-pressure brass coffee boiler NTC",
                 "icon": "☕"
             })
             sensors.append({
                 "id": "boiler_instant",
                 "name": "Instant Soluble Boiler",
-                "status": f"{boiler_inst_temp:.1f} °C",
-                "ok": (20.0 <= boiler_inst_temp <= 100.0),
-                "badge": f"{boiler_inst_temp:.1f} °C",
+                "status": f"{boiler_inst_temp:.1f} °C" if boiler_inst_temp is not None else "No Reply",
+                "ok": (20.0 <= boiler_inst_temp <= 100.0) if boiler_inst_temp is not None else False,
+                "badge": f"{boiler_inst_temp:.1f} °C" if boiler_inst_temp is not None else "NO FRAME",
                 "details": "Atmospheric instant hot water heater",
                 "icon": "♨️"
             })
             sensors.append({
                 "id": "pump_pressure",
                 "name": "Brew Pump Pressure",
-                "status": f"{pressure_bar:.1f} bar",
-                "ok": True,
-                "badge": f"{pressure_bar:.1f} BAR",
+                "status": f"{pressure_bar:.1f} bar" if pressure_bar is not None else "No Reply",
+                "ok": pressure_bar is not None,
+                "badge": f"{pressure_bar:.1f} BAR" if pressure_bar is not None else "NO FRAME",
                 "details": "Piezoelectric fluid pressure transducer",
                 "icon": "📈"
             })
             sensors.append({
                 "id": "water_flow",
                 "name": "Live Water Flow Rate",
-                "status": "0.0 ml/s",
-                "ok": True,
-                "badge": "0.0 ml/s",
+                "status": "0.0 ml/s" if has_valid else "No Reply",
+                "ok": has_valid,
+                "badge": "0.0 ml/s" if has_valid else "NO FRAME",
                 "details": "Flowmeter transducer monitoring nominal (standby)",
                 "icon": "🌊",
                 "value": 0.0,
                 "unit": "ml/s"
             })
 
-            ready_ok = (door_closed and waste_tray_ok and grounds_box_ok and water_inlet_ok)
-            readiness = "Ready" if ready_ok else "Maintenance Required"
+            ready_ok = (has_valid and door_closed and waste_tray_ok and grounds_box_ok and water_inlet_ok)
+            readiness = ("Ready" if ready_ok else "Maintenance Required") if has_valid else "No Heartbeat Reply"
             switches.append({
                 "id": "water_tank",
                 "name": "Water Supply Status",
-                "status": "Mains Pressure OK" if water_inlet_ok else "Low Water Pressure",
-                "ok": water_inlet_ok,
-                "badge": "OK" if water_inlet_ok else "LOW",
+                "status": ("Mains Pressure OK" if water_inlet_ok else "Low Water Pressure") if has_valid else "No Heartbeat Reply",
+                "ok": water_inlet_ok if has_valid else False,
+                "badge": ("OK" if water_inlet_ok else "LOW") if has_valid else "NO FRAME",
                 "details": "Hydraulic inlet supply monitor",
                 "icon": "💧"
             })
@@ -255,7 +261,7 @@ class LamantiJNDriver(BaseApplianceDriver):
                 "name": "Appliance Operating State",
                 "status": "Ready to Brew / Nominal" if ready_ok else readiness,
                 "ok": ready_ok,
-                "badge": "READY" if ready_ok else "CHECK",
+                "badge": ("READY" if ready_ok else "CHECK") if has_valid else "NO FRAME",
                 "details": "Jetinno IO controller state",
                 "icon": "☕"
             })
@@ -271,15 +277,45 @@ class LamantiJNDriver(BaseApplianceDriver):
                     "is_dual_heater": True,
                     "heater_count": 2,
                     "heater_coffee_c": boiler_es_temp,
-                    "heater_coffee_str": f"{boiler_es_temp:.1f} °C",
-                    "heater_coffee_status": "Espresso Boiler Ready",
+                    "heater_coffee_str": f"{boiler_es_temp:.1f} °C" if boiler_es_temp is not None else "No Frame",
+                    "heater_coffee_status": "Espresso Boiler Ready" if boiler_es_temp is not None else "No Frame",
                     "heater_steam_c": boiler_inst_temp,
-                    "heater_steam_str": f"{boiler_inst_temp:.1f} °C",
-                    "heater_steam_status": "Instant Boiler Ready",
+                    "heater_steam_str": f"{boiler_inst_temp:.1f} °C" if boiler_inst_temp is not None else "No Frame",
+                    "heater_steam_status": "Instant Boiler Ready" if boiler_inst_temp is not None else "No Frame",
+                    "pump_pressure_bar": pressure_bar,
+                    "machine_state_badge": ("READY" if ready_ok else "CHECK") if has_valid else "NO FRAME",
+                    "machine_state_status": readiness,
                     "flow_pulses": 0,
                     "flow_rate_ml_s": 0.0,
                     "flow_volume_ml": 0.0,
-                }
+                },
+                "capabilities": {
+                    "vendor": "Lamanti-JN",
+                    "topology": "jetinno_vending",
+                    "protocol": "Jetinno IO Protocol",
+                    "ef_code": "",
+                    "has_live_frame": got_frame,
+                    "has_coffee_temp": boiler_es_temp is not None,
+                    "has_steam_temp": boiler_inst_temp is not None,
+                    "has_flowmeter": has_valid,
+                    "has_bu_encoder": False,
+                    "has_valve_state": False,
+                    "has_as_shunt": False,
+                    "has_bean_sensor": False,
+                    "has_grounds_sensor": True,
+                    "has_door_sensor": True,
+                    "has_cup_sensor": True,
+                    "has_pressure_sensor": pressure_bar is not None,
+                    "has_filter_sensor": False,
+                },
+                "raw_frames": {
+                    "primary_cmd": "JETINNO:14",
+                    "primary_raw": resp.hex(" ").upper() if resp else "",
+                    "tokens": byte_tokens,
+                    "cs": "",
+                    "ic": "",
+                    "as": "",
+                },
             }
         except Exception as e:
             return {

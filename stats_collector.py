@@ -1147,6 +1147,45 @@ def query_live_sensors(
                 results["alerts"].append({"name": "Grounds Container Full", "details": "Empty coffee grounds container", "blocking": True})
             if not beans_ok:
                 results["alerts"].append({"name": "Fill Beans", "details": "Refill coffee bean hopper", "blocking": True})
+
+            has_any_hz = bool(hz_resp and hz_resp.startswith("hz:") and len(parts) > 0)
+            if not has_any_hz:
+                for sw in results["switches"]:
+                    if sw.get("id") == "machine_ready":
+                        sw["status"] = "No Live HZ: Reply"
+                        sw["ok"] = False
+                        sw["badge"] = "NO FRAME"
+                        sw["icon"] = "⚠️"
+                results["telemetry"]["machine_state_badge"] = "NO FRAME"
+                results["telemetry"]["machine_state_status"] = "No Live HZ: Reply"
+
+            results["capabilities"] = {
+                "vendor": "Jura",
+                "topology": "jura_dual" if is_dual_heater else "jura_single",
+                "protocol": results["protocol"],
+                "ef_code": detected_ef or (profile or {}).get("ef_code", ""),
+                "has_live_frame": has_any_hz,
+                "has_coffee_temp": temp_coffee is not None,
+                "has_steam_temp": bool(is_dual_heater and temp_steam is not None),
+                "has_flowmeter": has_any_hz,
+                "has_bu_encoder": bool(has_any_hz and (bu_encoder_upper_raw > 0 or bu_encoder_pos_raw > 0)),
+                "has_valve_state": has_hz_status,
+                "has_as_shunt": bool(cached_adcs or getattr(conn, "_as_supported", False)),
+                "has_bean_sensor": has_any_hz or has_commercial_bean_sensor,
+                "has_grounds_sensor": has_any_hz,
+                "has_door_sensor": False,
+                "has_cup_sensor": False,
+                "has_pressure_sensor": False,
+                "has_filter_sensor": True,
+            }
+            results["raw_frames"] = {
+                "primary_cmd": "HZ:",
+                "primary_raw": hz_resp or "",
+                "tokens": list(parts) if has_any_hz else [],
+                "cs": results.get("raw_cs", "") or "",
+                "ic": results.get("raw_ic", "") or "",
+                "as": results.get("raw_as", "") or "",
+            }
         else:
             # Smart Connect Protocol Mode
             results["protocol"] = "Encrypted Smart Connect (@-Protocol)"
@@ -1180,51 +1219,59 @@ def query_live_sensors(
                             if pt and pt.strip() != "@TF:":
                                 tf_resp = pt
 
+            has_tf_frame = bool(tf_resp and str(tf_resp).strip())
             results["raw_status"] = tf_resp or "N/A"
             active_alerts = []
-            if tf_resp:
+            tf_tokens: List[str] = []
+            if has_tf_frame:
                 raw_tf = jp.parse_tf(tf_resp)
                 if raw_tf:
                     active_alerts = profiles_db.get_active_alerts(profile or profiles_db.DEFAULT_PROFILE, raw_tf)
+                tf_clean = str(tf_resp).strip()
+                tf_payload = tf_clean.split(":", 1)[1].strip() if ":" in tf_clean else tf_clean
+                if "," in tf_payload:
+                    tf_tokens = [tok.strip() for tok in tf_payload.split(",") if tok.strip()]
+                elif tf_payload:
+                    tf_tokens = [tf_payload[i:i + 4] for i in range(0, len(tf_payload), 4)]
 
             alert_names = [a["name"].lower() for a in active_alerts]
             tank_ok = not any("water" in a for a in alert_names)
             tray_ok = not any("tray" in a for a in alert_names)
             beans_ok = not any("bean" in a for a in alert_names)
-            ready_ok = any("ready" in a for a in alert_names) or (len(active_alerts) == 0)
+            ready_ok = has_tf_frame and (any("ready" in a for a in alert_names) or (len(active_alerts) == 0))
 
             results["switches"] = [
                 {
                     "id": "water_tank",
                     "name": "Water Tank Level Sensor",
-                    "status": "Water OK / Tank Present" if tank_ok else "Fill Water Tank / Tank Empty",
-                    "ok": tank_ok,
-                    "badge": "NORMAL" if tank_ok else "WARNING",
+                    "status": ("Water OK / Tank Present" if tank_ok else "Fill Water Tank / Tank Empty") if has_tf_frame else "No @TF: Reply",
+                    "ok": tank_ok if has_tf_frame else False,
+                    "badge": ("NORMAL" if tank_ok else "WARNING") if has_tf_frame else "NO FRAME",
                     "icon": "💧"
                 },
                 {
                     "id": "drip_tray",
                     "name": "Drip Tray / Drawer Contact",
-                    "status": "Tray Inserted" if tray_ok else "Insert / Empty Tray",
-                    "ok": tray_ok,
-                    "badge": "NORMAL" if tray_ok else "WARNING",
+                    "status": ("Tray Inserted" if tray_ok else "Insert / Empty Tray") if has_tf_frame else "No @TF: Reply",
+                    "ok": tray_ok if has_tf_frame else False,
+                    "badge": ("NORMAL" if tray_ok else "WARNING") if has_tf_frame else "NO FRAME",
                     "icon": "📥"
                 },
                 {
                     "id": "bean_hopper",
                     "name": "Bean Hopper / Charge Sensor",
-                    "status": "Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty",
-                    "ok": beans_ok,
-                    "badge": "NORMAL" if beans_ok else "FILL BEANS",
-                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Puck thickness nominal" if beans_ok else "Grinder dry run detected"),
+                    "status": ("Beans OK / Hopper Charged" if beans_ok else "Fill Beans / Hopper Empty") if has_tf_frame else "No @TF: Reply",
+                    "ok": beans_ok if has_tf_frame else False,
+                    "badge": ("NORMAL" if beans_ok else "FILL BEANS") if has_tf_frame else "NO FRAME",
+                    "details": "Monitored Locally by Display MCU (EF518D)" if has_commercial_bean_sensor else ("Smart Connect @TF: status bit" if has_tf_frame else "Awaiting @TF: reply"),
                     "icon": "🫘"
                 },
                 {
                     "id": "machine_ready",
                     "name": "Appliance Operating State",
-                    "status": "Ready to Brew / Nominal" if ready_ok else "Busy / Status Notification",
+                    "status": ("Ready to Brew / Nominal" if ready_ok else "Busy / Status Notification") if has_tf_frame else "No @TF: Reply",
                     "ok": ready_ok,
-                    "badge": "READY" if ready_ok else "BUSY",
+                    "badge": ("READY" if ready_ok else "BUSY") if has_tf_frame else "NO FRAME",
                     "icon": "☕"
                 }
             ]
@@ -1232,10 +1279,10 @@ def query_live_sensors(
                 {
                     "id": "system_status",
                     "name": "Smart Connect Telemetry Bus",
-                    "status": "Active / Nominal",
-                    "ok": True,
-                    "badge": "NOMINAL",
-                    "details": "Real-time BLE/UART telemetry bus operational"
+                    "status": "Active (@TF: Alert Bitmask Only)" if has_tf_frame else "No @TF: Reply",
+                    "ok": has_tf_frame,
+                    "badge": "NOMINAL" if has_tf_frame else "NO FRAME",
+                    "details": "Encrypted @TF: status bus active (numeric temperatures, flowmeter & brew unit ticks are not exposed by @TF:)" if has_tf_frame else "Machine did not respond to @TF: telemetry query"
                 }
             ]
             results["alerts"] = active_alerts
@@ -1252,16 +1299,45 @@ def query_live_sensors(
 
             results["telemetry"] = {
                 "active_alert_count": len(active_alerts),
-                "beans_ok": beans_ok,
+                "beans_ok": beans_ok if has_tf_frame else None,
                 "is_dual_heater": is_dual_sc,
                 "heater_count": 2 if is_dual_sc else 1,
-                "heater_coffee_str": "Nominal",
-                "heater_coffee_status": "Ready",
-                "heater_steam_str": "Nominal" if is_dual_sc else "Not Installed (Single Heater Model)",
-                "heater_steam_status": "Ready" if is_dual_sc else "Not Installed",
+                "heater_coffee_str": "Nominal (@TF:)" if has_tf_frame else "No Frame",
+                "heater_coffee_status": "Ready" if has_tf_frame else "No Frame",
+                "heater_steam_str": ("Nominal (@TF:)" if has_tf_frame else "No Frame") if is_dual_sc else "Not Installed (Single Heater Model)",
+                "heater_steam_status": ("Ready" if has_tf_frame else "No Frame") if is_dual_sc else "Not Installed",
+                "machine_state_badge": ("READY" if ready_ok else "BUSY") if has_tf_frame else "NO FRAME",
+                "machine_state_status": ("Ready to Brew / Nominal" if ready_ok else "Busy / Status Notification") if has_tf_frame else "No @TF: Reply",
                 "flow_pulses": 0,
                 "flow_rate_ml_s": 0.0,
                 "flow_volume_ml": 0.0,
+            }
+            results["capabilities"] = {
+                "vendor": "Jura",
+                "topology": "jura_smart_connect",
+                "protocol": results["protocol"],
+                "ef_code": detected_ef or profile_ef or "",
+                "has_live_frame": has_tf_frame,
+                "has_coffee_temp": False,
+                "has_steam_temp": False,
+                "has_flowmeter": False,
+                "has_bu_encoder": False,
+                "has_valve_state": False,
+                "has_as_shunt": False,
+                "has_bean_sensor": has_tf_frame,
+                "has_grounds_sensor": False,
+                "has_door_sensor": False,
+                "has_cup_sensor": False,
+                "has_pressure_sensor": False,
+                "has_filter_sensor": False,
+            }
+            results["raw_frames"] = {
+                "primary_cmd": "@TF:",
+                "primary_raw": tf_resp or "",
+                "tokens": tf_tokens,
+                "cs": "",
+                "ic": "",
+                "as": "",
             }
 
     except Exception as e:

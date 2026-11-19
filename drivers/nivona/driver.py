@@ -156,11 +156,15 @@ class NivonaDriver(BaseApplianceDriver):
         try:
             # Send HZ: (Hardware Zustand)
             hz_raw = self._query_ascii(conn, "HZ:", timeout=1.0)
-            if hz_raw and hz_raw.startswith("hz:"):
+            got_frame = bool(hz_raw and hz_raw.startswith("hz:"))
+            if got_frame:
                 payload_str = hz_raw[3:].strip()
                 parts = [p.strip() for p in payload_str.split(",")] if "," in payload_str else payload_str.split()
             else:
                 parts = []
+
+            is_demo_conn = bool(getattr(conn, "is_demo", False))
+            has_valid = got_frame or is_demo_conn
 
             # Nivona status bit mapping (shares Eugster/Frismag architecture)
             tank_ok = True
@@ -181,42 +185,42 @@ class NivonaDriver(BaseApplianceDriver):
             switches.append({
                 "id": "water_tank",
                 "name": "Water Tank Float Switch",
-                "status": "Full / Seated" if tank_ok else "Empty / Missing",
-                "ok": tank_ok,
-                "badge": "OK" if tank_ok else "REFILL",
+                "status": ("Full / Seated" if tank_ok else "Empty / Missing") if has_valid else "No HZ: Reply",
+                "ok": tank_ok if has_valid else False,
+                "badge": ("OK" if tank_ok else "REFILL") if has_valid else "NO FRAME",
                 "details": "Magnetic reed sensor on reservoir backwall",
                 "icon": "💧"
             })
             switches.append({
                 "id": "drip_tray",
                 "name": "Drip Tray Sensor",
-                "status": "Inserted" if tray_ok else "Tray Missing / Full",
-                "ok": tray_ok,
-                "badge": "OK" if tray_ok else "EMPTY",
+                "status": ("Inserted" if tray_ok else "Tray Missing / Full") if has_valid else "No HZ: Reply",
+                "ok": tray_ok if has_valid else False,
+                "badge": ("OK" if tray_ok else "EMPTY") if has_valid else "NO FRAME",
                 "details": "Conductive contacts on drip chassis",
                 "icon": "📥"
             })
             switches.append({
                 "id": "brew_group",
                 "name": "Brew Group Presence Switch",
-                "status": "Locked in Place" if brew_unit_in else "Brew Group Missing / Unlocked",
-                "ok": brew_unit_in,
-                "badge": "OK" if brew_unit_in else "MISSING",
+                "status": ("Locked in Place" if brew_unit_in else "Brew Group Missing / Unlocked") if has_valid else "No HZ: Reply",
+                "ok": brew_unit_in if has_valid else False,
+                "badge": ("OK" if brew_unit_in else "MISSING") if has_valid else "NO FRAME",
                 "details": "Removable brew unit safety microswitch",
                 "icon": "⚙️"
             })
             switches.append({
                 "id": "grounds_container",
                 "name": "Coffee Grounds Drawer",
-                "status": "Present" if grounds_ok else "Drawer Out / Full",
-                "ok": grounds_ok,
-                "badge": "OK" if grounds_ok else "CHECK",
+                "status": ("Present" if grounds_ok else "Drawer Out / Full") if has_valid else "No HZ: Reply",
+                "ok": grounds_ok if has_valid else False,
+                "badge": ("OK" if grounds_ok else "CHECK") if has_valid else "NO FRAME",
                 "details": "Used puck container microswitch",
                 "icon": "🗑️"
             })
 
             # Read Thermal Sensors (RT:0000 or RT:0002) - skipped in fast_poll mode to maximize loop throughput
-            temp_c = 92.5
+            temp_c: Optional[float] = 92.5 if has_valid else None
             if not fast_poll:
                 rt_temp = self._query_ascii(conn, "RT:0002", timeout=0.8)
                 if rt_temp and rt_temp.startswith("rt:"):
@@ -237,9 +241,9 @@ class NivonaDriver(BaseApplianceDriver):
             sensors.append({
                 "id": "water_flow",
                 "name": "Live Water Flow Rate",
-                "status": "0.0 ml/s" if flow_pulses == 0 else f"{flow_pulses} pulses",
-                "ok": True,
-                "badge": "0.0 ml/s" if flow_pulses == 0 else f"{round(flow_pulses / 2.366, 1)} ml",
+                "status": ("0.0 ml/s" if flow_pulses == 0 else f"{flow_pulses} pulses") if has_valid else "No Reply",
+                "ok": has_valid,
+                "badge": ("0.0 ml/s" if flow_pulses == 0 else f"{round(flow_pulses / 2.366, 1)} ml") if has_valid else "NO FRAME",
                 "details": f"Flowmeter: {flow_pulses} pulses (~{round(flow_pulses / 2.366, 1)} ml)",
                 "icon": "🌊",
                 "value": 0.0,
@@ -249,21 +253,21 @@ class NivonaDriver(BaseApplianceDriver):
             sensors.append({
                 "id": "heater_coffee",
                 "name": "Coffee Thermoblock",
-                "status": f"{temp_c} °C" if not fast_poll else "Active",
-                "ok": (15.0 <= temp_c <= 125.0),
-                "badge": f"{temp_c} °C" if not fast_poll else "Active",
+                "status": (f"{temp_c} °C" if not fast_poll else "Active") if temp_c is not None else "No Reply",
+                "ok": (15.0 <= temp_c <= 125.0) if temp_c is not None else False,
+                "badge": (f"{temp_c} °C" if not fast_poll else "Active") if temp_c is not None else "NO FRAME",
                 "details": "NTC Thermistor on primary aluminum heater",
                 "icon": "☕"
             })
 
-            ready_ok = (tank_ok and tray_ok and brew_unit_in and grounds_ok)
-            readiness = "Ready" if ready_ok else "Service Required"
+            ready_ok = has_valid and tank_ok and tray_ok and brew_unit_in and grounds_ok
+            readiness = ("Ready" if ready_ok else "Service Required") if has_valid else "No Live Frame"
             switches.append({
                 "id": "machine_ready",
                 "name": "Appliance Operating State",
-                "status": "Ready to Brew / Nominal" if ready_ok else "Not Ready (Check Contacts)",
+                "status": ("Ready to Brew / Nominal" if ready_ok else "Not Ready (Check Contacts)") if has_valid else "No HZ: Reply",
                 "ok": ready_ok,
-                "badge": "READY" if ready_ok else "CHECK",
+                "badge": ("READY" if ready_ok else "CHECK") if has_valid else "NO FRAME",
                 "details": "Overall machine readiness status",
                 "icon": "☕"
             })
@@ -279,13 +283,42 @@ class NivonaDriver(BaseApplianceDriver):
                     "is_dual_heater": False,
                     "heater_count": 1,
                     "heater_coffee_c": temp_c,
-                    "heater_coffee_str": f"{temp_c:.1f} °C" if not fast_poll else "Active",
-                    "heater_coffee_status": "Ready to Brew",
+                    "heater_coffee_str": (f"{temp_c:.1f} °C" if not fast_poll else "Active") if temp_c is not None else "No Frame",
+                    "heater_coffee_status": "Ready to Brew" if temp_c is not None else "No Frame",
                     "heater_steam_str": "Not Installed (Single Heater)",
                     "heater_steam_status": "Not Installed",
+                    "machine_state_badge": ("READY" if ready_ok else "CHECK") if has_valid else "NO FRAME",
+                    "machine_state_status": readiness,
                     "flow_pulses": flow_pulses,
                     "flow_rate_ml_s": 0.0,
                     "flow_volume_ml": flow_vol,
+                },
+                "capabilities": {
+                    "vendor": "Nivona",
+                    "topology": "nivona_single",
+                    "protocol": "Eugster/Frismag AG ASCII",
+                    "ef_code": "",
+                    "has_live_frame": got_frame,
+                    "has_coffee_temp": temp_c is not None,
+                    "has_steam_temp": False,
+                    "has_flowmeter": has_valid,
+                    "has_bu_encoder": False,
+                    "has_valve_state": False,
+                    "has_as_shunt": False,
+                    "has_bean_sensor": False,
+                    "has_grounds_sensor": True,
+                    "has_door_sensor": False,
+                    "has_cup_sensor": False,
+                    "has_pressure_sensor": False,
+                    "has_filter_sensor": False,
+                },
+                "raw_frames": {
+                    "primary_cmd": "HZ:",
+                    "primary_raw": hz_raw or "",
+                    "tokens": parts,
+                    "cs": "",
+                    "ic": "",
+                    "as": "",
                 },
                 "raw_hz": hz_raw or ""
             }
