@@ -18,6 +18,51 @@ In accordance with SPECTRA edition guidelines, releases are identified strictly 
 
 ---
 
+## [Build 20261119.1612] — 2026-11-19
+
+### 🛡️ Linux Loopback / WebKitGTK `POST /api/ui_prefs` 403 Fix
+- **Loopback & Native WebView Origin Validation (`web_server.py`, `App.jsx`)**:
+  - Fixed false-positive `HTTP 403` on local Linux `POST /api/ui_prefs` (and other local POST endpoints) caused by overly narrow hardcoded origin ports (`8080`/`5173`) and Linux WebKitGTK (`WebKit2`) / IPv6 `[::1]` / fallback loopback port headers.
+  - Upgraded `_allowed_origins()` and added `_is_loopback_origin()` + `_is_allowed_post_origin()` to allow genuine loopback origins (`127.0.0.1`, `localhost`, `[::1]` on any local port, `self.server.server_port`, and `tauri://localhost`) plus WebKitGTK `Origin: null` ONLY when browser-enforced `Sec-Fetch-Site: same-origin` or loopback `Referer` proves same-origin (still blocking foreign cross-site `Origin: null` sandboxed iframes with `403`).
+  - Added structured `SECURITY` warning logging of rejected `Origin`, `Host`, `Referer`, and `Sec-Fetch-Site` headers whenever a `403` occurs, and removed unnecessary `keepalive: true` from interactive `POST /api/ui_prefs` in `App.jsx`.
+
+---
+
+## [Build 20261119.1552] — 2026-11-19
+
+### 📡 Tab 02 Device-Aware Telemetry, Capabilities Contract & Raw Frame Inspector
+- **Backend `capabilities` & `raw_frames` Contract (`stats_collector.py`, `drivers/nivona/driver.py`, `drivers/lamanti_kl/driver.py`, `drivers/lamanti_jn/driver.py`, `web_server.py`)**:
+  - Emits explicit `capabilities` (`vendor`, `topology`, `ef_code`, `has_live_frame`, `has_coffee_temp`, `has_steam_temp`, `has_flowmeter`, `has_bu_encoder`, `has_valve_state`, `has_as_shunt`, etc.) and tokenized `raw_frames` (`HZ:`, `@TF:`, Modbus RTU registers, Jetinno heartbeat bytes) across all supported protocols.
+  - Eliminated fake healthy defaults when real hardware returns no reply (`HZ:` missing on Jura, Modbus timeout on Kalerm, heartbeat timeout on Jetinno, missing frame on Nivona) — now honestly reports `NO FRAME` / `None`.
+  - Made `GET /api/sensors` vendor-aware (detecting Nivona, Kalerm/Lamanti-KL, and Jetinno/Lamanti-JN automatically) with normalized timestamps.
+- **Device-Aware Digital Twin Schematic (`DigitalTwinSchematic.jsx`)**:
+  - Dynamically switches schematic topology & component bindings across 6 machine layouts: Jura Single-Heater, Jura Dual-Heater (renders live **TB2 Steam Thermoblock**), Jura Smart Connect (`@TF:` live switches + honest muted `N/A (@-PROTO)` badges on unexposed nodes), Nivona ASCII, Kalerm Dual-Boiler (with Service Door & Grounds Box), and Jetinno Vending (Mains Inlet, Brew Pump Bar Pressure, Espresso & Instant Boilers, Cabinet Door, Cup Sensor).
+  - Replaced hardcoded `PORTS: ONLINE` and hardcoded `"Safety interlocking verified..."` inspector text with real live protocol/frame/fault status.
+- **Oscilloscope & Tab 02 Hardening (`OscilloscopeStripChart.jsx`, `SpectraWorkspace.jsx`, `RawFrameInspector.jsx`)**:
+  - Auto-clears oscilloscope traces and bus event stream on port switches, right-aligns samples to `Now` using real elapsed timestamps, and displays a clear protocol notice on Smart Connect (`@TF:`-only) machines.
+  - Conditionally renders the `AS:` NTC Shunt self-test card only on machines that support `AS:`, fixed the `beansOk === null` false `FILL BEANS` badge, and switched switch/register headers to live dynamic counts.
+  - Added collapsible **Live Raw Telemetry Frame Inspector** (`RawFrameInspector.jsx`) with per-token live change highlighting (amber pulse when any raw field flips) and 1-click **Copy Frame Snapshot** JSON export for multi-device bench mapping.
+
+---
+
+## [Build 20261119.1528] — 2026-11-19
+
+### 🚩 GitHub Issue Reporting, Live Activity Status & Operator UX
+- **In-App GitHub Issue Reporter (`IssueReportModal.jsx`, `github_auth.py`, `web_server.py`, `SpectraWorkspace.jsx`)**:
+  - Added a **Report Issue (`ISSUE` / `NAHLÁSIT`)** button at the end of the top control bar immediately after the Debug toggle (`🐞`).
+  - Supports categories (`Bug Report`, `Machine / Protocol`, `Feature Request`, `UI / Translation`), optional sanitized SPECTRA build/OS/machine context, and opt-in sanitized recent debug log tail (automatically redacting GitHub tokens and local user home paths).
+  - Submits directly to `Pr0xyA-91/spectra` via `POST /api/github/report_issue` when signed in (with HTTP `422` label fallback), and offers a 1-click pre-filled browser submission fallback when unauthenticated.
+- **Dynamic Live SPECTRA Activity Status Pill (`SpectraWorkspace.jsx`)**:
+  - Replaced the static `ONLINE` badge with a live **SPECTRA Activity Pill** beside the `BUILD` badge reflecting real-time operational state (`READING %`, `UPDATING %`, `RECONNECTING`, `CAPTURING EEPROM`, `MAPPING EEPROM`, `AI WORKING`, `PULLING AI MODEL`, `GITHUB SYNC`, `EXPORTING`, `CHECKING UPDATES`, `COMM ERROR`, `MONITORING`, `READY`, `IDLE`).
+- **Fixed Language Preset Persistence Across Restarts (`App.jsx`, `web_server.py`)**:
+  - Fixed a mount-time race condition where `App.jsx` wrote the default `'en'` to `localStorage` before `GET /api/ui_prefs` resolved, causing saved Czech (`cs`) preferences on disk to be ignored on fresh WebView/port startups.
+  - Made `save_ui_prefs()` hold `_ui_prefs_lock` across the entire read-modify-write cycle using thread-unique atomic temp files so concurrent `lang` and `onboarding_seen` writes never clobber each other.
+- **Custom Ticket Number / Filename Prefix on Diagnostic Exports (`SpectraWorkspace.jsx`, `web_server.py`)**:
+  - Added an optional **Ticket Number / Filename Prefix** input with live sanitized filename preview inside the Export Modal.
+  - Added cross-platform `sanitize_filename_prefix()` and `build_export_filename()` (diacritic transliteration, path-traversal stripping, Windows reserved-name protection) wired into `GET /api/export` (JSON, CSV, TXT, capture) and `POST /api/export_capture`.
+
+---
+
 ## [Build 20261119.1125] — 2026-11-19
 
 ### 🔌 Hardware Bridge / Smart Connect & Protocol Engine Fixes

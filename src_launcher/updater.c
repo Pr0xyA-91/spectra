@@ -15,8 +15,8 @@
 #include <shellapi.h>
 #include <conio.h>
 
-#define SPECTRA_BUILD        "20261119.1125"
-#define SPECTRA_VERSION      "Build 20261119.1125"
+#define SPECTRA_BUILD        "20261119.1612"
+#define SPECTRA_VERSION      "Build 20261119.1612"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void log_updater(const wchar_t *fmt, ...) {

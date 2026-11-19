@@ -146,19 +146,27 @@ class LamantiKLDriver(BaseApplianceDriver):
             conn.write(req)
             resp = conn.read(64, timeout_sec=0.8)
 
+            is_demo_conn = bool(getattr(conn, "is_demo", False))
+            got_frame = bool(resp and len(resp) >= 47 and verify_modbus_crc(resp) and resp[1] == 0x04)
+
             tank_ok = True
             tray_ok = True
             grounds_ok = True
             brew_home = True
             beans_ok = True
             door_closed = True
-            boiler_c = 93.0
-            steam_c = 125.0
+            boiler_c: Optional[float] = 93.0 if is_demo_conn else None
+            steam_c: Optional[float] = 125.0 if is_demo_conn else None
             flow_pulses = 0
             fault_code = 0
+            reg_tokens: List[str] = []
 
-            if resp and len(resp) >= 47 and verify_modbus_crc(resp) and resp[1] == 0x04:
+            if got_frame:
                 payload = resp[3:-2]
+                reg_tokens = [
+                    f"{int.from_bytes(payload[i:i + 2], byteorder='big'):04X}"
+                    for i in range(0, min(len(payload) - 1, 42), 2)
+                ]
                 state_code = int.from_bytes(payload[0:2], byteorder="big")
                 boiler_raw = int.from_bytes(payload[2:4], byteorder="big")
                 steam_raw = int.from_bytes(payload[4:6], byteorder="big")
@@ -179,57 +187,58 @@ class LamantiKLDriver(BaseApplianceDriver):
                 beans_ok = bool(switch_bits & 0x20)
                 door_closed = bool(switch_bits & 0x80)
 
+            has_valid = got_frame or is_demo_conn
             switches.append({
                 "id": "water_tank",
                 "name": "Water Reservoir Level",
-                "status": "Adequate Water" if tank_ok else "Low / Tank Empty",
-                "ok": tank_ok,
-                "badge": "OK" if tank_ok else "REFILL",
+                "status": ("Adequate Water" if tank_ok else "Low / Tank Empty") if has_valid else "No Modbus Reply",
+                "ok": tank_ok if has_valid else False,
+                "badge": ("OK" if tank_ok else "REFILL") if has_valid else "NO FRAME",
                 "details": "Hall-effect reed sensor in chassis",
                 "icon": "💧"
             })
             switches.append({
                 "id": "drip_tray",
                 "name": "Drip Tray & Waste Drawer",
-                "status": "Inserted" if tray_ok else "Tray Out / Full",
-                "ok": tray_ok,
-                "badge": "OK" if tray_ok else "EMPTY",
+                "status": ("Inserted" if tray_ok else "Tray Out / Full") if has_valid else "No Modbus Reply",
+                "ok": tray_ok if has_valid else False,
+                "badge": ("OK" if tray_ok else "EMPTY") if has_valid else "NO FRAME",
                 "details": "Waste basin contact switch",
                 "icon": "📥"
             })
             switches.append({
                 "id": "grounds_container",
                 "name": "Coffee Grounds Box",
-                "status": "Seated" if grounds_ok else "Box Full / Missing",
-                "ok": grounds_ok,
-                "badge": "OK" if grounds_ok else "EMPTY",
+                "status": ("Seated" if grounds_ok else "Box Full / Missing") if has_valid else "No Modbus Reply",
+                "ok": grounds_ok if has_valid else False,
+                "badge": ("OK" if grounds_ok else "EMPTY") if has_valid else "NO FRAME",
                 "details": "Used puck container microswitch",
                 "icon": "🗑️"
             })
             switches.append({
                 "id": "brew_group",
                 "name": "Brew Group Position",
-                "status": "Home / Ready" if brew_home else "Active / Displaced",
-                "ok": brew_home,
-                "badge": "OK" if brew_home else "BUSY",
+                "status": ("Home / Ready" if brew_home else "Active / Displaced") if has_valid else "No Modbus Reply",
+                "ok": brew_home if has_valid else False,
+                "badge": ("OK" if brew_home else "BUSY") if has_valid else "NO FRAME",
                 "details": "Optical encoder and cam microswitch",
                 "icon": "⚙️"
             })
             switches.append({
                 "id": "bean_hopper",
                 "name": "Bean Hopper Sensor",
-                "status": "Beans Present" if beans_ok else "Bean Hopper Low",
-                "ok": beans_ok,
-                "badge": "OK" if beans_ok else "REFILL",
+                "status": ("Beans Present" if beans_ok else "Bean Hopper Low") if has_valid else "No Modbus Reply",
+                "ok": beans_ok if has_valid else False,
+                "badge": ("OK" if beans_ok else "REFILL") if has_valid else "NO FRAME",
                 "details": "Infrared optical beam in bean reservoir",
                 "icon": "🫘"
             })
             switches.append({
                 "id": "door_switch",
                 "name": "Maintenance Service Door",
-                "status": "Closed" if door_closed else "Door Open",
-                "ok": door_closed,
-                "badge": "CLOSED" if door_closed else "OPEN",
+                "status": ("Closed" if door_closed else "Door Open") if has_valid else "No Modbus Reply",
+                "ok": door_closed if has_valid else False,
+                "badge": ("CLOSED" if door_closed else "OPEN") if has_valid else "NO FRAME",
                 "details": "Front chassis safety interlock",
                 "icon": "🚪"
             })
@@ -237,27 +246,27 @@ class LamantiKLDriver(BaseApplianceDriver):
             sensors.append({
                 "id": "boiler_coffee",
                 "name": "Coffee Thermoblock",
-                "status": f"{boiler_c:.1f} °C",
-                "ok": (20.0 <= boiler_c <= 110.0),
-                "badge": f"{boiler_c:.1f} °C",
+                "status": f"{boiler_c:.1f} °C" if boiler_c is not None else "No Reply",
+                "ok": (20.0 <= boiler_c <= 110.0) if boiler_c is not None else False,
+                "badge": f"{boiler_c:.1f} °C" if boiler_c is not None else "NO FRAME",
                 "details": "Primary thermoblock NTC temperature sensor",
                 "icon": "☕"
             })
             sensors.append({
                 "id": "boiler_steam",
                 "name": "Steam Boiler",
-                "status": f"{steam_c:.1f} °C",
-                "ok": (20.0 <= steam_c <= 150.0),
-                "badge": f"{steam_c:.1f} °C",
+                "status": f"{steam_c:.1f} °C" if steam_c is not None else "No Reply",
+                "ok": (20.0 <= steam_c <= 150.0) if steam_c is not None else False,
+                "badge": f"{steam_c:.1f} °C" if steam_c is not None else "NO FRAME",
                 "details": "Dedicated steam generator NTC sensor",
                 "icon": "♨️"
             })
             sensors.append({
                 "id": "water_flow",
                 "name": "Live Water Flow Rate",
-                "status": f"{flow_pulses} pulses",
-                "ok": True,
-                "badge": f"{round(flow_pulses / 2.2, 1)} ml",
+                "status": f"{flow_pulses} pulses" if has_valid else "No Reply",
+                "ok": has_valid,
+                "badge": f"{round(flow_pulses / 2.2, 1)} ml" if has_valid else "NO FRAME",
                 "details": f"Hydraulic impulse turbine: {round(flow_pulses / 2.2, 1)} ml ({flow_pulses} pulses)",
                 "icon": "🌊",
                 "value": 0.0,
@@ -266,15 +275,17 @@ class LamantiKLDriver(BaseApplianceDriver):
             sensors.append({
                 "id": "flowmeter",
                 "name": "Flowmeter Pulser",
-                "status": f"{flow_pulses} pulses",
-                "ok": True,
-                "badge": "MONITORING",
+                "status": f"{flow_pulses} pulses" if has_valid else "No Reply",
+                "ok": has_valid,
+                "badge": "MONITORING" if has_valid else "NO FRAME",
                 "details": "Hydraulic impulse turbine flow sensor",
                 "icon": "🔄"
             })
 
             # Check fault code
-            if fault_code != 0:
+            if not has_valid:
+                readiness = "No Modbus Reply"
+            elif fault_code != 0:
                 fault_info = KALERM_FAULT_CODES.get(fault_code, {
                     "name": f"Kalerm Error E{fault_code:02d}",
                     "severity": "CRITICAL",
@@ -292,13 +303,13 @@ class LamantiKLDriver(BaseApplianceDriver):
                 ready_ok = (tank_ok and tray_ok and grounds_ok and door_closed)
                 readiness = "Ready" if ready_ok else "Not Ready"
 
-            ready_ok = (fault_code == 0 and tank_ok and tray_ok and grounds_ok and door_closed)
+            ready_ok = (has_valid and fault_code == 0 and tank_ok and tray_ok and grounds_ok and door_closed)
             switches.append({
                 "id": "machine_ready",
                 "name": "Appliance Operating State",
                 "status": "Ready to Brew / Nominal" if ready_ok else readiness,
                 "ok": ready_ok,
-                "badge": "READY" if ready_ok else ("FAULT" if fault_code != 0 else "CHECK"),
+                "badge": ("READY" if ready_ok else ("FAULT" if fault_code != 0 else "CHECK")) if has_valid else "NO FRAME",
                 "details": "Kalerm MCU state evaluation",
                 "icon": "☕"
             })
@@ -314,15 +325,45 @@ class LamantiKLDriver(BaseApplianceDriver):
                     "is_dual_heater": True,
                     "heater_count": 2,
                     "heater_coffee_c": boiler_c,
-                    "heater_coffee_str": f"{boiler_c:.1f} °C",
-                    "heater_coffee_status": "Ready to Brew",
+                    "heater_coffee_str": f"{boiler_c:.1f} °C" if boiler_c is not None else "No Frame",
+                    "heater_coffee_status": "Ready to Brew" if boiler_c is not None else "No Frame",
                     "heater_steam_c": steam_c,
-                    "heater_steam_str": f"{steam_c:.1f} °C",
-                    "heater_steam_status": "Ready for Steam",
+                    "heater_steam_str": f"{steam_c:.1f} °C" if steam_c is not None else "No Frame",
+                    "heater_steam_status": "Ready for Steam" if steam_c is not None else "No Frame",
+                    "beans_ok": beans_ok if has_valid else None,
+                    "machine_state_badge": ("READY" if ready_ok else ("FAULT" if fault_code != 0 else "CHECK")) if has_valid else "NO FRAME",
+                    "machine_state_status": readiness,
                     "flow_pulses": flow_pulses,
                     "flow_rate_ml_s": 0.0,
                     "flow_volume_ml": round(flow_pulses / 2.2, 1),
-                }
+                },
+                "capabilities": {
+                    "vendor": "Lamanti-KL",
+                    "topology": "kalerm_dual",
+                    "protocol": "Kalerm Modbus RTU",
+                    "ef_code": "",
+                    "has_live_frame": got_frame,
+                    "has_coffee_temp": boiler_c is not None,
+                    "has_steam_temp": steam_c is not None,
+                    "has_flowmeter": has_valid,
+                    "has_bu_encoder": False,
+                    "has_valve_state": False,
+                    "has_as_shunt": False,
+                    "has_bean_sensor": True,
+                    "has_grounds_sensor": True,
+                    "has_door_sensor": True,
+                    "has_cup_sensor": False,
+                    "has_pressure_sensor": False,
+                    "has_filter_sensor": False,
+                },
+                "raw_frames": {
+                    "primary_cmd": "MODBUS:04:0000(21)",
+                    "primary_raw": resp.hex(" ").upper() if resp else "",
+                    "tokens": reg_tokens,
+                    "cs": "",
+                    "ic": "",
+                    "as": "",
+                },
             }
         except Exception as e:
             return {

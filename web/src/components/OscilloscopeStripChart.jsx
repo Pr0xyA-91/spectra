@@ -1,43 +1,56 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Trash2, Download, Flame, Activity } from 'lucide-react';
+import { Play, Pause, Trash2, Download, Activity } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
 
 /**
  * Real-Time Rolling Strip Chart Graph (Oscilloscope Widget)
- * Exact parity with SPECTRA's GTK OscilloscopeWidget (gui_widgets.py):
- * - X Axis: Time (-50s, -40s, -30s, -20s, -10s, Now)
- * - Y Axis: Temperature in °C (20°C to 160°C) with grid lines (20, 60, 90, 110, 140, 160°C)
- * - Nominal brew target band (90°C - 95°C) shaded
- * - Thermoblock 1 (Coffee) Temperature in °C (Pink / Theme Primary)
- * - Thermoblock 2 (Steam) Temperature in °C (Orange)
- * - Water Flow Rate in ml/s (Cyan dashed curve, scaled in bottom 40%)
- * - Real-time value dots at right margin ('Now')
- * - Top Legend HUD: ■ TB1: xx.x°C   ■ TB2: xx.x°C   ■ Flow: x.x ml/s
+ * - Auto-resets traces whenever `selectedPort` changes (zero cross-machine trace bleed)
+ * - Right-aligns samples to the 'Now' edge with real elapsed-time X-axis labels
+ * - Handles dual-heater/dual-boiler models (TB1 + TB2) and displays a clear protocol
+ *   notice on Smart Connect (@TF:-only) devices where numeric temps/flow are not exposed.
  */
 export default function OscilloscopeStripChart({
   theme,
   lang = 'en',
   liveData,
+  selectedPort = '',
   maxSamples = 60,
 }) {
   const t = createTranslator(lang);
   const [tb1Data, setTb1Data] = useState([]);
   const [tb2Data, setTb2Data] = useState([]);
   const [flowData, setFlowData] = useState([]);
+  const [sampleTimes, setSampleTimes] = useState([]);
   const [isPaused, setIsPaused] = useState(false);
 
   const canvasRef = useRef(null);
 
-  // Extract latest readings
+  // Extract latest readings & capabilities
   const telem = liveData?.telemetry || {};
+  const caps = liveData?.capabilities || {};
+  const protocol = liveData?.protocol || caps.protocol || '';
   const currentTb1 = telem.heater_coffee_c != null ? Number(telem.heater_coffee_c) : null;
   const currentTb2 = telem.heater_steam_c != null ? Number(telem.heater_steam_c) : null;
   const currentFlow = telem.flow_rate_ml_s != null ? Number(telem.flow_rate_ml_s) : 0.0;
-  const hasTb2 = telem.is_dual_heater ?? false;
+  const hasTb2 = Boolean(caps.has_steam_temp || telem.is_dual_heater);
+  const isNumericUnsupported = Boolean(
+    protocol &&
+    caps.has_coffee_temp === false &&
+    caps.has_flowmeter === false
+  );
+
+  // Auto-clear rolling buffers whenever the user switches ports / machines
+  useEffect(() => {
+    setTb1Data([]);
+    setTb2Data([]);
+    setFlowData([]);
+    setSampleTimes([]);
+  }, [selectedPort]);
 
   // Append new sample on each liveData update
   useEffect(() => {
     if (isPaused || currentTb1 === null) return;
+    const nowMs = Date.now();
 
     setTb1Data((prev) => {
       const next = [...prev, currentTb1];
@@ -53,25 +66,31 @@ export default function OscilloscopeStripChart({
       const next = [...prev, currentFlow];
       return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
     });
+
+    setSampleTimes((prev) => {
+      const next = [...prev, nowMs];
+      return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
+    });
   }, [liveData, isPaused, currentTb1, currentTb2, currentFlow, maxSamples]);
 
-  // Clear buffers
   const handleClear = () => {
     setTb1Data([]);
     setTb2Data([]);
     setFlowData([]);
+    setSampleTimes([]);
   };
 
-  // Export CSV
   const handleExportCSV = () => {
     if (tb1Data.length === 0) return;
-    const header = 'Sample_Index,Time_Seconds_Ago,TB1_Coffee_C,TB2_Steam_C,Flow_Rate_ml_s\n';
+    const header = 'Sample_Index,Timestamp_ISO,Elapsed_Sec,TB1_Coffee_C,TB2_Steam_C,Flow_Rate_ml_s\n';
+    const lastMs = sampleTimes[sampleTimes.length - 1] || Date.now();
     const rows = tb1Data
       .map((t1, i) => {
-        const secAgo = tb1Data.length - 1 - i;
+        const tsMs = sampleTimes[i] || lastMs;
+        const secAgo = Math.round((lastMs - tsMs) / 1000);
         const t2 = tb2Data[i] ?? '';
         const fl = flowData[i] ?? 0;
-        return `${i},-${secAgo}s,${t1},${t2},${fl}`;
+        return `${i},${new Date(tsMs).toISOString()},-${secAgo}s,${t1},${t2},${fl}`;
       })
       .join('\n');
 
@@ -84,7 +103,7 @@ export default function OscilloscopeStripChart({
     URL.revokeObjectURL(url);
   };
 
-  // High-DPI Canvas Rendering matching gui_widgets.py OscilloscopeWidget
+  // High-DPI Canvas Rendering
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -103,7 +122,6 @@ export default function OscilloscopeStripChart({
     ctx.fillStyle = theme.canvasBg || '#070B10';
     ctx.fillRect(0, 0, w, h);
 
-    // Inner plot area bounds (matching GTK OscilloscopeWidget)
     const padLeft = 46;
     const padRight = 20;
     const padTop = 26;
@@ -111,11 +129,8 @@ export default function OscilloscopeStripChart({
     const plotW = Math.max(10, w - padLeft - padRight);
     const plotH = Math.max(10, h - padTop - padBottom);
 
-    // Temperature range: 20.0°C to 160.0°C
     const tempMin = 20.0;
     const tempMax = 160.0;
-
-    // Horizontal Grid Lines & Labels: 20°C, 60°C, 90°C, 110°C, 140°C, 160°C
     const tempSteps = [20, 60, 90, 110, 140, 160];
 
     // Shaded nominal brew target band (90°C - 95°C)
@@ -143,9 +158,22 @@ export default function OscilloscopeStripChart({
       ctx.fillText(`${tVal}°C`, padLeft - 6, gy);
     });
 
-    // Vertical Time Grid Lines (-50s, -40s, -30s, -20s, -10s, Now)
+    // Dynamic Time Window Axis (computed from real sample timestamps, right-aligned to 'Now')
+    const nPts = tb1Data.length;
     const nowLabel = t('oscNow');
-    const timeLabels = ['-50s', '-40s', '-30s', '-20s', '-10s', nowLabel];
+    let spanSec = 50;
+    if (sampleTimes.length >= 2) {
+      const actualSpan = Math.max(5, Math.round((sampleTimes[sampleTimes.length - 1] - sampleTimes[0]) / 1000));
+      spanSec = nPts >= maxSamples ? actualSpan : Math.max(actualSpan, 50);
+    }
+    const timeLabels = [
+      `-${spanSec}s`,
+      `-${Math.round(spanSec * 0.8)}s`,
+      `-${Math.round(spanSec * 0.6)}s`,
+      `-${Math.round(spanSec * 0.4)}s`,
+      `-${Math.round(spanSec * 0.2)}s`,
+      nowLabel,
+    ];
     ctx.textAlign = 'center';
     ctx.font = '9.5px monospace';
     timeLabels.forEach((label, i) => {
@@ -162,44 +190,42 @@ export default function OscilloscopeStripChart({
       ctx.fillText(label, gx, h - 10);
     });
 
-    // Helper functions matching gui_widgets.py pt_x, pt_y_temp, pt_y_flow
-    const nPts = tb1Data.length;
-
-    // Empty state
+    // Empty or Unsupported Protocol state
     if (nPts === 0) {
-      // Empty HUD Header
       ctx.textAlign = 'left';
       ctx.font = 'bold 10px monospace';
       ctx.fillStyle = '#f38ba8';
       ctx.fillText('■ TB1: ---', padLeft, 14);
 
       ctx.fillStyle = '#fab387';
-      ctx.fillText('■ TB2: ---', padLeft + 110, 14);
+      ctx.fillText(hasTb2 ? '■ TB2: ---' : t('oscTb2Single'), padLeft + 110, 14);
 
       ctx.fillStyle = '#74c7ec';
-      ctx.fillText(`${t('oscFlowPrefix')} ---`, padLeft + 220, 14);
+      ctx.fillText(`${t('oscFlowPrefix')} ---`, padLeft + 260, 14);
 
-      // Center Prompt
       ctx.textAlign = 'center';
-      ctx.fillStyle = theme.textMuted || '#6c7086';
-      ctx.font = '11px monospace';
-      ctx.fillText(t('oscAwaiting'), padLeft + plotW / 2, padTop + plotH / 2);
+      ctx.fillStyle = isNumericUnsupported ? '#FBBF24' : (theme.textMuted || '#6c7086');
+      ctx.font = isNumericUnsupported ? 'bold 11px monospace' : '11px monospace';
+      if (isNumericUnsupported) {
+        ctx.fillText(t('oscUnsupportedTitle'), padLeft + plotW / 2, padTop + plotH / 2 - 8);
+        ctx.fillStyle = theme.textMuted || '#94A3B8';
+        ctx.font = '10px monospace';
+        ctx.fillText(t('oscUnsupportedSub'), padLeft + plotW / 2, padTop + plotH / 2 + 10);
+      } else {
+        ctx.fillText(t('oscAwaiting'), padLeft + plotW / 2, padTop + plotH / 2);
+      }
       return;
     }
 
-    // Map sample index to X position so latest sample is at 'Now' (right edge)
+    // Right-align samples to 'Now' (right edge) so traces scroll leftward naturally
+    const total = Math.max(2, maxSamples);
     const ptX = (idx) => {
-      const total = Math.max(2, maxSamples);
-      if (nPts >= total) {
-        return padLeft + (idx / (total - 1)) * plotW;
-      } else {
-        // Build progressively from left to right as samples arrive
-        return padLeft + (idx / (total - 1)) * plotW;
-      }
+      const offsetFromRight = nPts - 1 - idx;
+      return padLeft + plotW - (offsetFromRight / (total - 1)) * plotW;
     };
 
-    const ptYTemp = (t) => {
-      const clamped = Math.max(tempMin, Math.min(tempMax, t));
+    const ptYTemp = (val) => {
+      const clamped = Math.max(tempMin, Math.min(tempMax, val));
       const norm = 1.0 - (clamped - tempMin) / (tempMax - tempMin);
       return padTop + norm * plotH;
     };
@@ -212,7 +238,7 @@ export default function OscilloscopeStripChart({
 
     // 1. Water Flow Rate Curve (Cyan / Dashed)
     if (flowData.length > 0) {
-      ctx.strokeStyle = '#74c7ec'; // #74c7ec Cyan
+      ctx.strokeStyle = '#74c7ec';
       ctx.lineWidth = 1.8;
       ctx.setLineDash([4, 2]);
       ctx.beginPath();
@@ -226,24 +252,29 @@ export default function OscilloscopeStripChart({
       ctx.setLineDash([]);
     }
 
-    // 2. TB2 Steam Boiler Curve (Orange) - only if dual heater
+    // 2. TB2 Steam/Instant Boiler Curve (Orange)
     if (hasTb2 && tb2Data.length > 0) {
-      ctx.strokeStyle = '#fab387'; // #fab387 Orange
+      ctx.strokeStyle = '#fab387';
       ctx.lineWidth = 2.0;
       ctx.beginPath();
+      let started = false;
       tb2Data.forEach((t2, idx) => {
         if (t2 == null) return;
         const x = ptX(idx);
         const y = ptYTemp(t2);
-        if (idx === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
       });
       ctx.stroke();
     }
 
     // 3. TB1 Coffee Boiler Curve (Pink / Theme Primary)
     if (tb1Data.length > 0) {
-      ctx.strokeStyle = theme.primary || '#f38ba8'; // #f38ba8 Pink
+      ctx.strokeStyle = theme.primary || '#f38ba8';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       tb1Data.forEach((t1, idx) => {
@@ -255,7 +286,7 @@ export default function OscilloscopeStripChart({
       ctx.stroke();
     }
 
-    // Current Value Dots at Latest Position
+    // Latest Value Dots at 'Now' right edge
     const lx = ptX(nPts - 1);
     const lastTb1 = tb1Data[nPts - 1];
     const lastTb2 = hasTb2 ? tb2Data[nPts - 1] : null;
@@ -275,26 +306,23 @@ export default function OscilloscopeStripChart({
       ctx.fill();
     }
 
-    // Top Legend HUD Header (matching gui_widgets.py)
+    // Top Legend HUD Header
     ctx.textAlign = 'left';
     ctx.font = 'bold 10px monospace';
 
-    // TB1
     ctx.fillStyle = theme.primary || '#f38ba8';
     ctx.fillText(`■ TB1: ${lastTb1 != null ? lastTb1.toFixed(1) : '---'}°C`, padLeft, 14);
 
-    // TB2
     ctx.fillStyle = '#fab387';
     if (hasTb2 && lastTb2 != null) {
-      ctx.fillText(`■ TB2: ${lastTb2.toFixed(1)}°C`, padLeft + 110, 14);
+      ctx.fillText(`■ TB2: ${lastTb2.toFixed(1)}°C`, padLeft + 115, 14);
     } else {
-      ctx.fillText(t('oscTb2Single'), padLeft + 110, 14);
+      ctx.fillText(t('oscTb2Single'), padLeft + 115, 14);
     }
 
-    // Flow
     ctx.fillStyle = '#74c7ec';
-    ctx.fillText(`${t('oscFlowPrefix')} ${lastFlow != null ? lastFlow.toFixed(1) : '---'} ml/s`, padLeft + 280, 14);
-  }, [tb1Data, tb2Data, flowData, theme, hasTb2, maxSamples, lang, t]);
+    ctx.fillText(`${t('oscFlowPrefix')} ${lastFlow != null ? lastFlow.toFixed(1) : '---'} ml/s`, padLeft + 275, 14);
+  }, [tb1Data, tb2Data, flowData, sampleTimes, theme, hasTb2, isNumericUnsupported, maxSamples, lang, t]);
 
   return (
     <div className={`p-3 border rounded ${theme.surfaceClass} space-y-2`}>
@@ -333,7 +361,8 @@ export default function OscilloscopeStripChart({
 
           <button
             onClick={handleExportCSV}
-            className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-700 flex items-center space-x-1"
+            disabled={tb1Data.length === 0}
+            className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-700 flex items-center space-x-1 disabled:opacity-40"
           >
             <Download className="w-3 h-3" />
             <span>CSV</span>
@@ -348,7 +377,7 @@ export default function OscilloscopeStripChart({
           className="w-full h-[220px] block rounded"
         />
         {isPaused && (
-          <div className="absolute top-3 right-3 px-2 py-0.5 bg-amber-500 text-black font-black font-mono text-[10px] rounded shadow uppercase tracking-wider animate-pulse">
+          <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-amber-600/90 text-white text-[10px] font-bold font-mono">
             {t('oscPausedBadge')}
           </div>
         )}

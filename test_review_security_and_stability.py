@@ -90,14 +90,41 @@ class TestWebServerSecurityAndStability(_LiveTestServerMixin, unittest.TestCase)
             self.assertEqual(status, 403, f"Expected 403 for traversal path {bad_path}, got {status}")
 
     def test_post_rejects_foreign_origin_with_403(self):
-        status, body, _ = self._http(
-            "POST",
-            "/api/ui_prefs",
-            body=b"{}",
-            headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
-        )
-        self.assertEqual(status, 403)
-        self.assertFalse(json.loads(body)["success"])
+        for bad_headers in (
+            {"Content-Type": "application/json", "Origin": "https://evil.example"},
+            {"Content-Type": "application/json", "Origin": "http://localhost.evil.example:8080"},
+            {"Content-Type": "application/json", "Origin": "null"},
+            {"Content-Type": "application/json", "Origin": "null", "Sec-Fetch-Site": "cross-site", "Referer": "https://evil.example/"},
+        ):
+            status, body, _ = self._http(
+                "POST",
+                "/api/ui_prefs",
+                body=b"{}",
+                headers=bad_headers,
+            )
+            self.assertEqual(status, 403, f"Expected 403 for headers {bad_headers}")
+            self.assertFalse(json.loads(body)["success"])
+
+    def test_post_allows_linux_loopback_and_webkit_same_origin_headers(self):
+        with tempfile.TemporaryDirectory() as td:
+            prefs_path = os.path.join(td, "ui_prefs.json")
+            with unittest.mock.patch("web_server.get_ui_prefs_path", return_value=prefs_path):
+                for ok_headers in (
+                    {"Content-Type": "application/json", "Origin": f"http://[::1]:{self.port}"},
+                    {"Content-Type": "application/json", "Origin": "http://127.0.0.1:5174"},
+                    {"Content-Type": "application/json", "Origin": "null", "Referer": f"http://127.0.0.1:{self.port}/?v=1"},
+                    {"Content-Type": "application/json", "Origin": "null", "Sec-Fetch-Site": "same-origin"},
+                ):
+                    status, body, _ = self._http(
+                        "POST",
+                        "/api/ui_prefs",
+                        body=b'{"lang":"cs"}',
+                        headers=ok_headers,
+                    )
+                    self.assertEqual(status, 200, f"Expected 200 for headers {ok_headers}, got {status}")
+                    parsed = json.loads(body)
+                    self.assertTrue(parsed["success"])
+                    self.assertEqual(parsed["prefs"]["lang"], "cs")
 
     def test_post_rejects_invalid_and_non_object_json_with_400(self):
         for bad_body in (b"{not-json", b"[1, 2, 3]", b'"just-a-string"'):
