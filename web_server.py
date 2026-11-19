@@ -11,8 +11,10 @@ import re
 import time
 import json
 import socket
+import platform
 import threading
 import mimetypes
+import unicodedata
 import collections
 from contextlib import contextmanager
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -629,47 +631,99 @@ def get_ui_prefs_path() -> str:
     return os.path.join(base, "spectra", "ui_prefs.json")
 
 
+def _load_ui_prefs_unlocked(path: str) -> Dict[str, Any]:
+    """Internal helper — caller MUST hold `_ui_prefs_lock`."""
+    prefs: Dict[str, Any] = {"onboarding_seen": False, "lang": "en"}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            if isinstance(raw, dict):
+                if isinstance(raw.get("onboarding_seen"), bool):
+                    prefs["onboarding_seen"] = raw["onboarding_seen"]
+                raw_lang = str(raw.get("lang") or "").strip().lower()
+                if raw_lang in ("en", "cs"):
+                    prefs["lang"] = raw_lang
+        except Exception:
+            pass
+    return prefs
+
+
 def load_ui_prefs() -> Dict[str, Any]:
     """Load persistent UI preferences (`onboarding_seen`, `lang`) with safe defaults."""
-    prefs: Dict[str, Any] = {"onboarding_seen": False, "lang": "en"}
     path = get_ui_prefs_path()
     with _ui_prefs_lock:
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    raw = json.load(fh)
-                if isinstance(raw, dict):
-                    if isinstance(raw.get("onboarding_seen"), bool):
-                        prefs["onboarding_seen"] = raw["onboarding_seen"]
-                    raw_lang = str(raw.get("lang") or "").strip().lower()
-                    if raw_lang in ("en", "cs"):
-                        prefs["lang"] = raw_lang
-            except Exception:
-                pass
-    return prefs
+        return _load_ui_prefs_unlocked(path)
 
 
 def save_ui_prefs(updates: Dict[str, Any]) -> Dict[str, Any]:
     """Merge and atomically persist UI preferences (`onboarding_seen`, `lang`) to disk."""
-    prefs = load_ui_prefs()
-    if isinstance(updates, dict):
-        if "onboarding_seen" in updates:
-            prefs["onboarding_seen"] = bool(updates["onboarding_seen"])
-        if "lang" in updates:
-            raw_lang = str(updates["lang"] or "").strip().lower()
-            if raw_lang in ("en", "cs"):
-                prefs["lang"] = raw_lang
     path = get_ui_prefs_path()
     with _ui_prefs_lock:
+        prefs = _load_ui_prefs_unlocked(path)
+        if isinstance(updates, dict):
+            if "onboarding_seen" in updates:
+                prefs["onboarding_seen"] = bool(updates["onboarding_seen"])
+            if "lang" in updates:
+                raw_lang = str(updates["lang"] or "").strip().lower()
+                if raw_lang in ("en", "cs"):
+                    prefs["lang"] = raw_lang
+        tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(prefs, fh, indent=2)
             os.replace(tmp, path)
         except Exception:
-            pass
-    return prefs
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+        return prefs
+
+
+_WIN_RESERVED_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+})
+
+
+def sanitize_filename_prefix(raw: Any, max_len: int = 48) -> str:
+    """
+    Sanitize a user-supplied ticket number or filename prefix for cross-platform safety.
+    Transliterates diacritics to ASCII, strips path separators / illegal chars, and blocks reserved names.
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    # Normalize Unicode diacritics (e.g. Czech 'Zakázka' -> 'Zakazka') for safe HTTP headers & Win32/POSIX paths
+    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    # Strip traversal / path separators and replace non-safe characters with underscores
+    normalized = normalized.replace("..", "_").replace("/", "_").replace("\\", "_")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", normalized)
+    cleaned = re.sub(r"_{2,}", "_", cleaned)
+    cleaned = cleaned.strip("._-")
+    if not cleaned:
+        return ""
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip("._-")
+    if cleaned.upper() in _WIN_RESERVED_NAMES:
+        cleaned = f"tkt_{cleaned}"
+    return cleaned
+
+
+def build_export_filename(kind: str, model_name: Any, timestamp: str, ext: str, prefix: Any = "") -> str:
+    """Compose a sanitized export filename with an optional ticket number / custom prefix."""
+    safe_model = re.sub(r"[^\w\-_]", "_", str(model_name or "appliance")).strip("_") or "appliance"
+    safe_kind = re.sub(r"[^A-Za-z0-9_-]", "", str(kind or "export")) or "export"
+    safe_ext = re.sub(r"[^A-Za-z0-9]", "", str(ext or "json")) or "json"
+    clean_prefix = sanitize_filename_prefix(prefix)
+    base = f"spectra_{safe_kind}_{safe_model}_{timestamp}.{safe_ext}"
+    return f"{clean_prefix}_{base}" if clean_prefix else base
 
 
 def reset_custom_sensor_mappings() -> bool:
@@ -1140,21 +1194,69 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             pass
 
     def _allowed_origins(self) -> Set[str]:
-        port = _current_http_port or 8080
-        return {
-            f"http://127.0.0.1:{port}",
-            f"http://localhost:{port}",
-            "http://127.0.0.1:8080",
-            "http://localhost:8080",
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
+        ports: Set[int] = {8080, 5173, 4173}
+        if _current_http_port:
+            ports.add(int(_current_http_port))
+        srv = getattr(self, "server", None)
+        srv_port = getattr(srv, "server_port", None)
+        if isinstance(srv_port, int) and srv_port > 0:
+            ports.add(srv_port)
+        origins: Set[str] = {
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
         }
+        for p in ports:
+            origins.add(f"http://127.0.0.1:{p}")
+            origins.add(f"http://localhost:{p}")
+            origins.add(f"http://[::1]:{p}")
+        return origins
+
+    @staticmethod
+    def _is_loopback_origin(origin: str) -> bool:
+        cleaned = (origin or "").strip().rstrip("/")
+        if not cleaned:
+            return False
+        if cleaned in ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"):
+            return True
+        try:
+            parsed = urlparse(cleaned)
+        except Exception:
+            return False
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            return False
+        if parsed.username or parsed.password:
+            return False
+        return True
+
+    def _is_allowed_post_origin(self, origin: str) -> bool:
+        cleaned = (origin or "").strip().rstrip("/")
+        if not cleaned:
+            return True
+        if cleaned in self._allowed_origins() or self._is_loopback_origin(cleaned):
+            return True
+        # Some Linux WebKitGTK (WebKit2) fetch/beacon POSTs send `Origin: null` even on
+        # same-origin localhost pages. Allow ONLY when browser-enforced forbidden headers
+        # prove the request originated from local loopback (blocks foreign sandboxed iframes).
+        if cleaned.lower() == "null":
+            sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+            if sec_site == "same-origin":
+                return True
+            if sec_site == "cross-site":
+                return False
+            referer = (self.headers.get("Referer") or "").strip()
+            if referer and self._is_loopback_origin(referer):
+                return True
+        return False
 
     def _send_security_headers(self):
-        origin = self.headers.get("Origin", "")
-        port = _current_http_port or 8080
-        allowed_origins = self._allowed_origins()
-        if origin in allowed_origins:
+        origin = (self.headers.get("Origin") or "").strip().rstrip("/")
+        srv = getattr(self, "server", None)
+        port = getattr(srv, "server_port", None) or _current_http_port or 8080
+        if origin and (origin in self._allowed_origins() or self._is_loopback_origin(origin)):
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
             self.send_header("Access-Control-Allow-Origin", f"http://127.0.0.1:{port}")
@@ -1186,6 +1288,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         elif url.path == "/api/sensors":
             port = params.get("port", [""])[0].strip()
             fast_poll = params.get("fast", ["1"])[0] == "1"
+            manufacturer = params.get("manufacturer", ["auto"])[0].strip().lower() or "auto"
 
             if not port:
                 self._send_json({"error": "No serial port specified", "switches": [], "sensors": []})
@@ -1218,13 +1321,30 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     if _active_session.conn is None or not _active_session.conn.is_open:
                         _active_session.conn = serial_io.JuraSerialConnection(port)
 
+                    eff_mfr = manufacturer
+                    if eff_mfr == "auto":
+                        p_up = port.upper()
+                        if "NIVONA" in p_up:
+                            eff_mfr = "nivona"
+                        elif "LAMANTI-KL" in p_up or "KALERM" in p_up:
+                            eff_mfr = "lamanti-kl"
+                        elif "LAMANTI-JN" in p_up or "JETINNO" in p_up:
+                            eff_mfr = "lamanti-jn"
+                        elif getattr(_active_session, "detected_vendor", None):
+                            eff_mfr = str(getattr(_active_session, "detected_vendor")).lower()
+
                     data = sc.query_live_sensors(
                         port_name=port,
                         conn=_active_session.conn,
                         profile=_active_session.profile,
                         is_legacy=_active_session.is_legacy_cleartext,
                         fast_poll=fast_poll,
+                        manufacturer=eff_mfr,
                     )
+
+                    if isinstance(data, dict):
+                        data.setdefault("timestamp", time.strftime("%Y-%m-%d %H:%M:%S"))
+                        data.setdefault("port", port)
 
                     if data.get("error"):
                         raise IOError(str(data["error"]))
@@ -1406,6 +1526,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             port = params.get("port", [""])[0].strip()
             fmt = params.get("format", ["json"])[0].lower()
             save_dialog = params.get("save_dialog", ["0"])[0].lower() in ("1", "true", "yes")
+            prefix = params.get("prefix", [""])[0]
 
             if not port or not is_valid_port(port):
                 self._send_json({"error": "Invalid or missing serial port", "success": False})
@@ -1431,8 +1552,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             safe_conn.close()
 
                     content = json.dumps(bundle, indent=2, ensure_ascii=False)
-                    safe_model = re.sub(r'[^\w\-_]', '_', str(bundle.get("identity", {}).get("model_name") or "appliance"))
-                    filename = f"spectra_capture_{safe_model}_{timestamp}.json"
+                    filename = build_export_filename(
+                        "capture",
+                        bundle.get("identity", {}).get("model_name") or "appliance",
+                        timestamp,
+                        "json",
+                        prefix=prefix,
+                    )
                     mime = "application/json; charset=utf-8"
                     ext = "json"
             else:
@@ -1441,8 +1567,6 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     session = _active_session if (_active_session and _current_port == port) else None
                     if session is None:
                         session = sc.JuraStatsSession(port_name=port)
-
-                    safe_model = re.sub(r'[^\w\-_]', '_', str(session.model_family or "appliance"))
 
                     if fmt == "csv":
                         content = session.export_csv()
@@ -1457,7 +1581,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         mime = "application/json; charset=utf-8"
                         ext = "json"
 
-                    filename = f"spectra_export_{safe_model}_{timestamp}.{ext}"
+                    filename = build_export_filename(
+                        "export",
+                        session.model_family or "appliance",
+                        timestamp,
+                        ext,
+                        prefix=prefix,
+                    )
 
             # If user requested OS save dialog, prompt via prompt_save_file_dialog
             if save_dialog:
@@ -1880,7 +2010,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
 
         origin = self.headers.get("Origin", "")
-        if origin and origin not in self._allowed_origins():
+        if origin and not self._is_allowed_post_origin(origin):
+            log_debug_event(
+                "WARN",
+                "SECURITY",
+                f"Blocked POST {url.path} (403): Origin={origin!r}, Host={self.headers.get('Host', '')!r}, "
+                f"Referer={self.headers.get('Referer', '')!r}, Sec-Fetch-Site={self.headers.get('Sec-Fetch-Site', '')!r}",
+            )
             self._send_json({"error": "Forbidden cross-origin request", "success": False}, status=403)
             return
 
@@ -1962,9 +2098,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         # 1b. API: Diagnostic Hardware Dump Bundle Capture
         elif url.path == "/api/export_capture":
-            cached_id = data.get("capture_id", "").strip()
-            port = data.get("port", "").strip()
-            joe_csv = data.get("joe_csv", "").strip()
+            cached_id = str(data.get("capture_id") or "").strip()
+            port = str(data.get("port") or "").strip()
+            joe_csv = str(data.get("joe_csv") or "").strip()
+            prefix = str(data.get("prefix") or "")
             save_dialog = bool(data.get("save_dialog", False))
             use_ollama = bool(data.get("use_ollama", False))
             ollama_model = data.get("model")
@@ -2010,9 +2147,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             oldest_k = next(iter(_cached_captures))
                             _cached_captures.pop(oldest_k, None)
 
-                safe_model = re.sub(r'[^\w\-_]', '_', str(bundle.get("identity", {}).get("model_name") or "appliance"))
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"spectra_capture_{safe_model}_{timestamp}.json"
+                filename = build_export_filename(
+                    "capture",
+                    bundle.get("identity", {}).get("model_name") or "appliance",
+                    timestamp,
+                    "json",
+                    prefix=prefix,
+                )
 
                 if save_dialog:
                     try:
@@ -2464,6 +2606,93 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)})
+            return
+
+        elif url.path == "/api/github/report_issue":
+            try:
+                import github_auth
+
+                raw_title = str(data.get("title") or "").strip()
+                raw_desc = str(data.get("description") or "").strip()
+                category = str(data.get("category") or "bug").strip().lower()
+                include_env = bool(data.get("include_env", True))
+                include_logs = bool(data.get("include_logs", False))
+                mode = str(data.get("mode") or "api").strip().lower()
+                machine_ctx = data.get("machine_context") if isinstance(data.get("machine_context"), dict) else {}
+
+                if not raw_title or not raw_desc:
+                    self._send_json(
+                        {"success": False, "error": "Both issue title and description are required."},
+                        status=400,
+                    )
+                    return
+
+                category_map = {
+                    "bug": ("Bug Report", ["bug", "user-report"]),
+                    "hardware": ("Machine / Protocol Support", ["hardware", "user-report"]),
+                    "enhancement": ("Feature Request", ["enhancement", "user-report"]),
+                    "ui": ("UI / Translation", ["ui", "user-report"]),
+                }
+                cat_title, labels = category_map.get(category, ("Bug Report", ["bug", "user-report"]))
+
+                sections: List[str] = [
+                    f"### Category\n{cat_title}",
+                    f"### Description\n{github_auth.sanitize_issue_text(raw_desc, max_chars=24000)}",
+                ]
+
+                if include_env:
+                    env_lines = [
+                        "### Environment & Machine Context",
+                        f"- **SPECTRA Build**: `Build {__build__}` ({__edition__})",
+                        f"- **OS / Platform**: `{platform.system()} {platform.release()} ({platform.machine()})`",
+                        f"- **Python**: `{platform.python_version()}`",
+                    ]
+                    m_model = str(machine_ctx.get("model") or "").strip()[:100]
+                    m_ef = str(machine_ctx.get("ef_code") or "").strip()[:40]
+                    m_proto = str(machine_ctx.get("protocol") or "").strip()[:80]
+                    m_port_type = str(machine_ctx.get("port_type") or "").strip()[:60]
+                    if m_model:
+                        env_lines.append(f"- **Machine Model**: `{github_auth.sanitize_issue_text(m_model, 100)}`")
+                    if m_ef:
+                        env_lines.append(f"- **EF Code**: `{github_auth.sanitize_issue_text(m_ef, 40)}`")
+                    if m_proto:
+                        env_lines.append(f"- **Protocol**: `{github_auth.sanitize_issue_text(m_proto, 80)}`")
+                    if m_port_type:
+                        env_lines.append(f"- **Connection Type**: `{github_auth.sanitize_issue_text(m_port_type, 60)}`")
+                    sections.append("\n".join(env_lines))
+
+                if include_logs:
+                    with _debug_log_lock:
+                        tail = list(_debug_log_buffer)[-25:]
+                    if tail:
+                        formatted_logs = []
+                        for entry in tail:
+                            ts = entry.get("ts") or entry.get("time") or ""
+                            lvl = entry.get("level") or "INFO"
+                            src = entry.get("source") or "SYS"
+                            msg = entry.get("message") or ""
+                            formatted_logs.append(f"[{ts}] [{lvl}] [{src}] {msg}")
+                        sanitized_logs = github_auth.sanitize_issue_text("\n".join(formatted_logs), max_chars=4000)
+                        sections.append(
+                            "### Recent Debug Log (Sanitized)\n"
+                            "<details>\n<summary>Last 25 log entries</summary>\n\n"
+                            f"```text\n{sanitized_logs}\n```\n</details>"
+                        )
+
+                full_body = "\n\n".join(sections) + "\n"
+                if mode == "url_only":
+                    web_url = github_auth.build_github_issue_web_url(raw_title, full_body, labels=labels)
+                    self._send_json({
+                        "success": True,
+                        "web_url": web_url,
+                        "repo": github_auth.get_issues_repo(),
+                    })
+                    return
+
+                res = github_auth.create_github_issue(raw_title, full_body, labels=labels)
+                self._send_json(res)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 21. API: Central Local AI Toggle & Feature Endpoints (Default OFF)
