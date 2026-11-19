@@ -6,12 +6,12 @@
   "release_notes": "- docs(rules): update GEMINI.md with learned coffee-cups, Win32 updater, and calibration pipeline rules\n- fix(protocol): Build 20261118.2220 \u2014 Smart Connect / 4:1 wire auto-detection and EEPROM Mode B fixes\n- feat(calibrations): Build 20261118.1712 \u2014 hybrid Issue-to-PR community harvester with dynamic repo detection\n- fix(offsets): Build 20261118.1511 \u2014 import profiles_db in web_server and apply local overrides immediately\n- fix(updater): Build 20261118.1447 \u2014 avoid Windows Job/tree self-kill and add CREATE_BREAKAWAY_FROM_JOB\n- fix(counters): Build 20261117.1914 \u2014 count standalone steam/milk/water in preparations only (coffee-only cups)",
   "assets": {
     "spectra_update.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.2220/spectra_update.exe",
+      "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
       "sha256": "e71d8ef2626b13f7c486aba77d1a296db207a96eafaa375129d7f85ba5ab436e",
       "size": 29847040
     },
     "spectra_setup.exe": {
-      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261118.2220/spectra_setup.exe",
+      "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
       "sha256": "11c06401c95b8eeb047f6199b8a5108ead1e92a5506f0cb787daba2cdc94e675",
       "size": 51923968
     }
