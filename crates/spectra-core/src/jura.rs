@@ -401,6 +401,12 @@ impl JuraProtocol {
                 expected: "rt:".into(),
                 actual: raw.into(),
             })?;
+        if !payload.is_ascii() {
+            return Err(CoreError::ParseError {
+                field: "RT payload (non-ASCII)".into(),
+                raw: raw.into(),
+            });
+        }
         if payload.len() < 64 {
             return Err(CoreError::ParseError {
                 field: "RT block length (<64 hex)".into(),
@@ -513,6 +519,12 @@ impl JuraProtocol {
                 expected: "as:".into(),
                 actual: raw.into(),
             })?;
+        if !payload.is_ascii() {
+            return Err(CoreError::ParseError {
+                field: "AS payload (non-ASCII)".into(),
+                raw: raw.into(),
+            });
+        }
         let parts: Vec<&str> = payload.split(',').collect();
         if parts.len() < 2 {
             return Err(CoreError::ParseError {
@@ -576,6 +588,13 @@ impl JuraProtocol {
                 expected: "cs:".into(),
                 actual: raw.into(),
             })?;
+
+        if !payload.is_ascii() {
+            return Err(CoreError::ParseError {
+                field: "CS payload (non-ASCII)".into(),
+                raw: raw.into(),
+            });
+        }
 
         if payload.len() < 40 {
             return Err(CoreError::ParseError {
@@ -725,10 +744,32 @@ impl SmartConnectCipher {
         out
     }
 
-    /// Builds an encrypted Smart Connect frame: '&' + escape(crypt(cmd, key)) + '\r\n'
+    pub fn unescape_frame(data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(data.len());
+        let mut i = 0;
+        while i < data.len() {
+            if data[i] == 0x1B && i + 1 < data.len() {
+                i += 1;
+                out.push(data[i] ^ 0x80);
+            } else {
+                out.push(data[i]);
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Builds an encrypted Smart Connect frame: '&' + escape(key + crypt(cmd + "\r\n", key)) + '\r\n'
     pub fn build_frame(cmd_payload: &[u8], key: u8) -> Vec<u8> {
-        let encrypted = Self::crypt(cmd_payload, key);
-        let escaped = Self::escape_frame(&encrypted);
+        let mut raw_pt = cmd_payload.to_vec();
+        if !raw_pt.ends_with(b"\r\n") {
+            raw_pt.extend_from_slice(b"\r\n");
+        }
+        let encrypted = Self::crypt(&raw_pt, key);
+        let mut body = Vec::with_capacity(1 + encrypted.len());
+        body.push(key);
+        body.extend_from_slice(&encrypted);
+        let escaped = Self::escape_frame(&body);
         let mut frame = Vec::with_capacity(escaped.len() + 3);
         frame.push(0x26); // '&'
         frame.extend_from_slice(&escaped);
@@ -737,23 +778,43 @@ impl SmartConnectCipher {
         frame
     }
 
-    /// Builds a standard Smart Connect block read frame: '@TR:xx,yy'
-    pub fn build_read_block_frame(block_index: u16, word_count: u8, mode: AddressingMode, key: u8) -> Vec<u8> {
-        let ascii_cmd = match mode {
-            AddressingMode::TwoDigit => format!("@TR:{:02X},{:02X}", block_index & 0xFF, word_count),
-            AddressingMode::FourDigit => format!("@TR:{:04X},{:02X}", block_index, word_count),
-        };
+    /// Decodes a received '&'...CRLF Smart Connect frame back to plaintext bytes.
+    pub fn decode_frame(frame: &[u8]) -> Option<String> {
+        let mut start = 0;
+        while start < frame.len() && (frame[start] == b'\r' || frame[start] == b'\n') {
+            start += 1;
+        }
+        let mut end = frame.len();
+        while end > start && (frame[end - 1] == b'\r' || frame[end - 1] == b'\n') {
+            end -= 1;
+        }
+        let clean = &frame[start..end];
+        if !clean.starts_with(b"&") || clean.len() < 2 {
+            return None;
+        }
+        let body = Self::unescape_frame(&clean[1..]);
+        if body.is_empty() {
+            return None;
+        }
+        let key = body[0];
+        let payload = Self::crypt(&body[1..], key);
+        Some(String::from_utf8_lossy(&payload).into_owned())
+    }
+
+    /// Builds a standard Smart Connect block read frame: '@TR:32,xx\r\n'
+    pub fn build_read_block_frame(block_index: u16, _word_count: u8, _mode: AddressingMode, key: u8) -> Vec<u8> {
+        let ascii_cmd = format!("@TR:32,{:02X}\r\n", block_index & 0xFF);
         Self::build_frame(ascii_cmd.as_bytes(), key)
     }
 
-    /// Builds firmware query frame: '@TF:'
+    /// Builds firmware query frame: '@TF:\r\n'
     pub fn build_query_firmware_frame(key: u8) -> Vec<u8> {
-        Self::build_frame(b"@TF:", key)
+        Self::build_frame(b"@TF:\r\n", key)
     }
 
-    /// Builds model query frame: '@TM:'
+    /// Builds model query frame: '@TM:\r\n'
     pub fn build_query_model_frame(key: u8) -> Vec<u8> {
-        Self::build_frame(b"@TM:", key)
+        Self::build_frame(b"@TM:\r\n", key)
     }
 }
 
@@ -1242,5 +1303,35 @@ mod tests {
         let bad_date = ((2023u16 - 1990) << 9) | (2 << 5) | 29;
         assert_eq!(decode_jura_date_word(bad_date), None);
         assert_eq!(decode_jura_date_word(0xFFFF), None);
+    }
+
+    #[test]
+    fn test_smart_connect_build_and_decode_frame_roundtrip() {
+        for &key in &[0x20u8, 0x2A, 0x30, 0x00, 0x0A, 0x0D, 0x1B, 0x26] {
+            let frame = SmartConnectCipher::build_frame(b"@TR:32,00", key);
+            assert_eq!(frame[0], 0x26);
+            assert!(frame.ends_with(b"\r\n"));
+            let decoded = SmartConnectCipher::decode_frame(&frame).expect("valid decoded frame");
+            assert_eq!(decoded, "@TR:32,00\r\n");
+
+            // Also verify build_read_block_frame formats @TR:32,{bank:02X}\r\n
+            let blk_frame = SmartConnectCipher::build_read_block_frame(0x05, 4, AddressingMode::FourDigit, key);
+            let blk_decoded = SmartConnectCipher::decode_frame(&blk_frame).expect("valid block frame");
+            assert_eq!(blk_decoded, "@TR:32,05\r\n");
+        }
+        assert!(SmartConnectCipher::decode_frame(b"invalid").is_none());
+        assert!(SmartConnectCipher::decode_frame(b"&\r\n").is_none());
+    }
+
+    #[test]
+    fn test_non_ascii_utf8_does_not_panic_in_parsers() {
+        let non_ascii_rt = format!("rt:{}", "€".repeat(30));
+        assert!(JuraProtocol::parse_rt_response(&non_ascii_rt).is_err());
+
+        let non_ascii_as = "as:€€€€,€€€€";
+        assert!(JuraProtocol::parse_as_response(non_ascii_as).is_err());
+
+        let non_ascii_cs = format!("cs:{}", "€".repeat(20));
+        assert!(JuraProtocol::parse_cs_response(&non_ascii_cs).is_err());
     }
 }

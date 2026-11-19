@@ -204,7 +204,7 @@ def decode_jura_date(val: int) -> Optional[datetime]:
             return datetime(ymd[0], ymd[1], ymd[2]) if ymd is not None else None
         except Exception:
             pass
-    if not val or val == 0xFFFF or val == 0:
+    if not val or val == 0xFFFF:
         return None
     day = val & 0x1F
     month = (val >> 5) & 0x0F
@@ -246,10 +246,7 @@ def decode_jura_temperature(val: Any) -> Optional[float]:
     try:
         if isinstance(val, str):
             val_clean = val.strip().lower()
-            if val_clean.startswith("0x"):
-                num = int(val_clean, 16)
-            else:
-                num = int(val_clean, 16)
+            num = int(val_clean, 16)
         elif isinstance(val, (int, float)):
             num = int(val)
         else:
@@ -462,6 +459,7 @@ def query_live_sensors(
             aux_inputs_bits = "00"
             cake_thickness_ticks = 0
             has_hz_status = False
+            parts: List[str] = []
 
             if hz_resp and hz_resp.startswith("hz:"):
                 payload = hz_resp[3:].strip()
@@ -1355,7 +1353,12 @@ class JuraStatsSession:
                 return 0
             if addr_int in mem:
                 return mem[addr_int]
-            if self.conn and getattr(self.conn, "is_open", False):
+            if (
+                self.is_legacy_cleartext
+                and not getattr(self.conn, "_is_smart_connect", False)
+                and self.conn
+                and getattr(self.conn, "is_open", False)
+            ):
                 addr_str = f"{addr_int:02X}" if self.address_width == 2 else f"{addr_int:04X}"
                 ans = self.conn.query_ascii(f"RE:{addr_str}", timeout=1.0)
                 if ans and ans.lower().startswith("re:"):
@@ -1421,6 +1424,7 @@ class JuraStatsSession:
                     w = _read_word(p_match.get("addr"))
                     byte_sel = str(p_match.get("byte") or "low").lower()
                     pct_val = ((w >> 8) & 0xFF) if byte_sel == "high" else (w & 0xFF)
+                    pct_val = max(0, min(100, pct_val))
                     new_maint_pcts.append(pct_val)
                 else:
                     new_maint_pcts.append(None)
@@ -1614,14 +1618,24 @@ class JuraStatsSession:
                     update_prog(pct, f"Reading memory block 0x{blk_str}...")
                     cmd = f"RT:{blk_str}"
                     ans = self.conn.query_ascii(cmd, timeout=1.8)
-                    if ans and ans.startswith("rt:"):
+                    if ans and ans.lower().startswith("rt:"):
                         raw_hex = ans[3:].strip()
-                        words = [int(raw_hex[i * 4: i * 4 + 4], 16) for i in range(len(raw_hex) // 4)]
-                        for idx, w in enumerate(words):
-                            eeprom[blk + idx] = w
-                        rt_blocks_succeeded += 1
-                        consecutive_rt_timeouts = 0
-                        self.log(f"EEPROM [0x{blk_str}]: {len(words)} words read successfully")
+                        try:
+                            words = [int(raw_hex[i * 4: i * 4 + 4], 16) for i in range(len(raw_hex) // 4)]
+                        except ValueError:
+                            words = []
+                        if words:
+                            for idx, w in enumerate(words):
+                                eeprom[blk + idx] = w
+                            rt_blocks_succeeded += 1
+                            consecutive_rt_timeouts = 0
+                            self.log(f"EEPROM [0x{blk_str}]: {len(words)} words read successfully")
+                        else:
+                            consecutive_rt_timeouts += 1
+                            self.log(f"Notice: Block 0x{blk_str} returned malformed/empty RT: payload")
+                            if rt_blocks_succeeded == 0 and consecutive_rt_timeouts >= 2:
+                                self.log("Notice: 2 consecutive RT: block timeouts; aborting ASCII RT: sweep early.")
+                                break
                     else:
                         consecutive_rt_timeouts += 1
                         self.log(f"Notice: Block 0x{blk_str} returned empty/timeout")
@@ -2143,7 +2157,7 @@ class JuraStatsSession:
                     if parsed:
                         consecutive_tr_empty = 0
                         _, words = parsed
-                        base_addr = bank * 16
+                        base_addr = bank * 4
                         for w_idx, count_val in enumerate(words):
                             sc_eeprom[base_addr + w_idx] = count_val
                             if bank < 12:

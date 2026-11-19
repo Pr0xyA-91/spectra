@@ -257,6 +257,8 @@ class MemoryMapperEngine:
         self.current_eeprom: Dict[int, int] = {i: 0 for i in range(512)}
         self.baseline_snapshot: Optional[MemorySnapshot] = None
         self.classified_registers: List[RegisterEntry] = []
+        self._consecutive_failed_blocks: int = 0
+        self._any_block_succeeded: bool = False
 
         # Interrogate machine identity on start
         self.refresh_identity()
@@ -275,17 +277,24 @@ class MemoryMapperEngine:
 
     def refresh_identity(self):
         """Interrogate identification gateways and load/create model specification."""
-        gateways_to_probe = ["TY:", "TL:", "TY$:", "TL$:", "CS$:", "IC:", "HZ:", "AS:"]
-        for g in gateways_to_probe:
-            try:
-                ans = self.query_safe(g, timeout=1.2)
-                if ans:
-                    self.gateways[g] = ans.strip()
-            except Exception:
-                pass
+        if not getattr(self.conn, "_is_smart_connect", False):
+            gateways_to_probe = ["TY:", "TL:", "TY$:", "TL$:", "CS$:", "IC:", "HZ:", "AS:"]
+            for idx, g in enumerate(gateways_to_probe):
+                try:
+                    ans = self.query_safe(g, timeout=1.2)
+                    if ans:
+                        self.gateways[g] = ans.strip()
+                    elif idx == 0 and getattr(self.conn, "wire_mode", None) is None:
+                        # TY: failed with wire_mode still None — try Smart Connect immediately instead of stalling on 7 gateways
+                        sc_model = self._smart_connect_handshake()
+                        if sc_model:
+                            self.gateways["@T3:"] = sc_model
+                        break
+                except Exception:
+                    pass
 
-        ty = self.gateways.get("TY:", "")
-        m = re.search(r'(EF\w+)', ty.upper())
+        ty = self.gateways.get("TY:", "") or self.gateways.get("@T3:", "")
+        m = re.search(r'(EF[A-Z0-9_]+)', ty.upper())
         if m:
             self.ef_code = m.group(1)
         elif self.conn.is_demo and "XJ5" in self.conn.port_name.upper():
@@ -375,15 +384,18 @@ class MemoryMapperEngine:
         import jura_protocol as jp
         if not hasattr(self.conn, "query_encrypted"):
             return False
+
+        cached_bank0_resp: Optional[str] = None
         if not getattr(self.conn, "_is_smart_connect", False):
             if not self._smart_connect_handshake():
                 return False
         else:
-            # Ensure session is active; re-handshake if @TR:32,00 returns None
+            # Ensure session is active; reuse bank 0 reply if valid so @TR:32,00 is not queried twice
             test_r = self.conn.query_encrypted("@TR:32,00\r\n", key=0x30, timeout=0.8)
-            if not test_r:
-                if not self._smart_connect_handshake():
-                    return False
+            if test_r and jp.parse_tr32(test_r):
+                cached_bank0_resp = test_r
+            elif not self._smart_connect_handshake():
+                return False
 
         any_bank = False
         consecutive_empty = 0
@@ -392,14 +404,17 @@ class MemoryMapperEngine:
                 raise IOError("Serial port disconnected during Smart Connect EEPROM sweep.")
             if progress_callback:
                 progress_callback(page + 1, 32, f"Reading Smart Connect Bank 0x{page:02X}...")
-            resp = self.conn.query_encrypted(f"@TR:32,{page:02X}\r\n", key=(0x30 + page) & 0xFF, timeout=0.8)
+            if page == 0 and cached_bank0_resp is not None:
+                resp = cached_bank0_resp
+            else:
+                resp = self.conn.query_encrypted(f"@TR:32,{page:02X}\r\n", key=(0x30 + page) & 0xFF, timeout=0.8)
             if resp:
                 parsed = jp.parse_tr32(resp)
                 if parsed:
                     any_bank = True
                     consecutive_empty = 0
                     _, words = parsed
-                    base = page * 16
+                    base = page * 4
                     for idx, w in enumerate(words):
                         self.current_eeprom[base + idx] = w
                     continue
@@ -518,26 +533,71 @@ class MemoryMapperEngine:
         self.classify_all()
         return dict(self.current_eeprom)
 
-    def sweep_block(self, b_idx: int) -> List[RegisterEntry]:
-        """Sweep a single 16-word block and return the updated RegisterEntry objects."""
+    def _sweep_block_smart_connect(self, b_idx: int) -> Tuple[List[RegisterEntry], bool, bool]:
+        """Sweep 4 consecutive 4-word Smart Connect banks (16 words) for block b_idx.
+        Returns (entries, any_bank_succeeded, end_of_table).
+        """
+        import jura_protocol as jp
+        blk = b_idx * 16
+        any_bank_ok = False
+        consec_sub_fail = 0
+        all_sub_failed = True
+        for sub in range(4):
+            if not getattr(self.conn, "is_open", True):
+                raise IOError("Serial port disconnected during block sweep.")
+            bank = b_idx * 4 + sub
+            resp = self.conn.query_encrypted(f"@TR:32,{bank:02X}\r\n", key=(0x30 + bank) & 0xFF, timeout=0.8)
+            parsed = jp.parse_tr32(resp) if resp else None
+            if parsed:
+                _, words = parsed
+                base = blk + sub * 4
+                for idx, w in enumerate(words):
+                    self.current_eeprom[base + idx] = w
+                any_bank_ok = True
+                all_sub_failed = False
+                consec_sub_fail = 0
+            else:
+                consec_sub_fail += 1
+                if consec_sub_fail >= 2:
+                    break
+        self.classify_all()
+        entries = [r for r in self.classified_registers if blk <= r.addr < blk + 16]
+        end_of_table = (b_idx > 0 and all_sub_failed)
+        return entries, any_bank_ok, end_of_table
+
+    def sweep_block(self, b_idx: int) -> Dict[str, Any]:
+        """Sweep a single 16-word block and return updated registers plus abort_sweep metadata."""
         total_blocks = max(1, self.max_words // 16)
         if b_idx < 0 or b_idx >= total_blocks:
-            return []
+            return {"registers": [], "abort_sweep": False}
         if not getattr(self.conn, "is_open", True):
             raise IOError("Serial port disconnected during block sweep.")
 
-        if getattr(self.conn, "_is_smart_connect", False) and hasattr(self.conn, "query_encrypted"):
-            import jura_protocol as jp
-            blk = b_idx * 16
-            resp = self.conn.query_encrypted(f"@TR:32,{b_idx:02X}\r\n", key=(0x30 + b_idx) & 0xFF, timeout=0.8)
-            if resp:
-                parsed = jp.parse_tr32(resp)
-                if parsed:
-                    _, words = parsed
-                    for i, w in enumerate(words):
-                        self.current_eeprom[blk + i] = w
-            self.classify_all()
-            return [r for r in self.classified_registers if blk <= r.addr < blk + 16]
+        if b_idx == 0:
+            self._consecutive_failed_blocks = 0
+            self._any_block_succeeded = False
+
+        if (getattr(self.conn, "_is_smart_connect", False) or getattr(self.conn, "wire_mode", None) == "smart_connect") and hasattr(self.conn, "query_encrypted"):
+            entries, ok_sc, end_of_table = self._sweep_block_smart_connect(b_idx)
+            if ok_sc:
+                self._any_block_succeeded = True
+                self._consecutive_failed_blocks = 0
+            else:
+                self._consecutive_failed_blocks += 1
+            if end_of_table:
+                return {
+                    "registers": entries,
+                    "abort_sweep": True,
+                    "abort_reason": "Reached end of Smart Connect counter table",
+                    "end_of_table": True,
+                }
+            if not self._any_block_succeeded and self._consecutive_failed_blocks >= 2:
+                return {
+                    "registers": entries,
+                    "abort_sweep": True,
+                    "abort_reason": "No ASCII or Smart Connect response from machine — verify probe compatibility/connection",
+                }
+            return {"registers": entries, "abort_sweep": False}
 
         blk = b_idx * 16
         blk_str = f"{blk:02X}" if self.address_width == 2 else f"{blk:04X}"
@@ -578,6 +638,7 @@ class MemoryMapperEngine:
                     self.current_eeprom[blk] = int(first_ans[3:].strip()[:4], 16)
                 except ValueError:
                     self.current_eeprom[blk] = 0x0000
+                block_success = True
                 for i in range(1, 16):
                     if not getattr(self.conn, "is_open", True):
                         raise IOError("Serial port disconnected during block sweep.")
@@ -600,8 +661,31 @@ class MemoryMapperEngine:
                 for i in range(16):
                     self.current_eeprom[blk + i] = 0x0000
 
+                # On block 0, if ASCII RT: + first RE: both failed, immediately try Smart Connect handshake
+                if b_idx == 0 and hasattr(self.conn, "query_encrypted"):
+                    sc_model = self._smart_connect_handshake()
+                    if sc_model:
+                        entries, ok_sc, _ = self._sweep_block_smart_connect(0)
+                        if ok_sc:
+                            self._any_block_succeeded = True
+                            self._consecutive_failed_blocks = 0
+                            return {"registers": entries, "abort_sweep": False}
+
+        if block_success:
+            self._any_block_succeeded = True
+            self._consecutive_failed_blocks = 0
+        else:
+            self._consecutive_failed_blocks += 1
+
         self.classify_all()
-        return [r for r in self.classified_registers if blk <= r.addr < blk + 16]
+        entries = [r for r in self.classified_registers if blk <= r.addr < blk + 16]
+        if not self._any_block_succeeded and self._consecutive_failed_blocks >= 2:
+            return {
+                "registers": entries,
+                "abort_sweep": True,
+                "abort_reason": "No ASCII or Smart Connect response from machine — verify probe compatibility/connection",
+            }
+        return {"registers": entries, "abort_sweep": False}
 
     def capture_baseline(self) -> MemorySnapshot:
         """Capture current EEPROM and volatile telemetry as baseline reference."""
@@ -805,8 +889,7 @@ class MemoryMapperEngine:
             self.spec_file_path = target_path
 
             # Invalidate profiles database cache so SPECTRA main app refreshes
-            profiles_db._MODEL_SPECS_CACHE = None
-            profiles_db._MODEL_SPEC_LOOKUP_CACHE.clear()
+            profiles_db.invalidate_model_specs_cache()
 
             # Refresh local classifications
             self.classify_all()
@@ -1647,7 +1730,7 @@ if HAS_GTK:
                 adj.set_value(adj.get_upper() - adj.get_page_size())
 
         def _connect_to_port(self, port_name: str):
-            self.lbl_subtitle.set_markup(f"<i>Connecting to {port_name}...</i>")
+            self.lbl_subtitle.set_markup(f"<i>Connecting to {GLib.markup_escape_text(str(port_name))}...</i>")
             self.btn_sweep.set_sensitive(False)
             self.btn_baseline.set_sensitive(False)
             self.btn_watch.set_sensitive(False)
@@ -1669,7 +1752,11 @@ if HAS_GTK:
                 return
             model_str = f"{self.engine.model_family} ({self.engine.ef_code})"
             spec_str = os.path.basename(self.engine.spec_file_path or 'Draft')
-            self.lbl_subtitle.set_markup(f"<b>Target:</b> {model_str} | <b>Port:</b> {port_name} | <b>Spec:</b> {spec_str}")
+            self.lbl_subtitle.set_markup(
+                f"<b>Target:</b> {GLib.markup_escape_text(model_str)} | "
+                f"<b>Port:</b> {GLib.markup_escape_text(str(port_name))} | "
+                f"<b>Spec:</b> {GLib.markup_escape_text(spec_str)}"
+            )
             self._log_event(f"Connected to {model_str} on {port_name}")
 
             self.btn_sweep.set_sensitive(True)
@@ -1685,7 +1772,7 @@ if HAS_GTK:
             self._on_sweep_clicked()
 
         def _on_connect_failed(self, port_name: str, err: str):
-            self.lbl_subtitle.set_markup(f"<span color='#f38ba8'>Connection error: {err}</span>")
+            self.lbl_subtitle.set_markup(f"<span color='#f38ba8'>Connection error: {GLib.markup_escape_text(str(err))}</span>")
             self._log_event(f"Error opening port {port_name}: {err}")
             self.btn_sweep.set_sensitive(True)
 
@@ -1970,9 +2057,9 @@ if HAS_GTK:
                 delta_info = f" | <span color='#89dceb'><b>Delta: {r_match.delta:+d} (Baseline: 0x{base_val:04X})</b></span>"
 
             markup = (
-                f"<b>0x{addr:04X} ({name}):</b> Hex <code>0x{val:04X}</code> | Dec: <code>{val}</code> (Signed: {signed_val}) | "
-                f"High Byte: <code>0x{hb:02X}</code> ({hb}) | Low Byte: <code>0x{lb:02X}</code> ({lb}) | ASCII: '<code>{c1}{c2}</code>'{delta_info}\n"
-                f"<span color='#a6adc8'>{desc}</span>"
+                f"<b>0x{addr:04X} ({GLib.markup_escape_text(str(name))}):</b> Hex <code>0x{val:04X}</code> | Dec: <code>{val}</code> (Signed: {signed_val}) | "
+                f"High Byte: <code>0x{hb:02X}</code> ({hb}) | Low Byte: <code>0x{lb:02X}</code> ({lb}) | ASCII: '<code>{GLib.markup_escape_text(c1 + c2)}</code>'{delta_info}\n"
+                f"<span color='#a6adc8'>{GLib.markup_escape_text(str(desc))}</span>"
             )
             self.lbl_insp_breakdown.set_markup(markup)
 
@@ -2086,17 +2173,19 @@ if HAS_GTK:
                 status_choice = STATUS_MAPPED if combo_status.get_active() == 0 else STATUS_THEORETICAL
 
                 if new_name:
-                    ok, msg = self.engine.map_register(
-                        addr=addr,
-                        name=new_name,
-                        desc=new_desc,
-                        category=new_cat,
-                        unit=new_unit,
-                        status=status_choice
-                    )
+                    with self.engine_lock:
+                        ok, msg = self.engine.map_register(
+                            addr=addr,
+                            name=new_name,
+                            desc=new_desc,
+                            category=new_cat,
+                            unit=new_unit,
+                            status=status_choice
+                        )
+                        diff_res = self.engine.compute_diff(self.mask_noise) if ok else None
                     if ok:
                         self._log_event(f"Mapped 0x{addr:04X} -> {new_name}")
-                        self._update_tree_model(self.engine.compute_diff(self.mask_noise))
+                        self._update_tree_model(diff_res)
                     else:
                         self._log_event(f"Error mapping register: {msg}")
 
@@ -2124,7 +2213,7 @@ def main():
 
     # If no port specified, scan or pick demo
     if not port:
-        available_ports = serial_io.scan_serial_ports()
+        available_ports = serial_io.list_serial_ports()
         if available_ports:
             port = available_ports[0]
         else:
