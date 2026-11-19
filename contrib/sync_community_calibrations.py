@@ -128,8 +128,11 @@ def verify_calibration_patch(
     eeprom_int: Dict[int, int] = {}
     for k, v in raw_eeprom.items():
         ak = _parse_addr_int(k)
-        if ak is not None and isinstance(v, int):
+        if ak is not None and isinstance(v, int) and not isinstance(v, bool):
             eeprom_int[ak] = v
+
+    if (products or maintenance) and not eeprom_int:
+        return False, "Missing raw eeprom_words proof for counter offsets", None
 
     checked_prods: List[Dict[str, Any]] = []
     for p in products:
@@ -139,9 +142,10 @@ def verify_calibration_patch(
         if addr_i is None:
             continue
         joe_cnt = p.get("joe_count")
-        if eeprom_int and addr_i in eeprom_int and isinstance(joe_cnt, int) and joe_cnt > 0:
-            if eeprom_int[addr_i] != joe_cnt:
-                return False, f"Product '{p.get('name')}' at 0x{addr_i:04X} mismatches raw EEPROM ({eeprom_int[addr_i]} != {joe_cnt})", None
+        if addr_i not in eeprom_int or isinstance(joe_cnt, bool) or not isinstance(joe_cnt, int) or joe_cnt <= 0:
+            return False, f"Product '{p.get('name')}' at 0x{addr_i:04X} lacks positive integer raw EEPROM proof", None
+        if eeprom_int[addr_i] != joe_cnt:
+            return False, f"Product '{p.get('name')}' at 0x{addr_i:04X} mismatches raw EEPROM ({eeprom_int[addr_i]} != {joe_cnt})", None
         checked_prods.append({
             "name": str(p.get("name") or f"0x{addr_i:04X}").strip(),
             "addr": addr_i,
@@ -157,9 +161,10 @@ def verify_calibration_patch(
         if addr_i is None:
             continue
         joe_cnt = m.get("joe_count")
-        if eeprom_int and addr_i in eeprom_int and isinstance(joe_cnt, int) and joe_cnt > 0:
-            if eeprom_int[addr_i] != joe_cnt:
-                return False, f"Maintenance '{m.get('name')}' at 0x{addr_i:04X} mismatches raw EEPROM ({eeprom_int[addr_i]} != {joe_cnt})", None
+        if addr_i not in eeprom_int or isinstance(joe_cnt, bool) or not isinstance(joe_cnt, int) or joe_cnt <= 0:
+            return False, f"Maintenance '{m.get('name')}' at 0x{addr_i:04X} lacks positive integer raw EEPROM proof", None
+        if eeprom_int[addr_i] != joe_cnt:
+            return False, f"Maintenance '{m.get('name')}' at 0x{addr_i:04X} mismatches raw EEPROM ({eeprom_int[addr_i]} != {joe_cnt})", None
         checked_maint.append({
             "name": str(m.get("name") or f"0x{addr_i:04X}").strip(),
             "addr": addr_i,
@@ -312,9 +317,10 @@ def _issue_has_pr_marker(repo: str, issue_num: int, token: Optional[str] = None)
     try:
         comments = _github_api_request("GET", url, token=token)
     except Exception:
-        return False
+        # Fail conservatively on API/network errors to avoid duplicate PR comments or double-linking
+        return True
     if not isinstance(comments, list):
-        return False
+        return True
     return any(isinstance(c, dict) and PR_LINKED_MARKER in str(c.get("body") or "") for c in comments)
 
 
@@ -331,12 +337,17 @@ def _post_issue_pr_comment(
     _github_api_request("POST", url, token=token, payload={"body": body})
 
 
+def _md_cell(val: Any) -> str:
+    """Sanitize untrusted issue metadata for safe Markdown table cell rendering."""
+    return re.sub(r"[\r\n|`]+", " ", str(val or "")).strip() or "—"
+
+
 def build_pr_markdown_body(harvested_entries: List[Dict[str, Any]], source_repo: str) -> str:
     """Build a human-reviewable Markdown summary table and issue cross-references for a PR."""
     lines = [
         "## Community Calibration Integration Summary",
         "",
-        f"Automatically harvested and EEPROM-verified from `{source_repo}` open capture issues.",
+        f"Automatically harvested and EEPROM-verified from `{_md_cell(source_repo)}` open capture issues.",
         "",
         "| Source Issue | EF Code | Model | Article # | Market | Counters (Prod / Maint) | Target Spec |",
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
@@ -349,13 +360,13 @@ def build_pr_markdown_body(harvested_entries: List[Dict[str, Any]], source_repo:
         if isinstance(issue_num, int) and issue_num > 0 and issue_num not in seen_refs:
             seen_refs.add(issue_num)
             ref_issues.append(issue_num)
-        ef = entry.get("ef_code") or "—"
-        model = entry.get("model_name") or "—"
-        art = entry.get("article_number") or "—"
-        market = entry.get("market_region") or "—"
+        ef = _md_cell(entry.get("ef_code"))
+        model = _md_cell(entry.get("model_name"))
+        art = _md_cell(entry.get("article_number"))
+        market = _md_cell(entry.get("market_region"))
         prods = int(entry.get("products_count") or 0)
         maint = int(entry.get("maintenance_count") or 0)
-        target = entry.get("target_file") or "—"
+        target = _md_cell(entry.get("target_file"))
         lines.append(
             f"| {issue_col} | `{ef}` | {model} | `{art}` | {market} | {prods} / {maint} | `{target}` |"
         )
@@ -379,10 +390,14 @@ def create_calibration_pull_request(
     comment_issues: bool = False,
 ) -> Dict[str, Any]:
     """Commit verified `docs/models/*.json` specs to a branch and open/update a review PR."""
+    from urllib.parse import quote
+
     if not token:
         raise ValueError("GitHub token is required to create a calibration Pull Request.")
     if not file_changes:
         raise ValueError("No verified calibration file changes to commit.")
+    if not pr_repo or "/" not in pr_repo or len(pr_repo.split("/")) != 2:
+        raise ValueError(f"Invalid target PR repository format (expected owner/repo): {pr_repo!r}")
 
     if not branch_name:
         digest = hashlib.sha256(
@@ -392,7 +407,7 @@ def create_calibration_pull_request(
 
     base_ref = _github_api_request(
         "GET",
-        f"https://api.github.com/repos/{pr_repo}/git/ref/heads/{base_branch}",
+        f"https://api.github.com/repos/{pr_repo}/git/ref/heads/{quote(base_branch, safe='/')}",
         token=token,
     )
     base_sha = base_ref["object"]["sha"]
@@ -400,7 +415,7 @@ def create_calibration_pull_request(
     try:
         _github_api_request(
             "GET",
-            f"https://api.github.com/repos/{pr_repo}/git/ref/heads/{branch_name}",
+            f"https://api.github.com/repos/{pr_repo}/git/ref/heads/{quote(branch_name, safe='/')}",
             token=token,
         )
     except Exception:
@@ -413,11 +428,12 @@ def create_calibration_pull_request(
 
     files_committed: List[str] = []
     for rel_path, content_str in sorted(file_changes.items()):
+        quoted_path = quote(rel_path.lstrip("/"), safe="/")
         blob_sha: Optional[str] = None
         try:
             existing = _github_api_request(
                 "GET",
-                f"https://api.github.com/repos/{pr_repo}/contents/{rel_path}?ref={branch_name}",
+                f"https://api.github.com/repos/{pr_repo}/contents/{quoted_path}?ref={quote(branch_name, safe='')}",
                 token=token,
             )
             if isinstance(existing, dict):
@@ -436,7 +452,7 @@ def create_calibration_pull_request(
 
         _github_api_request(
             "PUT",
-            f"https://api.github.com/repos/{pr_repo}/contents/{rel_path}",
+            f"https://api.github.com/repos/{pr_repo}/contents/{quoted_path}",
             token=token,
             payload=put_payload,
         )
@@ -445,7 +461,7 @@ def create_calibration_pull_request(
     owner = pr_repo.split("/")[0]
     existing_prs = _github_api_request(
         "GET",
-        f"https://api.github.com/repos/{pr_repo}/pulls?state=open&head={owner}:{branch_name}&base={base_branch}",
+        f"https://api.github.com/repos/{pr_repo}/pulls?state=open&head={quote(owner + ':' + branch_name, safe=':')}&base={quote(base_branch, safe='')}",
         token=token,
     )
 

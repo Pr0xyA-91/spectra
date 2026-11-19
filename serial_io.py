@@ -131,6 +131,7 @@ class JuraSerialConnection:
         self.py_serial = None
         self.is_open = False
         self.wire_mode: Optional[str] = None
+        self.encrypted_wire_mode: Optional[str] = None
         self._is_smart_connect: bool = "SMART CONNECT" in (port_name or "").upper()
         self.vendor: str = "jura"
 
@@ -413,8 +414,8 @@ class JuraSerialConnection:
             except Exception as e:
                 raise IOError(f"Failed to open {self.port_name} via pyserial: {e}")
 
-    def write(self, data: bytes) -> int:
-        """Write raw bytes to machine with inter-packet flushing."""
+    def write(self, data: bytes, inter_byte_delay: float = 0.0) -> int:
+        """Write raw bytes to machine with optional inter-byte pacing and flushing."""
         if not self.is_open:
             raise IOError("Serial port is not open.")
 
@@ -446,6 +447,14 @@ class JuraSerialConnection:
 
         if self.fd is not None and HAS_TERMIOS:
             try:
+                if inter_byte_delay > 0.0 and len(data) > 1:
+                    written = 0
+                    for idx in range(len(data)):
+                        written += os.write(self.fd, data[idx:idx + 1])
+                        termios.tcdrain(self.fd)
+                        if idx + 1 < len(data):
+                            time.sleep(inter_byte_delay)
+                    return written
                 written = os.write(self.fd, data)
                 # Drain output buffer
                 termios.tcdrain(self.fd)
@@ -456,6 +465,14 @@ class JuraSerialConnection:
 
         if self.py_serial:
             try:
+                if inter_byte_delay > 0.0 and len(data) > 1:
+                    written = 0
+                    for idx in range(len(data)):
+                        written += self.py_serial.write(data[idx:idx + 1])
+                        self.py_serial.flush()
+                        if idx + 1 < len(data):
+                            time.sleep(inter_byte_delay)
+                    return written
                 written = self.py_serial.write(data)
                 self.py_serial.flush()
                 return written
@@ -495,13 +512,17 @@ class JuraSerialConnection:
             return b""
 
         if self.py_serial:
-            cur_to = getattr(self, "_applied_timeout", None)
-            if cur_to is None:
-                cur_to = getattr(self.py_serial, "timeout", None)
-            if t_out != cur_to:
-                self.py_serial.timeout = t_out
-                self._applied_timeout = t_out
-            return self.py_serial.read(max_bytes)
+            try:
+                cur_to = getattr(self, "_applied_timeout", None)
+                if cur_to is None:
+                    cur_to = getattr(self.py_serial, "timeout", None)
+                if t_out != cur_to:
+                    self.py_serial.timeout = t_out
+                    self._applied_timeout = t_out
+                return self.py_serial.read(max_bytes)
+            except Exception:
+                self.close()
+                return b""
 
         return b""
 
@@ -518,7 +539,10 @@ class JuraSerialConnection:
                 except Exception:
                     break
         elif self.py_serial is not None:
-            self.py_serial.reset_input_buffer()
+            try:
+                self.py_serial.reset_input_buffer()
+            except Exception:
+                self.close()
 
     def query_ascii(self, cmd: str, timeout: float = 1.0) -> Optional[str]:
         """
@@ -612,7 +636,6 @@ class JuraSerialConnection:
                 except Exception:
                     return "re:0000"
             return None
-            return None
 
         return self._query_hardware_ascii(cmd_clean, timeout=timeout)
 
@@ -655,6 +678,13 @@ class JuraSerialConnection:
 
         return None
 
+    def _write_paced(self, data: bytes, inter_byte_delay: float = 0.008) -> int:
+        """Invoke write() with inter-byte pacing, falling back cleanly for mock overrides."""
+        try:
+            return self.write(data, inter_byte_delay=inter_byte_delay)
+        except TypeError:
+            return self.write(data)
+
     def _query_wire_4to1_ascii(self, cmd_clean: str, timeout: float = 0.8) -> Optional[str]:
         """Send 4:1 wire-encoded ASCII command, strip optical loopback echo, and decode 4-byte aligned RX."""
         import jura_protocol as jp
@@ -662,7 +692,7 @@ class JuraSerialConnection:
         self.drain_rx()
         tx_ascii = (cmd_clean + "\r\n").encode("ascii")
         wire_tx = jp.encode_wire(tx_ascii)
-        self.write(wire_tx)
+        self._write_paced(wire_tx, inter_byte_delay=0.008)
 
         rx_wire = bytearray()
         start = time.time()
@@ -678,10 +708,11 @@ class JuraSerialConnection:
                 rx_wire.extend(chunk)
                 if len(rx_wire) > 16384:
                     break
-                if not echo_stripped and len(rx_wire) >= len(wire_tx):
-                    if bytes(rx_wire[:len(wire_tx)]) == wire_tx:
-                        del rx_wire[:len(wire_tx)]
-                    echo_stripped = True
+                if not echo_stripped:
+                    echo_idx = rx_wire.find(wire_tx)
+                    if echo_idx != -1:
+                        del rx_wire[:echo_idx + len(wire_tx)]
+                        echo_stripped = True
                 aligned_len = (len(rx_wire) // 4) * 4
                 if aligned_len >= 4:
                     decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
@@ -705,6 +736,8 @@ class JuraSerialConnection:
     def _query_hardware_ascii(self, cmd_clean: str, timeout: float = 1.0) -> Optional[str]:
         """Dispatch physical ASCII query with 4:1 wire carrier auto-negotiation."""
         wire_mode = getattr(self, "wire_mode", None)
+        if wire_mode == "smart_connect" or getattr(self, "_is_smart_connect", False):
+            return None
         if wire_mode == "wire_4to1_ascii":
             return self._query_wire_4to1_ascii(cmd_clean, timeout=timeout)
         if wire_mode == "raw_ascii":
@@ -724,51 +757,81 @@ class JuraSerialConnection:
 
         return None
 
-    def query_encrypted(self, cmd_str: str, key: int = 0x20, timeout: float = 1.2) -> Optional[str]:
-        """
-        Send an encrypted Jura Smart Connect '@'-command over 4:1 wire and return
-        the decrypted response frame, stripping optical loopback echo and scanning
-        4-byte aligned '&'...CRLF frames safely.
-        """
-        if not self.is_open:
-            raise IOError("Serial port is not open.")
+    @staticmethod
+    def _scan_decrypted_frames(decoded: bytes, cmd_clean: str) -> Optional[str]:
+        """Scan buffer for valid '&...\\r\\n' Smart Connect frames, skipping stray '&' and TX echo."""
+        import jura_protocol as jp
 
+        search_idx = 0
+        while True:
+            amp = decoded.find(b"&", search_idx)
+            if amp == -1:
+                break
+            end = decoded.find(b"\r\n", amp)
+            if end == -1:
+                break
+            next_amp = decoded.find(b"&", amp + 1, end)
+            if next_amp != -1:
+                search_idx = next_amp
+                continue
+            frame = decoded[amp:end + 2]
+            pt = jp.decode_encrypted_frame(frame)
+            if pt is None:
+                search_idx = amp + 1
+                continue
+            search_idx = end + 2
+            if pt.strip() == cmd_clean:
+                continue
+            return pt
+        return None
+
+    def _query_encrypted_raw_frame(self, cmd_str: str, key: int = 0x20, timeout: float = 1.2) -> Optional[str]:
+        """Send raw '&'-frame (for hardware 4:1 bridges like the Jura USB Service Interface box)."""
         import jura_protocol as jp
 
         cmd_clean = cmd_str.strip()
-        cmd_line = cmd_clean if cmd_str.endswith("\r\n") else f"{cmd_clean}\r\n"
-        wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_line, key))
-
-        if self.is_demo:
-            self.drain_rx()
-            self.write(wire_tx)
-            rx = self.read(2048, timeout_sec=timeout)
-            if not rx:
-                return None
-            aligned_len = (len(rx) // 4) * 4
-            if aligned_len < 4:
-                return None
-            decoded, _ = jp.decode_wire(rx[:aligned_len])
-            search_idx = 0
-            while True:
-                amp = decoded.find(b"&", search_idx)
-                if amp == -1:
-                    break
-                end = decoded.find(b"\r\n", amp)
-                if end == -1:
-                    break
-                frame = decoded[amp:end + 2]
-                search_idx = end + 2
-                pt = jp.decode_encrypted_frame(frame)
-                if pt is None:
-                    continue
-                if pt.strip() == cmd_clean:
-                    continue
-                return pt
-            return None
+        cmd_line = f"{cmd_clean}\r\n"
+        raw_frame = jp.build_encrypted_frame(cmd_line, key)
 
         self.drain_rx()
-        self.write(wire_tx)
+        self.write(raw_frame)
+
+        rx = bytearray()
+        start = time.time()
+        echo_stripped = False
+
+        while time.time() - start < timeout:
+            if not self.is_open:
+                return None
+            chunk = self.read(max_bytes=512, timeout_sec=0.05)
+            if not self.is_open:
+                return None
+            if chunk:
+                rx.extend(chunk)
+                if len(rx) > 16384:
+                    break
+                if not echo_stripped:
+                    echo_idx = rx.find(raw_frame)
+                    if echo_idx != -1:
+                        del rx[:echo_idx + len(raw_frame)]
+                        echo_stripped = True
+                pt = self._scan_decrypted_frames(bytes(rx), cmd_clean)
+                if pt is not None:
+                    time.sleep(0.04)
+                    return pt
+
+        return None
+
+    def _query_encrypted_wire_4to1(self, cmd_str: str, key: int = 0x20, timeout: float = 1.2) -> Optional[str]:
+        """Send 4:1 wire-encoded '&'-frame with 8ms inter-byte pacing and decode 4-byte aligned RX."""
+        import jura_protocol as jp
+
+        cmd_clean = cmd_str.strip()
+        cmd_line = f"{cmd_clean}\r\n"
+        wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_line, key))
+
+        self.drain_rx()
+        self._write_paced(wire_tx, inter_byte_delay=0.008)
 
         rx_wire = bytearray()
         start = time.time()
@@ -784,32 +847,80 @@ class JuraSerialConnection:
                 rx_wire.extend(chunk)
                 if len(rx_wire) > 16384:
                     break
-                if not echo_stripped and len(rx_wire) >= len(wire_tx):
-                    if bytes(rx_wire[:len(wire_tx)]) == wire_tx:
-                        del rx_wire[:len(wire_tx)]
-                    echo_stripped = True
+                if not echo_stripped:
+                    echo_idx = rx_wire.find(wire_tx)
+                    if echo_idx != -1:
+                        del rx_wire[:echo_idx + len(wire_tx)]
+                        echo_stripped = True
                 aligned_len = (len(rx_wire) // 4) * 4
                 if aligned_len < 4:
                     continue
                 decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
-                search_idx = 0
-                while True:
-                    amp = decoded.find(b"&", search_idx)
-                    if amp == -1:
-                        break
-                    end = decoded.find(b"\r\n", amp)
-                    if end == -1:
-                        break
-                    frame = decoded[amp:end + 2]
-                    search_idx = end + 2
-                    pt = jp.decode_encrypted_frame(frame)
-                    if pt is None:
-                        continue
-                    # Never mistake an optical loopback echo of our own command for the machine's reply
-                    if pt.strip() == cmd_clean:
-                        continue
+                pt = self._scan_decrypted_frames(decoded, cmd_clean)
+                if pt is not None:
                     time.sleep(0.04)
                     return pt
+
+        return None
+
+    def query_encrypted(self, cmd_str: str, key: int = 0x20, timeout: float = 1.2) -> Optional[str]:
+        """
+        Send an encrypted Jura Smart Connect '@'-command over 4:1 wire or raw '&'-frame
+        (hardware 4:1 bridge) and return the decrypted response frame, stripping loopback
+        echo and scanning '&'...CRLF frames safely.
+        """
+        if not self.is_open:
+            raise IOError("Serial port is not open.")
+
+        import jura_protocol as jp
+
+        cmd_clean = cmd_str.strip()
+        cmd_line = cmd_clean if cmd_str.endswith("\r\n") else f"{cmd_clean}\r\n"
+
+        if self.is_demo:
+            wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_line, key))
+            self.drain_rx()
+            self.write(wire_tx)
+            rx = self.read(2048, timeout_sec=timeout)
+            if not rx:
+                return None
+            aligned_len = (len(rx) // 4) * 4
+            if aligned_len < 4:
+                return None
+            decoded, _ = jp.decode_wire(rx[:aligned_len])
+            return self._scan_decrypted_frames(decoded, cmd_clean)
+
+        enc_mode = getattr(self, "encrypted_wire_mode", None)
+        if enc_mode == "raw_frame":
+            return self._query_encrypted_raw_frame(cmd_str, key=key, timeout=timeout)
+        if enc_mode == "wire_4to1_frame":
+            return self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=timeout)
+
+        # Auto-negotiate encrypted wire mode:
+        # If raw_ascii was previously observed (e.g. hardware 4:1 bridge like Jura USB Service Interface),
+        # try raw '&'-frame first; otherwise try 4:1 wire-encoded '&'-frame first.
+        if getattr(self, "wire_mode", None) == "raw_ascii":
+            pt = self._query_encrypted_raw_frame(cmd_str, key=key, timeout=timeout)
+            if pt is not None:
+                self.encrypted_wire_mode = "raw_frame"
+                self._is_smart_connect = True
+                return pt
+            pt = self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=min(timeout, 0.8))
+            if pt is not None:
+                self.encrypted_wire_mode = "wire_4to1_frame"
+                self._is_smart_connect = True
+                return pt
+        else:
+            pt = self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=timeout)
+            if pt is not None:
+                self.encrypted_wire_mode = "wire_4to1_frame"
+                self._is_smart_connect = True
+                return pt
+            pt = self._query_encrypted_raw_frame(cmd_str, key=key, timeout=min(timeout, 0.8))
+            if pt is not None:
+                self.encrypted_wire_mode = "raw_frame"
+                self._is_smart_connect = True
+                return pt
 
         return None
 

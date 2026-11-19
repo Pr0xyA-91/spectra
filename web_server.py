@@ -16,7 +16,7 @@ import mimetypes
 import collections
 from contextlib import contextmanager
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 import uuid
 from typing import Dict, Any, Optional, Tuple, List, Set
 
@@ -328,16 +328,24 @@ def get_debug_diagnostics() -> Dict[str, Any]:
     # 3. Hardware Serial Session
     is_serial_active = False
     driver_name = "None"
-    with _session_lock:
-        if _active_session is not None:
-            conn = getattr(_active_session, "conn", None)
-            if conn is not None and getattr(conn, "is_open", False):
-                is_serial_active = True
-            prof = getattr(_active_session, "profile", {})
-            driver_name = prof.get("name", "Auto/Jura") if isinstance(prof, dict) else str(prof)
+    serial_busy = False
+    if _session_lock.acquire(timeout=0.05):
+        try:
+            if _active_session is not None:
+                conn = getattr(_active_session, "conn", None)
+                if conn is not None and getattr(conn, "is_open", False):
+                    is_serial_active = True
+                prof = getattr(_active_session, "profile", {})
+                driver_name = prof.get("name", "Auto/Jura") if isinstance(prof, dict) else str(prof)
+        finally:
+            _session_lock.release()
+    else:
+        serial_busy = True
+        is_serial_active = True
+        driver_name = "Busy (Hardware I/O)"
 
     serial_status = {
-        "status": "ACTIVE" if is_serial_active else "IDLE",
+        "status": "BUSY" if serial_busy else ("ACTIVE" if is_serial_active else "IDLE"),
         "port": _current_port or "Disconnected",
         "driver": driver_name,
         "error_state": bool(_consecutive_sensor_errors > 0),
@@ -1106,8 +1114,8 @@ def is_valid_port(port: str) -> bool:
         return False
     if p.startswith("/dev/tty") or p.startswith("/dev/pts/") or p.startswith("/dev/serial/"):
         return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00", "\n", "\r"])
-    if p.upper().startswith("COM"):
-        return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00", "\n", "\r"])
+    if re.fullmatch(r"(?:\\\\\.\\)?COM\d{1,3}", p, re.IGNORECASE):
+        return True
     if "DEMO" in p.upper() or p.lower() in ("mock", "demo"):
         return True
     return False
@@ -1131,18 +1139,21 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-    def _send_security_headers(self):
-        origin = self.headers.get("Origin", "")
+    def _allowed_origins(self) -> Set[str]:
         port = _current_http_port or 8080
-        allowed_origins = {
+        return {
             f"http://127.0.0.1:{port}",
             f"http://localhost:{port}",
             "http://127.0.0.1:8080",
             "http://localhost:8080",
             "http://127.0.0.1:5173",
             "http://localhost:5173",
-            "null",
         }
+
+    def _send_security_headers(self):
+        origin = self.headers.get("Origin", "")
+        port = _current_http_port or 8080
+        allowed_origins = self._allowed_origins()
         if origin in allowed_origins:
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
@@ -1306,10 +1317,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 ef = params.get("ef", [""])[0].strip()
                 art = params.get("art", [""])[0].strip()
                 mdl = params.get("model", [""])[0].strip()
-                if not (ef or art or mdl) and isinstance(_last_stats_cache, dict):
-                    ef = str(_last_stats_cache.get("ef_code") or "")
-                    art = str(_last_stats_cache.get("article_number") or "")
-                    mdl = str(_last_stats_cache.get("model_name") or _last_stats_cache.get("model_family") or "")
+                if not (ef or art or mdl):
+                    with _session_lock:
+                        cached_stats = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
+                    if isinstance(cached_stats, dict):
+                        ef = str(cached_stats.get("ef_code") or "")
+                        art = str(cached_stats.get("article_number") or "")
+                        mdl = str(cached_stats.get("model_name") or cached_stats.get("model_family") or "")
                 catalog = machine_library.list_machines(
                     detected_ef=ef,
                     detected_art=art,
@@ -1331,8 +1345,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid or missing serial port"})
                 return
 
-            summary = _last_stats_cache
-            if summary is None or _current_port != port:
+            with _session_lock:
+                summary = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
+                active_port = _current_port
+            if summary is None or active_port != port:
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self._send_security_headers()
@@ -1395,10 +1411,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid or missing serial port", "success": False})
                 return
 
-            with _session_lock:
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-                if fmt in ("capture", "dump"):
+            if fmt in ("capture", "dump"):
+                with long_hardware_operation(), _session_lock:
                     # Full hardware diagnostic capture bundle (raw EEPROM + gateways)
                     safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
                     owns = False
@@ -1406,7 +1422,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         safe_conn = serial_io.JuraSerialConnection(port)
                         owns = True
                     try:
-                        bundle = spectra_probe.capture_machine_bundle(safe_conn)
+                        bundle = spectra_probe.capture_machine_bundle(
+                            safe_conn,
+                            on_progress=lambda *_a: touch_heartbeat(),
+                        )
                     finally:
                         if owns:
                             safe_conn.close()
@@ -1416,7 +1435,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     filename = f"spectra_capture_{safe_model}_{timestamp}.json"
                     mime = "application/json; charset=utf-8"
                     ext = "json"
-                else:
+            else:
+                with _session_lock:
                     # Resolve active session or fallback session for telemetry
                     session = _active_session if (_active_session and _current_port == port) else None
                     if session is None:
@@ -1493,7 +1513,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self._send_security_headers()
             self.end_headers()
             try:
                 self.wfile.write(content.encode("utf-8") if isinstance(content, str) else content)
@@ -1539,14 +1559,31 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         regs = [serialize_register_entry(r) for r in mapper.classified_registers]
                     else:
                         b_idx = int(block_param)
-                        updated = mapper.sweep_block(b_idx)
+                        block_res = mapper.sweep_block(b_idx)
+                        if isinstance(block_res, dict):
+                            updated = block_res.get("registers", [])
+                            abort_sweep = bool(block_res.get("abort_sweep", False))
+                            abort_reason = block_res.get("abort_reason")
+                            end_of_table = bool(block_res.get("end_of_table", False))
+                        else:
+                            updated = block_res
+                            abort_sweep = False
+                            abort_reason = None
+                            end_of_table = False
                         regs = [serialize_register_entry(r) for r in updated]
                     summary = mapper.get_summary_stats()
-                    self._send_json({
+                    payload = {
                         "registers": regs,
                         "summary": summary,
                         "timestamp": time.strftime("%H:%M:%S")
-                    })
+                    }
+                    if block_param != "all" and block_param.isdigit():
+                        payload["abort_sweep"] = abort_sweep
+                        if abort_reason:
+                            payload["abort_reason"] = abort_reason
+                        if end_of_table:
+                            payload["end_of_table"] = True
+                    self._send_json(payload)
                 except Exception as e:
                     if _active_session is not None and _active_session.conn is not None and not getattr(_active_session.conn, "is_open", True):
                         try:
@@ -1841,6 +1878,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         global _last_stats_cache
         url = urlparse(self.path)
+
+        origin = self.headers.get("Origin", "")
+        if origin and origin not in self._allowed_origins():
+            self._send_json({"error": "Forbidden cross-origin request", "success": False}, status=403)
+            return
+
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except ValueError:
@@ -1855,9 +1898,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         data = {}
         if post_body:
             try:
-                data = json.loads(post_body.decode("utf-8"))
-            except Exception:
-                pass
+                parsed_body = json.loads(post_body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._send_json({"error": "Invalid JSON body", "success": False}, status=400)
+                return
+            if not isinstance(parsed_body, dict):
+                self._send_json({"error": "JSON body must be an object", "success": False}, status=400)
+                return
+            data = parsed_body
 
         # 1. API: Raw Command Injection (Safe prefixes or hex)
         if url.path == "/api/command":
@@ -2029,91 +2077,115 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         # 2. API: Set Optical Bean Sensor Threshold
         elif url.path == "/api/set_threshold":
-            val = int(data.get("threshold", 115))
-            new_t = sc.set_optical_bean_threshold(val, save=True)
-            self._send_json({"success": True, "threshold": new_t, "calib": sc.get_optical_bean_calibration()})
+            try:
+                val = int(data.get("threshold", 115))
+                new_t = sc.set_optical_bean_threshold(val, save=True)
+                self._send_json({"success": True, "threshold": new_t, "calib": sc.get_optical_bean_calibration()})
+            except (ValueError, TypeError) as e:
+                self._send_json({"success": False, "error": f"Invalid threshold value: {e}"}, status=400)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 3. API: Reset Optical Bean Sensor Threshold
         elif url.path == "/api/reset_threshold":
-            new_t = sc.reset_optical_bean_threshold(save=True)
-            self._send_json({"success": True, "threshold": new_t, "calib": sc.get_optical_bean_calibration()})
+            try:
+                new_t = sc.reset_optical_bean_threshold(save=True)
+                self._send_json({"success": True, "threshold": new_t, "calib": sc.get_optical_bean_calibration()})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 4. API: Capture Baseline Reference [DEV ONLY]
         elif url.path == "/api/mapper/baseline":
-            port = data.get("port", "").strip()
-            with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err, "success": False})
-                    return
-                snap = mapper.capture_baseline()
-                summary = mapper.get_summary_stats()
-                self._send_json({
-                    "success": True,
-                    "timestamp": snap.timestamp,
-                    "summary": summary
-                })
+            try:
+                port = str(data.get("port", "") or "").strip()
+                with _session_lock:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err, "success": False})
+                        return
+                    snap = mapper.capture_baseline()
+                    summary = mapper.get_summary_stats()
+                    self._send_json({
+                        "success": True,
+                        "timestamp": snap.timestamp,
+                        "summary": summary
+                    })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 5. API: Map Register to Model Spec [DEV ONLY]
         elif url.path == "/api/mapper/map_register":
-            port = data.get("port", "").strip()
-            addr = int(data.get("addr", 0))
-            name = str(data.get("name", "")).strip()
-            desc = str(data.get("desc", "")).strip()
-            category = str(data.get("category", "settings")).strip()
-            unit = str(data.get("unit", "")).strip()
-            status = str(data.get("status", "mapped")).strip()
+            try:
+                port = str(data.get("port", "") or "").strip()
+                addr = int(data.get("addr", 0))
+                name = str(data.get("name", "")).strip()
+                desc = str(data.get("desc", "")).strip()
+                category = str(data.get("category", "settings")).strip()
+                unit = str(data.get("unit", "")).strip()
+                status = str(data.get("status", "mapped")).strip()
 
-            with _session_lock:
-                mapper, err = _get_or_create_mapper(port)
-                if mapper is None:
-                    self._send_json({"error": err, "success": False})
-                    return
-                ok, msg = mapper.map_register(addr, name, desc, category, unit, status)
-                self._send_json({
-                    "success": ok,
-                    "message": msg,
-                    "summary": mapper.get_summary_stats(),
-                    "registers": [serialize_register_entry(r) for r in mapper.classified_registers]
-                })
+                with _session_lock:
+                    mapper, err = _get_or_create_mapper(port)
+                    if mapper is None:
+                        self._send_json({"error": err, "success": False})
+                        return
+                    ok, msg = mapper.map_register(addr, name, desc, category, unit, status)
+                    self._send_json({
+                        "success": ok,
+                        "message": msg,
+                        "summary": mapper.get_summary_stats(),
+                        "registers": [serialize_register_entry(r) for r in mapper.classified_registers]
+                    })
+            except (ValueError, TypeError) as e:
+                self._send_json({"success": False, "error": f"Invalid register payload: {e}"}, status=400)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 6. API: Map Sensor Field [DEV ONLY]
         elif url.path == "/api/mapper/map_sensor_field":
-            field_key = str(data.get("key", "")).strip()
-            if not field_key:
-                self._send_json({"error": "No sensor field key specified", "success": False})
-                return
-            ok = save_custom_sensor_mapping(field_key, {
-                "name": str(data.get("name", "")).strip(),
-                "category": str(data.get("category", "General")).strip(),
-                "unit": str(data.get("unit", "")).strip(),
-                "scale": float(data.get("scale", 1.0)),
-                "desc": str(data.get("desc", "")).strip(),
-            })
-            self._send_json({
-                "success": ok,
-                "mappings": load_custom_sensor_mappings(),
-                "message": f"Saved custom mapping for {field_key}"
-            })
+            try:
+                field_key = str(data.get("key", "")).strip()
+                if not field_key:
+                    self._send_json({"error": "No sensor field key specified", "success": False}, status=400)
+                    return
+                ok = save_custom_sensor_mapping(field_key, {
+                    "name": str(data.get("name", "")).strip(),
+                    "category": str(data.get("category", "General")).strip(),
+                    "unit": str(data.get("unit", "")).strip(),
+                    "scale": float(data.get("scale", 1.0)),
+                    "desc": str(data.get("desc", "")).strip(),
+                })
+                self._send_json({
+                    "success": ok,
+                    "mappings": load_custom_sensor_mappings(),
+                    "message": f"Saved custom mapping for {field_key}"
+                })
+            except (ValueError, TypeError) as e:
+                self._send_json({"success": False, "error": f"Invalid sensor field payload: {e}"}, status=400)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         # 7. API: Reset Custom Sensor Mappings to Defaults [DEV ONLY]
         elif url.path == "/api/mapper/reset_sensor_mappings":
-            reset_custom_sensor_mappings()
-            self._send_json({
-                "success": True,
-                "mappings": load_custom_sensor_mappings(),
-                "message": "Reset sensor mappings to defaults"
-            })
+            try:
+                reset_custom_sensor_mappings()
+                self._send_json({
+                    "success": True,
+                    "mappings": load_custom_sensor_mappings(),
+                    "message": "Reset sensor mappings to defaults"
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         elif url.path == "/api/hmi/browse":
             try:
-                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                body = data
                 initial_dir = body.get("initial_dir") or body.get("dir") or os.path.expanduser("~/Downloads")
                 import hmi_inspector
                 selected = hmi_inspector.KalermHmiInspector.prompt_file_browser(initial_dir)
@@ -2127,9 +2199,23 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         elif url.path == "/api/hmi/patch":
             try:
-                body = json.loads(post_body.decode("utf-8")) if post_body else {}
-                target = body.get("path") or os.path.expanduser("~/Downloads")
+                body = data
+                downloads_root = os.path.realpath(os.path.expanduser("~/Downloads"))
+                target = body.get("path") or downloads_root
                 out_path = body.get("output_path") or None
+                if out_path is not None:
+                    out_str = str(out_path).strip()
+                    if not os.path.isabs(out_str):
+                        out_str = os.path.join(downloads_root, out_str)
+                    resolved_out = os.path.realpath(out_str)
+                    try:
+                        in_downloads = os.path.commonpath([downloads_root, resolved_out]) == downloads_root
+                    except ValueError:
+                        in_downloads = False
+                    if not in_downloads:
+                        self._send_json({"success": False, "error": "Output path must reside inside ~/Downloads"}, status=403)
+                        return
+                    out_path = resolved_out
                 import hmi_inspector
                 inspector = hmi_inspector.KalermHmiInspector(target)
                 res = inspector.apply_patches(out_path)
@@ -2140,12 +2226,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         elif url.path == "/api/hmi/export_report":
             try:
-                body = json.loads(post_body.decode("utf-8")) if post_body else {}
-                target = body.get("path") or os.path.expanduser("~/Downloads")
+                body = data
+                downloads_root = os.path.realpath(os.path.expanduser("~/Downloads"))
+                target = body.get("path") or downloads_root
                 fmt = body.get("format") or "md"
                 target_locale = body.get("locale") or "cs-CZ"
                 out_path = body.get("output_path")
                 save_dialog = bool(body.get("save_dialog", False))
+                used_save_dialog = False
 
                 import hmi_inspector
                 if save_dialog or (not out_path and not any("test" in arg for arg in sys.argv)):
@@ -2157,11 +2245,24 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     if not out_path:
                         self._send_json({"success": False, "cancelled": True, "message": "Save cancelled by user."})
                         return
+                    used_save_dialog = True
 
                 if not out_path:
-                    out_path = os.path.join(os.path.expanduser("~/Downloads"), f"SPECTRA_Firmware_Audit_Report_{target_locale}.{fmt}")
-                elif not os.path.isabs(out_path):
-                    out_path = os.path.join(os.path.expanduser("~/Downloads"), out_path)
+                    out_path = os.path.join(downloads_root, f"SPECTRA_Firmware_Audit_Report_{target_locale}.{fmt}")
+                elif not os.path.isabs(str(out_path)):
+                    out_path = os.path.join(downloads_root, str(out_path))
+
+                if not used_save_dialog:
+                    resolved_out = os.path.realpath(str(out_path))
+                    try:
+                        in_downloads = os.path.commonpath([downloads_root, resolved_out]) == downloads_root
+                    except ValueError:
+                        in_downloads = False
+                    if not in_downloads:
+                        self._send_json({"success": False, "error": "Output path must reside inside ~/Downloads"}, status=403)
+                        return
+                    out_path = resolved_out
+
                 inspector = hmi_inspector.KalermHmiInspector(target)
                 saved = inspector.export_bug_report(out_path, format_type=fmt, target_locale=target_locale)
                 self._send_json({"success": True, "saved_path": saved, "filename": os.path.basename(saved)})
@@ -2171,7 +2272,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         elif url.path == "/api/hmi/semantic":
             try:
-                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                body = data
                 target = body.get("path") or os.path.expanduser("~/Downloads")
                 target_locale = body.get("locale") or "cs-CZ"
                 use_ollama = bool(body.get("use_ollama", False))
@@ -2192,7 +2293,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
         elif url.path in ("/api/hmi/ollama_control", "/api/hmi/ai/control"):
             try:
-                body = json.loads(post_body.decode("utf-8")) if post_body else {}
+                body = data
                 action = body.get("action", "")
                 model = body.get("model")
                 import hmi_inspector
@@ -2245,7 +2346,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             self._send_json({"success": True, "status": "TERMINATING"})
             def _deferred_exit_if_not_reloaded():
                 # Allow 3.0s grace: if heartbeat received or page active, do not terminate!
-                if time.time() - getattr(web_server, "_last_heartbeat_time", 0) < 3.0:
+                if time.time() - _last_heartbeat_time < 3.0:
                     return  # Page is still active (download, navigation, or refresh)
                 cleanup_resources()
                 for cb in list(_shutdown_callbacks):
@@ -2402,7 +2503,9 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     return
                 candidates = data.get("candidates") or []
                 context_regs = data.get("context_registers") or []
-                machine_model = data.get("machine_model") or (_last_stats_cache or {}).get("machine_model") or "Coffee Machine"
+                with _session_lock:
+                    cached_model = (_last_stats_cache or {}).get("machine_model") if isinstance(_last_stats_cache, dict) else None
+                machine_model = data.get("machine_model") or cached_model or "Coffee Machine"
                 model = data.get("model")
                 res = spectra_ai.suggest_eeprom_mappings(
                     candidates=candidates,
@@ -2421,8 +2524,11 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 if not spectra_ai.is_ai_enabled():
                     self._send_json({"success": False, "error": "Local AI is turned OFF. Enable Local AI first."})
                     return
-                telemetry = data.get("telemetry") or _last_sensor_payload or {}
-                stats_summary = data.get("stats") or _last_stats_cache or {}
+                with _session_lock:
+                    cached_sensor = copy.deepcopy(_last_sensor_payload) if isinstance(_last_sensor_payload, dict) else None
+                    cached_stats = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
+                telemetry = data.get("telemetry") or cached_sensor or {}
+                stats_summary = data.get("stats") or cached_stats or {}
                 model = data.get("model")
                 lang = str(data.get("lang") or "en").strip().lower()
                 res = spectra_ai.analyze_fault_triage(
@@ -2442,7 +2548,9 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 if not spectra_ai.is_ai_enabled():
                     self._send_json({"success": False, "error": "Local AI is turned OFF. Enable Local AI first."})
                     return
-                summary = data.get("stats") or _last_stats_cache
+                with _session_lock:
+                    cached_stats = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
+                summary = data.get("stats") or cached_stats
                 if not summary:
                     self._send_json({"success": False, "error": "Interrogate machine first before generating service summary."})
                     return
@@ -2571,8 +2679,8 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         with _session_lock:
                             if _active_session is not None:
                                 sess_ef = str(getattr(_active_session, "ef_code", "") or "").strip()
-                        if not sess_ef and isinstance(_last_stats_cache, dict):
-                            sess_ef = str(_last_stats_cache.get("ef_code") or "").strip()
+                            if not sess_ef and isinstance(_last_stats_cache, dict):
+                                sess_ef = str(_last_stats_cache.get("ef_code") or "").strip()
                         if sess_ef:
                             override["ef_code"] = sess_ef
 
@@ -2609,79 +2717,80 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             updated_stats["advisor_cards"] = cards
                             _last_stats_cache = updated_stats
 
-                if updated_stats is None and isinstance(_last_stats_cache, dict):
-                    _last_stats_cache = dict(_last_stats_cache)
-                    if saved.get("model_name"):
-                        _last_stats_cache["machine_model"] = saved["model_name"]
-                        _last_stats_cache["appliance_type"] = saved["model_name"]
-                    if saved.get("article_number"):
-                        _last_stats_cache["article_number"] = saved["article_number"]
-                    if saved.get("serial_number"):
-                        _last_stats_cache["serial_number"] = saved["serial_number"]
-                    if saved.get("market_region"):
-                        _last_stats_cache["market_region"] = saved["market_region"]
+                    if updated_stats is None and isinstance(_last_stats_cache, dict):
+                        new_cache = copy.deepcopy(_last_stats_cache)
+                        if saved.get("model_name"):
+                            new_cache["machine_model"] = saved["model_name"]
+                            new_cache["appliance_type"] = saved["model_name"]
+                        if saved.get("article_number"):
+                            new_cache["article_number"] = saved["article_number"]
+                        if saved.get("serial_number"):
+                            new_cache["serial_number"] = saved["serial_number"]
+                        if saved.get("market_region"):
+                            new_cache["market_region"] = saved["market_region"]
 
-                    cached_words: Dict[int, int] = {}
-                    if capture_id:
-                        with _capture_cache_lock:
-                            cb = _cached_captures.get(capture_id) or {}
-                        for k, v in (cb.get("eeprom_words") or {}).items():
-                            try:
-                                cached_words[int(str(k), 16) if str(k).lower().startswith("0x") else int(k)] = int(v)
-                            except Exception:
-                                pass
+                        cached_words: Dict[int, int] = {}
+                        if capture_id:
+                            with _capture_cache_lock:
+                                cb = _cached_captures.get(capture_id) or {}
+                            for k, v in (cb.get("eeprom_words") or {}).items():
+                                try:
+                                    cached_words[int(str(k), 16) if str(k).lower().startswith("0x") else int(k)] = int(v)
+                                except Exception:
+                                    pass
 
-                    if saved.get("products"):
-                        new_bevs = []
-                        total_preps = 0
-                        coffee_cups = 0
-                        for idx, p in enumerate(saved["products"], start=1):
-                            code = int(p.get("code") or idx)
-                            pname = str(p.get("name") or f"Product #{code}")
-                            is_dbl = bool(p.get("is_double", False))
-                            addr_raw = p.get("addr")
-                            try:
-                                addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
-                            except Exception:
-                                addr_i = None
-                            cnt = cached_words.get(addr_i, p.get("eeprom_val", p.get("joe_count", 0))) if addr_i is not None else p.get("eeprom_val", p.get("joe_count", 0))
-                            cnt_i = int(cnt or 0)
-                            total_preps += cnt_i
-                            if not sc.is_non_coffee_product(pname, code):
-                                coffee_cups += (cnt_i * 2) if is_dbl else cnt_i
-                            new_bevs.append({
-                                "code": code,
-                                "name": pname,
-                                "count": cnt_i,
-                                "is_double": is_dbl,
-                                "active": True,
-                            })
-                        _last_stats_cache["beverages"] = new_bevs
-                        _last_stats_cache["total_preparations"] = total_preps
-                        _last_stats_cache["total_cups"] = coffee_cups
+                        if saved.get("products"):
+                            new_bevs = []
+                            total_preps = 0
+                            coffee_cups = 0
+                            for idx, p in enumerate(saved["products"], start=1):
+                                code = int(p.get("code") or idx)
+                                pname = str(p.get("name") or f"Product #{code}")
+                                is_dbl = bool(p.get("is_double", False))
+                                addr_raw = p.get("addr")
+                                try:
+                                    addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
+                                except Exception:
+                                    addr_i = None
+                                cnt = cached_words.get(addr_i, p.get("eeprom_val", p.get("joe_count", 0))) if addr_i is not None else p.get("eeprom_val", p.get("joe_count", 0))
+                                cnt_i = int(cnt or 0)
+                                total_preps += cnt_i
+                                if not sc.is_non_coffee_product(pname, code):
+                                    coffee_cups += (cnt_i * 2) if is_dbl else cnt_i
+                                new_bevs.append({
+                                    "code": code,
+                                    "name": pname,
+                                    "count": cnt_i,
+                                    "is_double": is_dbl,
+                                    "active": True,
+                                })
+                            new_cache["beverages"] = new_bevs
+                            new_cache["total_preparations"] = total_preps
+                            new_cache["total_cups"] = coffee_cups
 
-                    if saved.get("maintenance"):
-                        new_maint = []
-                        for idx, m in enumerate(saved["maintenance"]):
-                            mname = str(m.get("name") or "Maintenance")
-                            addr_raw = m.get("addr")
-                            try:
-                                addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
-                            except Exception:
-                                addr_i = None
-                            mcnt = cached_words.get(addr_i, m.get("eeprom_val", m.get("joe_count", 0))) if addr_i is not None else m.get("eeprom_val", m.get("joe_count", 0))
-                            mcnt_i = int(mcnt or 0)
-                            new_maint.append({
-                                "index": idx,
-                                "label": mname,
-                                "name": mname,
-                                "count": mcnt_i,
-                                "percentage": None,
-                                "percent": None,
-                            })
-                        _last_stats_cache["maintenance"] = new_maint
+                        if saved.get("maintenance"):
+                            new_maint = []
+                            for idx, m in enumerate(saved["maintenance"]):
+                                mname = str(m.get("name") or "Maintenance")
+                                addr_raw = m.get("addr")
+                                try:
+                                    addr_i = int(str(addr_raw), 16) if str(addr_raw).lower().startswith("0x") else int(addr_raw)
+                                except Exception:
+                                    addr_i = None
+                                mcnt = cached_words.get(addr_i, m.get("eeprom_val", m.get("joe_count", 0))) if addr_i is not None else m.get("eeprom_val", m.get("joe_count", 0))
+                                mcnt_i = int(mcnt or 0)
+                                new_maint.append({
+                                    "index": idx,
+                                    "label": mname,
+                                    "name": mname,
+                                    "count": mcnt_i,
+                                    "percentage": None,
+                                    "percent": None,
+                                })
+                            new_cache["maintenance"] = new_maint
 
-                    updated_stats = _last_stats_cache
+                        _last_stats_cache = new_cache
+                        updated_stats = copy.deepcopy(new_cache)
 
                 updated_bundle = None
                 if capture_id:
@@ -2796,10 +2905,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         self._send_json({"success": False, "error": "Interrogate a connected machine first or attach a valid serial port."})
                         return
 
-                if isinstance(_last_stats_cache, dict):
-                    ty_str = ty_str or str(_last_stats_cache.get("ef_code") or "")
-                    model_name = model_name or str(_last_stats_cache.get("model_name") or _last_stats_cache.get("model_family") or "")
-                    article_number = article_number or str(_last_stats_cache.get("article_number") or "")
+                with _session_lock:
+                    stats_snapshot = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
+                if isinstance(stats_snapshot, dict):
+                    ty_str = ty_str or str(stats_snapshot.get("ef_code") or "")
+                    model_name = model_name or str(stats_snapshot.get("model_name") or stats_snapshot.get("model_family") or "")
+                    article_number = article_number or str(stats_snapshot.get("article_number") or "")
 
                 res = spectra_ai.calibrate_offsets_from_upload(
                     eeprom_words=eeprom_words,
@@ -2809,7 +2920,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     ty_str=ty_str,
                     model_name=model_name,
                     article_number=article_number,
-                    current_stats=_last_stats_cache if isinstance(_last_stats_cache, dict) else None,
+                    current_stats=stats_snapshot,
                     model=model,
                     user_notes=user_notes or None,
                     user_model_name=user_model_name or None,
@@ -2873,10 +2984,11 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             updated_stats["health_score"] = score
                             updated_stats["advisor_cards"] = cards
                             _last_stats_cache = updated_stats
+                    stats_snapshot = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else {}
 
-                ef = str((_last_stats_cache or {}).get("ef_code") or "")
-                art = str((_last_stats_cache or {}).get("article_number") or "")
-                mdl = str((_last_stats_cache or {}).get("model_name") or (_last_stats_cache or {}).get("model_family") or "")
+                ef = str(stats_snapshot.get("ef_code") or "")
+                art = str(stats_snapshot.get("article_number") or "")
+                mdl = str(stats_snapshot.get("model_name") or stats_snapshot.get("model_family") or "")
                 catalog = machine_library.list_machines(detected_ef=ef, detected_art=art, detected_model=mdl)
                 catalog["success"] = True
                 catalog["message"] = msg
@@ -3036,24 +3148,39 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        clean_path = req_path.lstrip("/")
+        decoded_path = unquote(req_path or "")
+        if "\x00" in decoded_path or "\\" in decoded_path:
+            self.send_error(403, "Forbidden")
+            return
+
+        dist_real = os.path.realpath(DIST_DIR)
+        clean_path = decoded_path.lstrip("/")
         if not clean_path or clean_path == "index.html":
-            file_path = os.path.join(DIST_DIR, "index.html")
+            file_path = os.path.join(dist_real, "index.html")
         else:
-            file_path = os.path.join(DIST_DIR, clean_path)
+            cand_real = os.path.realpath(os.path.join(dist_real, clean_path))
+            try:
+                within_dist = os.path.commonpath([dist_real, cand_real]) == dist_real
+            except ValueError:
+                within_dist = False
+            if not within_dist:
+                self.send_error(403, "Forbidden")
+                return
+            file_path = cand_real
 
         if not os.path.isfile(file_path):
-            # Check project root or public assets for favicons/icons
+            # Check project root or public assets for exact allowlisted favicons/icons
             if clean_path in ("favicon.ico", "icon.png", "icon.ico", "logo.svg"):
                 for alt_root in (os.path.join(PROJECT_DIR, "web", "public"), PROJECT_DIR):
-                    cand = os.path.join(alt_root, clean_path)
-                    if os.path.isfile(cand):
+                    cand = os.path.realpath(os.path.join(alt_root, clean_path))
+                    alt_real = os.path.realpath(alt_root)
+                    if os.path.commonpath([alt_real, cand]) == alt_real and os.path.isfile(cand):
                         file_path = cand
                         break
 
         if not os.path.isfile(file_path):
             # Fallback to SPA index.html for client-side routing
-            file_path = os.path.join(DIST_DIR, "index.html")
+            file_path = os.path.join(dist_real, "index.html")
 
         if os.path.isfile(file_path):
             mime_type, _ = mimetypes.guess_type(file_path)

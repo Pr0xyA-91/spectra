@@ -98,23 +98,30 @@ impl Transport for SerialTransport {
         inter_byte_delay: Option<Duration>,
     ) -> BoxFuture<'a, HalResult<()>> {
         Box::pin(async move {
+            let timeout = self.config.timeout;
             let delay_opt = inter_byte_delay.or(self.config.inter_byte_delay);
-            if let Some(delay) = delay_opt {
-                if !delay.is_zero() {
-                    for (i, &b) in payload.iter().enumerate() {
-                        self.stream.write_all(&[b]).await?;
-                        self.stream.flush().await?;
-                        if i + 1 < payload.len() {
-                            tokio::time::sleep(delay).await;
+            let write_fut = async {
+                if let Some(delay) = delay_opt {
+                    if !delay.is_zero() {
+                        for (i, &b) in payload.iter().enumerate() {
+                            self.stream.write_all(&[b]).await?;
+                            self.stream.flush().await?;
+                            if i + 1 < payload.len() {
+                                tokio::time::sleep(delay).await;
+                            }
                         }
+                        return Ok::<(), std::io::Error>(());
                     }
-                    return Ok(());
                 }
+                self.stream.write_all(payload).await?;
+                self.stream.flush().await?;
+                Ok(())
+            };
+            match tokio::time::timeout(timeout, write_fut).await {
+                Err(_) => Err(HalError::Timeout(timeout)),
+                Ok(Err(e)) => Err(HalError::Io(e)),
+                Ok(Ok(())) => Ok(()),
             }
-
-            self.stream.write_all(payload).await?;
-            self.stream.flush().await?;
-            Ok(())
         })
     }
 

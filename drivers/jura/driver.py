@@ -41,19 +41,20 @@ class JuraDriver(BaseApplianceDriver):
     def probe(self, conn: Any) -> Optional[ApplianceIdentification]:
         """Probe for Jura cleartext (TY:) or Smart Connect (@T0) presence."""
         try:
-            # 1. Plain ASCII optical probe
-            ty_resp = conn.query_ascii("TY:", timeout=1.0)
-            if ty_resp and ty_resp.startswith("ty:"):
-                raw_ident = ty_resp[3:].strip()
-                profile = profiles_db.find_profile(raw_ident)
-                model_name = profile.get("model_family", f"Jura ({raw_ident})")
-                return ApplianceIdentification(
-                    vendor="Jura",
-                    model=model_name,
-                    firmware_version=raw_ident,
-                    protocol_name="ASCII Optical (Jura USB Scanner / Direct Serial)",
-                    raw_ident=raw_ident
-                )
+            # 1. Plain ASCII optical probe (skip if connection is already known Smart Connect)
+            if not getattr(conn, "_is_smart_connect", False):
+                ty_resp = conn.query_ascii("TY:", timeout=1.0)
+                if ty_resp and ty_resp.startswith("ty:"):
+                    raw_ident = ty_resp[3:].strip()
+                    profile = profiles_db.find_profile(raw_ident)
+                    model_name = profile.get("model_family", f"Jura ({raw_ident})")
+                    return ApplianceIdentification(
+                        vendor="Jura",
+                        model=model_name,
+                        firmware_version=raw_ident,
+                        protocol_name="ASCII Optical (Jura USB Scanner / Direct Serial)",
+                        raw_ident=raw_ident
+                    )
 
             # 2. Smart Connect @-protocol probe
             if hasattr(conn, "query_encrypted"):
@@ -67,21 +68,48 @@ class JuraDriver(BaseApplianceDriver):
                         raw_ident="Smart Connect Detected"
                     )
             else:
+                import time
                 import jura_protocol as jp
+                if hasattr(conn, "drain_rx"):
+                    conn.drain_rx()
                 t0_raw = jp.encode_wire(jp.build_encrypted_frame("@T0\r\n", 0x20))
                 conn.write(t0_raw)
-                rx = conn.read(256, timeout_sec=0.8)
-                if rx and len(rx) >= 4:
-                    if rx.startswith(t0_raw):
-                        rx = rx[len(t0_raw):]
-                    aligned_len = (len(rx) // 4) * 4
-                    if aligned_len >= 4:
-                        decoded, _ = jp.decode_wire(rx[:aligned_len])
-                        amp = decoded.find(b"&")
-                        end = decoded.find(b"\r\n", amp) if amp != -1 else -1
-                        if amp != -1 and end != -1:
-                            pt = jp.decode_encrypted_frame(decoded[amp:end + 2])
-                            if pt and pt.strip() != "@T0":
+                rx = bytearray()
+                deadline = time.time() + 0.8
+                echo_stripped = False
+                while time.time() < deadline:
+                    chunk = conn.read(256, timeout_sec=0.05)
+                    if chunk:
+                        rx.extend(chunk)
+                        if len(rx) > 4096:
+                            break
+                        if not echo_stripped:
+                            echo_idx = rx.find(t0_raw)
+                            if echo_idx != -1:
+                                del rx[:echo_idx + len(t0_raw)]
+                                echo_stripped = True
+                        aligned_len = (len(rx) // 4) * 4
+                        if aligned_len >= 4:
+                            decoded, _ = jp.decode_wire(bytes(rx[:aligned_len]))
+                            search_idx = 0
+                            while True:
+                                amp = decoded.find(b"&", search_idx)
+                                if amp == -1:
+                                    break
+                                end = decoded.find(b"\r\n", amp)
+                                if end == -1:
+                                    break
+                                next_amp = decoded.find(b"&", amp + 1, end)
+                                if next_amp != -1:
+                                    search_idx = next_amp
+                                    continue
+                                pt = jp.decode_encrypted_frame(decoded[amp:end + 2])
+                                if pt is None:
+                                    search_idx = amp + 1
+                                    continue
+                                search_idx = end + 2
+                                if pt.strip() == "@T0":
+                                    continue
                                 setattr(conn, "_is_smart_connect", True)
                                 return ApplianceIdentification(
                                     vendor="Jura",

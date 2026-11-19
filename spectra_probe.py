@@ -253,9 +253,18 @@ def query_gateways(conn) -> Dict[str, str]:
         ("AS:", "Optical Bean Hopper Sensor ADC")
     ]
 
-    for cmd, desc in commands:
+    if getattr(conn, "_is_smart_connect", False):
+        for cmd, _ in commands:
+            gateways[cmd] = "[NO_REPLY]"
+        return gateways
+
+    for idx, (cmd, desc) in enumerate(commands):
         ans = conn.query_ascii(cmd, timeout=1.2)
         gateways[cmd] = ans if ans else "[NO_REPLY]"
+        if idx == 0 and not ans and (getattr(conn, "wire_mode", None) is None or getattr(conn, "_is_smart_connect", False)):
+            for rem_cmd, _ in commands[1:]:
+                gateways[rem_cmd] = "[NO_REPLY]"
+            break
 
     return gateways
 
@@ -291,7 +300,7 @@ def _smart_connect_probe_sweep(conn, on_progress=None) -> Dict[int, int]:
                 any_bank = True
                 consecutive_empty = 0
                 _, words = parsed
-                base = page * 16
+                base = page * 4
                 for idx, w in enumerate(words):
                     eeprom[base + idx] = w
                 continue
@@ -666,7 +675,7 @@ def capture_machine_bundle(
         port_name = getattr(conn, "raw_port_label", getattr(conn, "port_name", ""))
         if "EF529" in ty or "D4" in port_name.upper():
             max_words = 1024
-        elif "RL78" in tl or "EF533" in ty or "EF535" in ty or "EF536" in ty:
+        elif not getattr(conn, "_is_smart_connect", False) and ("RL78" in tl or "EF533" in ty or "EF535" in ty or "EF536" in ty):
             probe_200 = conn.query_ascii("RT:0200", timeout=1.0)
             if probe_200 and probe_200.lower().startswith("rt:") and not probe_200[3:].startswith("0000" * 16):
                 max_words = 1024

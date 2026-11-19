@@ -99,13 +99,15 @@ def save_stored_token(token: str, login: str, method: str = "token") -> bool:
             else {"token": token, "login": login, "method": method}
         )
         if os.name != "nt":
-            fd = os.open(str(auth_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            tmp_file = f"{auth_file}.tmp.{os.getpid()}"
+            fd = os.open(tmp_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             try:
-                os.chmod(auth_file, 0o600)
+                os.chmod(tmp_file, 0o600)
             except Exception:
                 pass
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
+            os.replace(tmp_file, str(auth_file))
         else:
             with open(auth_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
@@ -363,7 +365,15 @@ def poll_device_flow(device_code: str, interval: int = 5) -> Dict[str, Any]:
                 "login": login
             }
     except urllib.error.HTTPError as he:
-        return {"success": False, "error": f"Poll request failed ({he.code}): {he.reason}"}
+        err_detail = he.reason
+        try:
+            body_raw = he.read().decode("utf-8", errors="ignore")
+            body_json = json.loads(body_raw) if body_raw else {}
+            if isinstance(body_json, dict) and (body_json.get("error_description") or body_json.get("error")):
+                err_detail = body_json.get("error_description") or body_json.get("error")
+        except Exception:
+            pass
+        return {"success": False, "error": f"Poll request failed ({he.code}): {err_detail}"}
     except Exception as e:
         return {"success": False, "error": f"Device poll failed: {e}"}
 
@@ -394,14 +404,15 @@ def get_auth_status() -> Dict[str, Any]:
     login = resolved.get("login")
     if not login:
         valid, fetched_login, err = validate_token(resolved["token"], timeout=5)
-        if not valid and err and "401" in err:
+        if not valid:
             return {
                 "authenticated": False,
                 "login": None,
                 "method": None,
-                "device_flow_available": has_cid
+                "device_flow_available": has_cid,
+                "error": err,
             }
-        login = fetched_login if valid else "authenticated_user"
+        login = fetched_login
 
     return {
         "authenticated": True,
