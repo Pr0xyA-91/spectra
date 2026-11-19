@@ -1,19 +1,19 @@
 {
-  "build": "20261119.1125",
-  "main_build": "20261119.1125",
-  "windows_build": "20261119.1125",
-  "published_at": "2026-11-19T13:05:13Z",
-  "release_notes": "- Official JURA USB Service Interface hardware 4:1 bridge auto-detection (raw '&'-frame vs. 4:1 wire framing) to prevent double 4:1 encoding on Smart Connect machines\n- Fixed Smart Connect Mode B @TR:32 bank stride (4 words/bank) and Memory Mapper block-by-block Smart Connect fallback with ~4s fast-fail abort_sweep\n- Hardened web_server security (static path traversal 403, Origin CSRF check, strict JSON validation, ~/Downloads HMI containment, _session_lock cache sync & non-blocking diagnostics)\n- Hardened self-updater (mandatory SHA-256 verification, HTTPS GitHub host allowlist, safe tarball extraction) and atomic 0600 GitHub OAuth token persistence\n- Fixed Local AI duplicate definitions, OCR NameError, warm model retention across upload calibration, and strict eeprom_words proof verification for community calibrations\n- Added frontend AbortController sweep cancellation, cross-port race guards, and 3-retry Device Flow network tolerance",
+  "build": "20261119.1612",
+  "main_build": "20261119.1612",
+  "windows_build": "20261119.1612",
+  "published_at": "2026-11-19T16:22:32Z",
+  "release_notes": "- Added in-app GitHub Issue Reporter (ISSUE / NAHLASIT button after Debug toggle) supporting direct authenticated API submission and 1-click pre-filled browser fallback with automatic token/path redaction\n- Replaced static ONLINE pill with a dynamic Live SPECTRA Activity Status Pill (READING %, UPDATING %, MAPPING EEPROM, AI WORKING, GITHUB SYNC, EXPORTING, MONITORING, READY, IDLE)\n- Fixed language preset persistence across restarts (eliminated App.jsx mount race + atomic locked ui_prefs.json writes)\n- Fixed Linux loopback / IPv6 / WebKitGTK POST /api/ui_prefs 403 CSRF false positives while strictly blocking foreign & cross-site sandboxed origins\n- Added optional Ticket Number / Custom Filename Prefix input with live sanitized preview for diagnostic exports (JSON, CSV, TXT, capture bundles)\n- Upgraded Tab 02 Telemetry with device-aware 6-topology Digital Twin (Jura Single/Dual/Smart Connect, Nivona, Kalerm, Jetinno), honest NO FRAME handling, port-resetting Oscilloscope, conditional AS: shunt card, and collapsible Live Raw Telemetry Frame Inspector",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "a6195bc608f7a034383307651eebf2a6ecc17455519170dc9708e731390ad41e",
-      "size": 29950976
+      "sha256": "fa7ccef4866952b21b295833ae9d76c2e323dcda7d22b7957b228fdae643ee49",
+      "size": 29999616
     },
     "spectra_setup.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "017415f09f86a1241d02cac8539f38262fa35cec674009386d6f55f7a7807224",
-      "size": 52027904
+      "sha256": "d30dd8d91fcb45cdf69d8e92161663b19f0a6924d1de4943dd3d516ddebf4581",
+      "size": 52076544
     }
   }
 }

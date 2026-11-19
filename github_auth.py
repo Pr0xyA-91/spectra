@@ -6,6 +6,7 @@ and Personal Access Token (PAT) authentication with secure credential persistenc
 """
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -14,7 +15,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 # Override directory for unit tests
 _CONFIG_DIR_OVERRIDE: Optional[Path] = None
@@ -420,3 +421,184 @@ def get_auth_status() -> Dict[str, Any]:
         "method": resolved.get("method"),
         "device_flow_available": has_cid
     }
+
+
+DEFAULT_ISSUES_REPO = "Pr0xyA-91/spectra"
+_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_TOKEN_REDACT_PATTERNS = (
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{10,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{10,}\b"),
+    re.compile(r"(?i)(Authorization\s*:\s*Bearer\s+)[^\s\"']+"),
+    re.compile(r"(?i)(token[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
+)
+_USER_PATH_PATTERNS = (
+    (re.compile(r"/home/[^/\s\"']+/"), "~/"),
+    (re.compile(r"/Users/[^/\s\"']+/"), "~/"),
+    (re.compile(r"(?i)[A-Z]:\\Users\\[^\\\s\"']+\\"), "~\\"),
+)
+
+
+def get_issues_repo(override: Optional[str] = None) -> str:
+    """Return validated GitHub owner/repo target for user issue submissions."""
+    for candidate in (override, os.environ.get("SPECTRA_ISSUES_REPO")):
+        if candidate:
+            cleaned = str(candidate).strip()
+            if _REPO_PATTERN.match(cleaned):
+                return cleaned
+    return DEFAULT_ISSUES_REPO
+
+
+def sanitize_issue_text(text: str, max_chars: int = 32000) -> str:
+    """Redact credentials and local OS user home paths from issue text/log snippets."""
+    if not text:
+        return ""
+    cleaned = str(text).replace("\x00", "")
+    for pat in _TOKEN_REDACT_PATTERNS:
+        if pat.groups:
+            cleaned = pat.sub(r"\1[REDACTED]", cleaned)
+        else:
+            cleaned = pat.sub("[REDACTED_TOKEN]", cleaned)
+    for pat, repl in _USER_PATH_PATTERNS:
+        cleaned = pat.sub(lambda _m, r=repl: r, cleaned)
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars].rstrip() + "\n\n... [truncated]"
+    return cleaned
+
+
+def build_github_issue_web_url(
+    title: str,
+    body: str,
+    labels: Optional[List[str]] = None,
+    repo: Optional[str] = None,
+) -> str:
+    """Build a safe pre-filled GitHub new-issue URL for browser submission fallback."""
+    target_repo = get_issues_repo(repo)
+    safe_title = sanitize_issue_text(title, max_chars=200).strip()
+    safe_body = sanitize_issue_text(body, max_chars=4800).strip()
+    if len(body or "") > 4800:
+        safe_body += "\n\n_(Truncated for browser URL length; attach additional logs if needed.)_"
+    params: Dict[str, str] = {
+        "title": safe_title,
+        "body": safe_body,
+    }
+    clean_labels = [str(lb).strip() for lb in (labels or []) if str(lb).strip()]
+    if clean_labels:
+        params["labels"] = ",".join(clean_labels[:5])
+    return f"https://github.com/{target_repo}/issues/new?{urllib.parse.urlencode(params)}"
+
+
+def create_github_issue(
+    title: str,
+    body: str,
+    labels: Optional[List[str]] = None,
+    repo: Optional[str] = None,
+    timeout: int = 20,
+) -> Dict[str, Any]:
+    """
+    Create a GitHub issue on the public SPECTRA repository using the authenticated user's token.
+    Never logs or returns tokens, and never opens a browser server-side.
+    Always returns a pre-filled `web_url` fallback for unauthenticated or failed submissions.
+    """
+    target_repo = get_issues_repo(repo)
+    safe_title = sanitize_issue_text(title, max_chars=200).strip()
+    safe_body = sanitize_issue_text(body, max_chars=32000).strip()
+    clean_labels = [str(lb).strip() for lb in (labels or []) if str(lb).strip()][:5]
+
+    if not safe_title:
+        return {"success": False, "error": "Issue title is required.", "repo": target_repo}
+    if not safe_body:
+        return {"success": False, "error": "Issue description is required.", "repo": target_repo}
+
+    web_url = build_github_issue_web_url(safe_title, safe_body, labels=clean_labels, repo=target_repo)
+
+    resolved = resolve_token()
+    token = resolved.get("token") if resolved else None
+    if not token:
+        return {
+            "success": False,
+            "auth_required": True,
+            "error": "Not signed in to GitHub. Sign in via CONFIG -> GitHub or open the pre-filled issue in your browser.",
+            "web_url": web_url,
+            "repo": target_repo,
+        }
+
+    api_url = f"https://api.github.com/repos/{target_repo}/issues"
+
+    def _post_issue(include_labels: bool = True):
+        payload: Dict[str, Any] = {
+            "title": safe_title,
+            "body": safe_body,
+        }
+        if include_labels and clean_labels:
+            payload["labels"] = clean_labels
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "User-Agent": "SPECTRA-Diagnostics",
+            },
+        )
+        import tls_utils
+        return urllib.request.urlopen(req, timeout=timeout, context=tls_utils.get_ssl_context())
+
+    def _format_success(raw_bytes: bytes) -> Dict[str, Any]:
+        resp_data = json.loads(raw_bytes.decode("utf-8"))
+        return {
+            "success": True,
+            "issue_url": resp_data.get("html_url", ""),
+            "issue_number": resp_data.get("number"),
+            "web_url": web_url,
+            "repo": target_repo,
+        }
+
+    try:
+        with _post_issue(include_labels=True) as resp:
+            return _format_success(resp.read())
+    except urllib.error.HTTPError as he:
+        if he.code == 422 and clean_labels:
+            try:
+                with _post_issue(include_labels=False) as resp2:
+                    return _format_success(resp2.read())
+            except urllib.error.HTTPError as he2:
+                return {
+                    "success": False,
+                    "error": f"GitHub API error {he2.code}: {he2.reason}",
+                    "web_url": web_url,
+                    "repo": target_repo,
+                }
+            except Exception as e2:
+                return {
+                    "success": False,
+                    "error": f"GitHub API error on retry: {e2}",
+                    "web_url": web_url,
+                    "repo": target_repo,
+                }
+        if he.code == 401:
+            msg = "GitHub API error 401: Unauthorized (check or refresh your GitHub sign-in)."
+        elif he.code == 403:
+            msg = "GitHub API error 403: Forbidden (insufficient token permissions or rate limit exceeded)."
+        else:
+            msg = f"GitHub API error {he.code}: {he.reason}"
+        return {
+            "success": False,
+            "error": msg,
+            "web_url": web_url,
+            "repo": target_repo,
+        }
+    except urllib.error.URLError as ue:
+        return {
+            "success": False,
+            "error": f"Network error contacting GitHub: {ue.reason}",
+            "web_url": web_url,
+            "repo": target_repo,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to create GitHub issue: {e}",
+            "web_url": web_url,
+            "repo": target_repo,
+        }
