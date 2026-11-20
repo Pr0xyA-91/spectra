@@ -199,6 +199,7 @@ export default function SpectraWorkspace({
       .then((r) => (r.ok ? r.json() : null))
       .then(async (d) => {
         if (!active) return;
+        if (d?.boot_id) serverBootIdRef.current = d.boot_id;
         if (d?.build && !debugSummary?.build) setLiveBuild(d.build);
         if (d?.ui_prefs !== undefined) {
           applyOnboardingPrefs(d.ui_prefs);
@@ -386,7 +387,9 @@ export default function SpectraWorkspace({
   }, [checkForUpdates]);
 
   const updatePollTimerRef = useRef(null);
+  const updateRestartDelayRef = useRef(null);
   const updateStatusTimerRef = useRef(null);
+  const serverBootIdRef = useRef('');
   const aiModelRef = useRef(aiModel);
   useEffect(() => {
     aiModelRef.current = aiModel;
@@ -394,69 +397,143 @@ export default function SpectraWorkspace({
 
   useEffect(() => {
     return () => {
+      if (updateRestartDelayRef.current) clearTimeout(updateRestartDelayRef.current);
       if (updatePollTimerRef.current) clearInterval(updatePollTimerRef.current);
       if (updateStatusTimerRef.current) clearInterval(updateStatusTimerRef.current);
     };
   }, []);
 
-  const pollServerAfterRestart = useCallback(() => {
+  const pollServerAfterRestart = useCallback((expectedTargetBuild = '') => {
     setIsReconnectingAfterUpdate(true);
-    if (updatePollTimerRef.current) clearInterval(updatePollTimerRef.current);
+    if (updateRestartDelayRef.current) {
+      clearTimeout(updateRestartDelayRef.current);
+      updateRestartDelayRef.current = null;
+    }
+    if (updatePollTimerRef.current) {
+      clearInterval(updatePollTimerRef.current);
+      updatePollTimerRef.current = null;
+    }
+    const prevBootId = serverBootIdRef.current || '';
+    const targetBuild = String(expectedTargetBuild || updateInfo?.latest_build || '').trim();
     let attempts = 0;
-    updatePollTimerRef.current = setInterval(async () => {
-      attempts += 1;
-      try {
-        const res = await fetch(`/api/version?ts=${Date.now()}`);
-        if (res.ok) {
+    let sawDisconnect = false;
+
+    updateRestartDelayRef.current = setTimeout(() => {
+      updateRestartDelayRef.current = null;
+      updatePollTimerRef.current = setInterval(async () => {
+        attempts += 1;
+        try {
+          const res = await fetch(`/api/version?ts=${Date.now()}`, { cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            const bootChanged = Boolean(prevBootId && data?.boot_id && data.boot_id !== prevBootId);
+            const buildChanged = Boolean(targetBuild && data?.build && data.build === targetBuild);
+            if (bootChanged || buildChanged || sawDisconnect) {
+              clearInterval(updatePollTimerRef.current);
+              updatePollTimerRef.current = null;
+              window.location.replace(`${window.location.pathname}?v=${encodeURIComponent(data?.build || Date.now())}`);
+              return;
+            }
+          } else {
+            sawDisconnect = true;
+          }
+        } catch {
+          sawDisconnect = true;
+        }
+        if (attempts >= 60) {
           clearInterval(updatePollTimerRef.current);
           updatePollTimerRef.current = null;
-          window.location.reload();
+          setIsReconnectingAfterUpdate(false);
+          setUpdateProgress((prev) => ({
+            ...prev,
+            status: 'error',
+            in_progress: false,
+            restart_required: false,
+            message: t('cfgUpdatesReconnectTimeout'),
+            error: t('cfgUpdatesReconnectTimeout'),
+          }));
         }
-      } catch {}
-      if (attempts >= 35) {
-        clearInterval(updatePollTimerRef.current);
-        updatePollTimerRef.current = null;
-        setIsReconnectingAfterUpdate(false);
-      }
-    }, 800);
-  }, []);
+      }, 800);
+    }, 900);
+  }, [t, updateInfo?.latest_build]);
 
   const startSelfUpdate = useCallback(async () => {
+    const targetBuild = String(updateInfo?.latest_build || '').trim();
     try {
+      const verRes = await fetch(`/api/version?ts=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+      if (verRes && verRes.ok) {
+        const verData = await verRes.json().catch(() => null);
+        if (verData?.boot_id) serverBootIdRef.current = verData.boot_id;
+      }
+
       const res = await fetch('/api/update/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
+      if (!res.ok || !data?.ok) {
+        const errMsg = data?.error || data?.state?.error || `HTTP ${res.status}: ${rawText.slice(0, 200) || 'Update request failed'}`;
+        setUpdateProgress({
+          ...(data?.state || {}),
+          status: 'error',
+          in_progress: false,
+          percent: 0,
+          restart_required: false,
+          message: 'Update failed',
+          error: errMsg,
+        });
+        return;
+      }
       if (data?.state) {
         setUpdateProgress(data.state);
       }
-      if (!data?.ok) return;
 
       if (updateStatusTimerRef.current) clearInterval(updateStatusTimerRef.current);
       updateStatusTimerRef.current = setInterval(async () => {
         try {
-          const stRes = await fetch('/api/update/status');
-          if (!stRes.ok) throw new Error('status unavailable');
+          const stRes = await fetch(`/api/update/status?ts=${Date.now()}`, { cache: 'no-store' });
+          if (!stRes.ok) throw new Error(`HTTP ${stRes.status}`);
           const st = await stRes.json();
+          if (st?.boot_id && !serverBootIdRef.current) {
+            serverBootIdRef.current = st.boot_id;
+          }
           setUpdateProgress(st);
           if (st.restart_required || st.status === 'restarting') {
             clearInterval(updateStatusTimerRef.current);
             updateStatusTimerRef.current = null;
-            pollServerAfterRestart();
+            pollServerAfterRestart(st.target_build || targetBuild);
           } else if (!st.in_progress && ['up_to_date', 'error', 'cancelled'].includes(st.status)) {
             clearInterval(updateStatusTimerRef.current);
             updateStatusTimerRef.current = null;
+            if (st.status === 'up_to_date') {
+              checkForUpdates(true);
+            }
           }
         } catch {
           clearInterval(updateStatusTimerRef.current);
           updateStatusTimerRef.current = null;
-          pollServerAfterRestart();
+          pollServerAfterRestart(targetBuild);
         }
       }, 450);
-    } catch {}
-  }, [pollServerAfterRestart]);
+    } catch (err) {
+      const errMsg = err?.message || 'Network error starting self-update';
+      setUpdateProgress({
+        status: 'error',
+        in_progress: false,
+        percent: 0,
+        restart_required: false,
+        message: 'Update failed',
+        error: errMsg,
+      });
+    }
+  }, [checkForUpdates, pollServerAfterRestart, updateInfo?.latest_build]);
 
   const cancelSelfUpdate = useCallback(async () => {
     try {
@@ -1503,9 +1580,9 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261119.1612' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261120.0902' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261119.1612'}
+            BUILD {liveBuild || debugSummary?.build || '20261120.0902'}
           </button>
           <div
             className={`flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${spectraActivity.cls}`}
@@ -1514,7 +1591,7 @@ export default function SpectraWorkspace({
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${spectraActivity.dot}`} />
             <span className="tracking-wider uppercase">{spectraActivity.label}</span>
           </div>
-          {updateInfo?.update_available && (
+          {updateInfo?.update_available ? (
             <button
               type="button"
               onClick={() => {
@@ -1526,6 +1603,24 @@ export default function SpectraWorkspace({
             >
               <Download className="w-3 h-3" />
               <span>{t('headerUpdateBtn', { build: updateInfo.latest_build })}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setConfigInitialSection('updates');
+                setShowConfigModal(true);
+                checkForUpdates(true);
+              }}
+              className="flex items-center space-x-1 text-[10px] px-2 py-0.5 bg-cyan-950/50 hover:bg-cyan-900/70 text-cyan-300 border border-cyan-700/70 font-mono font-bold tracking-wider rounded cursor-pointer transition-colors"
+              title={t('headerCheckUpdateTitle')}
+            >
+              {isCheckingUpdates ? (
+                <RefreshCw className="w-3 h-3 animate-spin" />
+              ) : (
+                <Download className="w-3 h-3" />
+              )}
+              <span>{t('headerCheckUpdateBtn')}</span>
             </button>
           )}
           <span className="text-xs text-zinc-400 font-mono hidden 2xl:inline">
@@ -2092,7 +2187,7 @@ export default function SpectraWorkspace({
               liveData={liveData}
               statsData={statsData}
               selectedPort={selectedPort}
-              liveBuild={liveBuild || debugSummary?.build || '20261119.1612'}
+              liveBuild={liveBuild || debugSummary?.build || '20261120.0902'}
             />
 
             {/* Bottom Row: Dynamic Physical Microswitches & Component Fault / Safety Registers */}
@@ -3282,7 +3377,7 @@ export default function SpectraWorkspace({
         statsData={statsData}
         liveData={liveData}
         selectedPort={selectedPort}
-        liveBuild={liveBuild || debugSummary?.build || '20261119.1612'}
+        liveBuild={liveBuild || debugSummary?.build || '20261120.0902'}
         onOpenGitHubConfig={() => {
           setConfigInitialSection('github');
           setShowConfigModal(true);
