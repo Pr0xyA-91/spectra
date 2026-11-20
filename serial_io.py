@@ -12,6 +12,7 @@ Supports:
 """
 
 import os
+import re
 import sys
 import glob
 import time
@@ -114,18 +115,33 @@ def list_serial_ports() -> List[str]:
     return ports
 
 
+_COM_PORT_PREFIX_RE = re.compile(r"^((?:\\\\\.\\)?COM\d{1,3})(?=\s|$)", re.IGNORECASE)
+
+
+def normalize_port_name(port_name: str) -> str:
+    """Normalize a serial port label by stripping descriptive suffixes from Windows COM ports."""
+    if not isinstance(port_name, str):
+        return ""
+    stripped = port_name.strip()
+    m = _COM_PORT_PREFIX_RE.match(stripped)
+    if m:
+        return m.group(1)
+    return stripped
+
+
 class JuraSerialConnection:
     """Universal serial transceiver interface for Jura diagnostics."""
 
     def __init__(self, port_name: str, baudrate: int = 9600, timeout: float = 1.5):
+        raw_port = port_name if isinstance(port_name, str) else str(port_name or "")
         # Extract pure COM port if description is appended, e.g. "COM3 (USB-Serial)"
-        clean_port = port_name.split()[0] if port_name and port_name.upper().startswith("COM") else port_name
+        clean_port = normalize_port_name(raw_port)
         self.port_name = clean_port
-        self.raw_port_label = port_name
+        self.raw_port_label = raw_port
         self.baudrate = baudrate
         self.timeout = timeout
         self._applied_timeout: Optional[float] = timeout
-        self.is_demo = "DEMO" in port_name.upper() or port_name.lower() in ("mock", "demo")
+        self.is_demo = "DEMO" in raw_port.upper() or raw_port.lower() in ("mock", "demo")
         self.mock_machine: Optional[MockJuraMachine] = None
         self.fd: Optional[int] = None
         self.py_serial = None
@@ -342,7 +358,7 @@ class JuraSerialConnection:
         return 0
 
     def _open_hardware_port(self):
-        is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith("COM")
+        is_windows = sys.platform.startswith("win") or self.port_name.upper().startswith(("COM", "\\\\.\\COM"))
         if not is_windows and not os.path.exists(self.port_name):
             raise FileNotFoundError(f"Serial port {self.port_name} does not exist.")
 
