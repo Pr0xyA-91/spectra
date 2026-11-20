@@ -1,19 +1,19 @@
 {
-  "build": "20261119.1612",
+  "build": "20261120.0902",
   "main_build": "20261120.0902",
-  "windows_build": "20261119.1612",
-  "published_at": "2026-11-20T09:03:59Z",
-  "release_notes": "- Overhauled Linux self-updater (atomic tarball/git sync, main-thread GUI/WebView relaunch, same-port boot_id reconnect handshake, CLI --check-update/--update, and always-visible header UPDATE button)\n- Integrated verified Jura E60 (EF532M V01.31, Article 15082) offset calibration from Pr0xyA-91/spectra-captures#3 (7 beverage offsets + 6 maintenance offsets)\n- Added automatic runtime fallback to community-verified docs/models/*.json offsets (with sibling EF minor revision matching) when no user-local override is present, preserving connected machine serial and article identity",
+  "windows_build": "20261120.0902",
+  "published_at": "2026-11-20T09:20:56Z",
+  "release_notes": "- Overhauled Linux self-updater (atomic tarball/git sync, main-thread GUI/WebView relaunch, same-port boot_id reconnect handshake, CLI --check-update/--update, and always-visible header UPDATE button)\n- Integrated verified Jura E60 (EF532M V01.31, Article 15082) offset calibration (7 beverage offsets + 6 maintenance offsets) with automatic runtime fallback to community-verified docs/models/*.json offsets\n- Rebuilt Windows PE32+ binaries (spectra.exe, spectra_setup.exe, spectra_update.exe) for Build 20261120.0902 with updater process-tree safety, Origin loopback fix, and updated Web UI bundle",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "fa7ccef4866952b21b295833ae9d76c2e323dcda7d22b7957b228fdae643ee49",
-      "size": 29999616
+      "sha256": "281d5c5da6997de1c52dcf987992a8a7c911d61fafee207fe12c2563597177fc",
+      "size": 30116352
     },
     "spectra_setup.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "d30dd8d91fcb45cdf69d8e92161663b19f0a6924d1de4943dd3d516ddebf4581",
-      "size": 52076544
+      "sha256": "247d83044eab89cfac847142c2c48e93400f48e3ef1f6a7f1aa46a8dcfd0d4dd",
+      "size": 52193280
     }
   }
 }
