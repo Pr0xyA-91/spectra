@@ -1,0 +1,196 @@
+{
+  "ef_code": "EF532M V01.31",
+  "model_family": "E60",
+  "article_number": "15082",
+  "article_numbers": [
+    "15082"
+  ],
+  "appliance_type": "15082 E60",
+  "address_width": 4,
+  "max_words": 512,
+  "products": [
+    {
+      "code": 1,
+      "name": "Espresso",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 2,
+      "name": "Coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 3,
+      "name": "Cappuccino",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 4,
+      "name": "Portion of milk foam",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 5,
+      "name": "2 x Espresso",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 6,
+      "name": "2 x Coffee",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 7,
+      "name": "Hot water",
+      "is_double": false,
+      "active": true
+    }
+  ],
+  "maintenance_counters": [
+    "Cleaning operations",
+    "Filter change",
+    "Descaling operations",
+    "Coffee system rinsing operations",
+    "Milk system rinsing operations",
+    "Milk system cleaning operations"
+  ],
+  "custom_registers": {
+    "0007": {
+      "name": "Coffee_system_rinsing_operations",
+      "description": "Community-verified maintenance counter: Coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Cleaning_operations",
+      "description": "Community-verified maintenance counter: Cleaning operations"
+    },
+    "0009": {
+      "name": "Descaling_operations",
+      "description": "Community-verified maintenance counter: Descaling operations"
+    },
+    "0020": {
+      "name": "Milk_system_rinsing_operations",
+      "description": "Community-verified maintenance counter: Milk system rinsing operations"
+    },
+    "0021": {
+      "name": "Milk_system_cleaning_operations",
+      "description": "Community-verified maintenance counter: Milk system cleaning operations"
+    },
+    "0022": {
+      "name": "Filter_change",
+      "description": "Community-verified maintenance counter: Filter change"
+    },
+    "0180": {
+      "name": "Product_Espresso",
+      "description": "Community-verified beverage counter: Espresso"
+    },
+    "0182": {
+      "name": "Product_Coffee",
+      "description": "Community-verified beverage counter: Coffee"
+    },
+    "0184": {
+      "name": "Product_Cappuccino",
+      "description": "Community-verified beverage counter: Cappuccino"
+    },
+    "0187": {
+      "name": "Product_Portion_of_milk_foam",
+      "description": "Community-verified beverage counter: Portion of milk foam"
+    },
+    "0188": {
+      "name": "Product_Hot_water",
+      "description": "Community-verified beverage counter: Hot water"
+    },
+    "0189": {
+      "name": "Product_2_x_Espresso",
+      "description": "Community-verified beverage counter: 2 x Espresso"
+    },
+    "018B": {
+      "name": "Product_2_x_Coffee",
+      "description": "Community-verified beverage counter: 2 x Coffee"
+    }
+  },
+  "verified_offsets": {
+    "products": [
+      {
+        "name": "Espresso",
+        "addr": 384,
+        "addr_hex": "0x0180",
+        "is_double": false
+      },
+      {
+        "name": "Coffee",
+        "addr": 386,
+        "addr_hex": "0x0182",
+        "is_double": false
+      },
+      {
+        "name": "Cappuccino",
+        "addr": 388,
+        "addr_hex": "0x0184",
+        "is_double": false
+      },
+      {
+        "name": "Portion of milk foam",
+        "addr": 391,
+        "addr_hex": "0x0187",
+        "is_double": false
+      },
+      {
+        "name": "2 x Espresso",
+        "addr": 393,
+        "addr_hex": "0x0189",
+        "is_double": true
+      },
+      {
+        "name": "2 x Coffee",
+        "addr": 395,
+        "addr_hex": "0x018B",
+        "is_double": true
+      },
+      {
+        "name": "Hot water",
+        "addr": 392,
+        "addr_hex": "0x0188",
+        "is_double": false
+      }
+    ],
+    "maintenance": [
+      {
+        "name": "Cleaning operations",
+        "addr": 8,
+        "addr_hex": "0x0008"
+      },
+      {
+        "name": "Filter change",
+        "addr": 34,
+        "addr_hex": "0x0022"
+      },
+      {
+        "name": "Descaling operations",
+        "addr": 9,
+        "addr_hex": "0x0009"
+      },
+      {
+        "name": "Coffee system rinsing operations",
+        "addr": 7,
+        "addr_hex": "0x0007"
+      },
+      {
+        "name": "Milk system rinsing operations",
+        "addr": 32,
+        "addr_hex": "0x0020"
+      },
+      {
+        "name": "Milk system cleaning operations",
+        "addr": 33,
+        "addr_hex": "0x0021"
+      }
+    ],
+    "maintenance_pct": []
+  }
+}

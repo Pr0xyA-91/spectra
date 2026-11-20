@@ -107,7 +107,11 @@ def load_model_specs() -> dict:
                             data = json.load(f)
                         ef = data.get("ef_code")
                         if ef:
-                            specs[ef.upper()] = data
+                            ef_up = ef.upper()
+                            specs[ef_up] = data
+                            m = re.search(r'(EF\w+)', ef_up)
+                            if m:
+                                specs.setdefault(m.group(1), data)
                         for art in data.get("article_numbers", []):
                             specs[str(art)] = data
                     except Exception:

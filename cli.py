@@ -7,6 +7,7 @@ Universal Appliance Telemetry & Diagnostics Engine (Jura Module)
 import sys
 import os
 import argparse
+import time
 from typing import Optional
 
 import serial_io
@@ -61,8 +62,75 @@ def main():
     parser.add_argument("--hmi-ollama", action="store_true", help="Enable optional local Ollama reviewer (127.0.0.1:11434)")
     parser.add_argument("--hmi-ollama-model", metavar="MODEL", help="Target model for local Ollama reviewer (e.g. qwen2.5:0.5b)")
     parser.add_argument("--hmi-ai-check", action="store_true", help="Run host hardware self-check and adaptive AI model recommendation")
+    parser.add_argument("--check-update", action="store_true", help="Check GitHub releases for a newer SPECTRA build and exit")
+    parser.add_argument("--update", action="store_true", help="Check for updates and apply self-update in the foreground")
 
     args = parser.parse_args()
+
+    if args.check_update or args.update:
+        import updater
+
+        info = updater.check_for_updates(force=True, timeout=8.0)
+        if not info.get("ok"):
+            print(f"[-] Update check failed: {info.get('error') or 'Unknown error'}")
+            sys.exit(1)
+
+        cur_b = info.get("current_build") or updater.get_local_build()
+        lat_b = info.get("latest_build") or "unknown"
+        rel_url = info.get("release_url") or ""
+        mode = info.get("install_mode") or info.get("platform") or "auto"
+
+        print(f"[*] Installed Build: Build {cur_b}")
+        print(f"[*] Latest Build:    Build {lat_b} ({mode})")
+        if rel_url:
+            print(f"[*] Release URL:     {rel_url}")
+
+        if not info.get("update_available"):
+            print(f"[+] SPECTRA is already up to date (Build {cur_b}).")
+            sys.exit(0)
+
+        print(f"[!] Update available: Build {cur_b} -> Build {lat_b}")
+        if args.check_update and not args.update:
+            sys.exit(0)
+
+        # Foreground self-update without execv loop if already up to date or failed
+        restarted_guard = os.environ.pop("SPECTRA_RESTARTED_AFTER_UPDATE", "") == "1"
+        if restarted_guard:
+            print(f"[+] Update check skipped post-restart relaunch (Build {cur_b}).")
+            sys.exit(0)
+
+        def _cli_noop_restart() -> None:
+            return None
+
+        updater.register_linux_restart_handler(_cli_noop_restart)
+        try:
+            res = updater.start_self_update(check_info=info)
+            if not res.get("ok"):
+                print(f"[-] Failed to start self-update: {res.get('error')}")
+                sys.exit(1)
+            last_msg = ""
+            while True:
+                st = updater.get_update_progress()
+                msg = str(st.get("message") or st.get("status") or "")
+                pct = int(st.get("percent") or 0)
+                if msg and msg != last_msg:
+                    print(f"[*] [{pct:3d}%] {msg}")
+                    last_msg = msg
+                if st.get("status") == "restarting" or st.get("restart_required"):
+                    print(f"[+] Successfully updated to Build {st.get('current_build') or lat_b}.")
+                    sys.exit(0)
+                if not st.get("in_progress"):
+                    if st.get("status") == "error":
+                        print(f"[-] Update failed: {st.get('error') or msg}")
+                        sys.exit(1)
+                    if st.get("status") == "cancelled":
+                        print("[!] Update cancelled.")
+                        sys.exit(1)
+                    print(f"[+] {msg or 'Up to date.'}")
+                    sys.exit(0)
+                time.sleep(0.25)
+        finally:
+            updater.register_linux_restart_handler(None)
 
     # Kalerm HMI AI System & Hardware Self-Check CLI handler
     if args.hmi_ai_check:

@@ -1328,7 +1328,13 @@ export default function ConfigModal({
                   <div className="p-2.5 bg-zinc-950/70 border border-zinc-800 rounded">
                     <div className="text-[10px] text-zinc-500 uppercase">{t('cfgUpdatesChannel')}</div>
                     <div className="text-xs font-bold text-cyan-300 mt-1">
-                      {updateInfo?.install_mode || (updateInfo?.platform || 'auto')}
+                      {updateInfo?.install_mode === 'linux_git'
+                        ? t('cfgChannelLinuxGit')
+                        : updateInfo?.install_mode === 'linux_tarball'
+                        ? t('cfgChannelLinuxTarball')
+                        : updateInfo?.install_mode === 'windows_exe'
+                        ? t('cfgChannelWindowsExe')
+                        : updateInfo?.install_mode || updateInfo?.platform || 'auto'}
                     </div>
                   </div>
                 </div>
