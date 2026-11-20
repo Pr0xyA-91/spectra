@@ -768,19 +768,27 @@ def serialize_register_entry(r: memory_mapper.RegisterEntry) -> Dict[str, Any]:
     }
 
 
+def _canonical_port(port: str) -> str:
+    norm = serial_io.normalize_port_name(port)
+    if norm.upper().startswith(("COM", "\\\\.\\COM")):
+        return norm.upper()
+    return norm
+
+
 def _get_or_create_mapper(port: str) -> Tuple[Optional[memory_mapper.MemoryMapperEngine], Optional[str]]:
     global _active_session, _current_port, _mapper_engine
     if not port or not is_valid_port(port):
         return None, "Invalid or missing serial port"
 
-    if _active_session is None or _current_port != port:
+    norm_port = _canonical_port(port)
+    if _active_session is None or _canonical_port(_current_port) != norm_port:
         if _active_session is not None:
             try:
                 _active_session.close()
             except Exception:
                 pass
-        _active_session = sc.JuraStatsSession(port_name=port)
-        _current_port = port
+        _active_session = sc.JuraStatsSession(port_name=norm_port)
+        _current_port = norm_port
         _mapper_engine = None
 
     if _active_session.conn is not None and not _active_session.conn.is_open:
@@ -792,7 +800,7 @@ def _get_or_create_mapper(port: str) -> Tuple[Optional[memory_mapper.MemoryMappe
         _mapper_engine = None
 
     if _active_session.conn is None or not _active_session.conn.is_open:
-        _active_session.conn = serial_io.JuraSerialConnection(port)
+        _active_session.conn = serial_io.JuraSerialConnection(norm_port)
         _mapper_engine = None
 
     if _mapper_engine is None or _mapper_engine.conn != _active_session.conn:
@@ -1176,7 +1184,7 @@ def is_valid_port(port: str) -> bool:
         return False
     if p.startswith("/dev/tty") or p.startswith("/dev/pts/") or p.startswith("/dev/serial/"):
         return not any(ch in p for ch in [";", "&", "|", "`", "$", "..", "\x00", "\n", "\r"])
-    if re.fullmatch(r"(?:\\\\\.\\)?COM\d{1,3}", p, re.IGNORECASE):
+    if re.fullmatch(r"(?:\\\\\.\\)?COM\d{1,3}(?:\s+\([^;\r\n\x00`|$<>&]{1,200}\))?", p, re.IGNORECASE) and ".." not in p:
         return True
     if "DEMO" in p.upper() or p.lower() in ("mock", "demo"):
         return True
@@ -1305,17 +1313,18 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid serial port", "switches": [], "sensors": []})
                 return
 
+            norm_port = _canonical_port(port)
             with _session_lock:
                 global _active_session, _current_port, _consecutive_sensor_errors, _last_sensor_payload
                 try:
-                    if _active_session is None or _current_port != port:
+                    if _active_session is None or _canonical_port(_current_port) != norm_port:
                         if _active_session is not None:
                             try:
                                 _active_session.close()
                             except Exception:
                                 pass
-                        _active_session = sc.JuraStatsSession(port_name=port)
-                        _current_port = port
+                        _active_session = sc.JuraStatsSession(port_name=norm_port)
+                        _current_port = norm_port
                         _consecutive_sensor_errors = 0
                         _last_sensor_payload = None
 
@@ -1327,7 +1336,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         _active_session.conn = None
 
                     if _active_session.conn is None or not _active_session.conn.is_open:
-                        _active_session.conn = serial_io.JuraSerialConnection(port)
+                        _active_session.conn = serial_io.JuraSerialConnection(norm_port)
 
                     eff_mfr = manufacturer
                     if eff_mfr == "auto":
@@ -1342,7 +1351,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             eff_mfr = str(getattr(_active_session, "detected_vendor")).lower()
 
                     data = sc.query_live_sensors(
-                        port_name=port,
+                        port_name=norm_port,
                         conn=_active_session.conn,
                         profile=_active_session.profile,
                         is_legacy=_active_session.is_legacy_cleartext,
@@ -1352,7 +1361,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
                     if isinstance(data, dict):
                         data.setdefault("timestamp", time.strftime("%Y-%m-%d %H:%M:%S"))
-                        data.setdefault("port", port)
+                        data.setdefault("port", norm_port)
 
                     if data.get("error"):
                         raise IOError(str(data["error"]))
@@ -1400,6 +1409,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid or missing serial port"})
                 return
 
+            norm_port = _canonical_port(port)
             with long_hardware_operation(), _session_lock:
                 try:
                     if _active_session is not None:
@@ -1409,7 +1419,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             pass
                         _active_session = None
                     
-                    sess = sc.JuraStatsSession(port_name=port)
+                    sess = sc.JuraStatsSession(port_name=norm_port)
                     sess.run_interrogation()
                     data = sess.get_structured_summary()
                     score, cards = compute_advisor_health(data, {})
@@ -1417,7 +1427,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     data["advisor_cards"] = cards
                     _last_stats_cache = data
                     _active_session = sess
-                    _current_port = port
+                    _current_port = norm_port
                 except Exception as e:
                     data = {"error": str(e)}
 
@@ -1476,7 +1486,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             with _session_lock:
                 summary = copy.deepcopy(_last_stats_cache) if isinstance(_last_stats_cache, dict) else None
                 active_port = _current_port
-            if summary is None or active_port != port:
+            if summary is None or _canonical_port(active_port) != _canonical_port(port):
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self._send_security_headers()
@@ -1542,13 +1552,14 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
 
+            norm_port = _canonical_port(port)
             if fmt in ("capture", "dump"):
                 with long_hardware_operation(), _session_lock:
                     # Full hardware diagnostic capture bundle (raw EEPROM + gateways)
-                    safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                    safe_conn = _active_session.conn if (_active_session and _canonical_port(_current_port) == norm_port and _active_session.conn and _active_session.conn.is_open) else None
                     owns = False
                     if safe_conn is None:
-                        safe_conn = serial_io.JuraSerialConnection(port)
+                        safe_conn = serial_io.JuraSerialConnection(norm_port)
                         owns = True
                     try:
                         bundle = spectra_probe.capture_machine_bundle(
@@ -1572,9 +1583,9 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
             else:
                 with _session_lock:
                     # Resolve active session or fallback session for telemetry
-                    session = _active_session if (_active_session and _current_port == port) else None
+                    session = _active_session if (_active_session and _canonical_port(_current_port) == norm_port) else None
                     if session is None:
-                        session = sc.JuraStatsSession(port_name=port)
+                        session = sc.JuraStatsSession(port_name=norm_port)
 
                     if fmt == "csv":
                         content = session.export_csv()
@@ -2080,6 +2091,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 })
                 return
 
+            norm_port = _canonical_port(port)
             with _session_lock:
                 try:
                     def _dispatch_cmd(c_obj):
@@ -2088,10 +2100,10 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                             return c_obj.query_encrypted(cmd + "\r\n", key=enc_key, timeout=1.2)
                         return c_obj.query_ascii(cmd, timeout=1.2)
 
-                    if _active_session is not None and _current_port == port and _active_session.conn and _active_session.conn.is_open:
+                    if _active_session is not None and _canonical_port(_current_port) == norm_port and _active_session.conn and _active_session.conn.is_open:
                         resp = _dispatch_cmd(_active_session.conn)
                     else:
-                        conn = serial_io.JuraSerialConnection(port)
+                        conn = serial_io.JuraSerialConnection(norm_port)
                         try:
                             resp = _dispatch_cmd(conn)
                         finally:
@@ -2130,12 +2142,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                         self._send_json({"error": "Invalid or missing serial port", "success": False})
                         return
 
+                    norm_port = _canonical_port(port)
                     joe_data = spectra_probe.parse_joe_csv_text(joe_csv) if joe_csv else {}
                     with long_hardware_operation(), _session_lock:
-                        safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                        safe_conn = _active_session.conn if (_active_session and _canonical_port(_current_port) == norm_port and _active_session.conn and _active_session.conn.is_open) else None
                         owns = False
                         if safe_conn is None:
-                            safe_conn = serial_io.JuraSerialConnection(port)
+                            safe_conn = serial_io.JuraSerialConnection(norm_port)
                             owns = True
                         try:
                             bundle = spectra_probe.capture_machine_bundle(
@@ -2825,12 +2838,13 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                     if not port or not is_valid_port(port):
                         self._send_json({"success": False, "error": "No captured EEPROM bundle or valid serial port provided."})
                         return
+                    norm_port = _canonical_port(port)
                     joe_data = spectra_probe.parse_joe_csv_text(joe_csv) if joe_csv else {}
                     with long_hardware_operation(), _session_lock:
-                        safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                        safe_conn = _active_session.conn if (_active_session and _canonical_port(_current_port) == norm_port and _active_session.conn and _active_session.conn.is_open) else None
                         owns = False
                         if safe_conn is None:
-                            safe_conn = serial_io.JuraSerialConnection(port)
+                            safe_conn = serial_io.JuraSerialConnection(norm_port)
                             owns = True
                         try:
                             bundle = spectra_probe.capture_machine_bundle(
@@ -3117,11 +3131,12 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
 
                 if eeprom_words is None:
                     if port and is_valid_port(port):
+                        norm_port = _canonical_port(port)
                         with long_hardware_operation(), _session_lock:
-                            safe_conn = _active_session.conn if (_active_session and _current_port == port and _active_session.conn and _active_session.conn.is_open) else None
+                            safe_conn = _active_session.conn if (_active_session and _canonical_port(_current_port) == norm_port and _active_session.conn and _active_session.conn.is_open) else None
                             owns = False
                             if safe_conn is None:
-                                safe_conn = serial_io.JuraSerialConnection(port)
+                                safe_conn = serial_io.JuraSerialConnection(norm_port)
                                 owns = True
                             try:
                                 bundle = spectra_probe.capture_machine_bundle(

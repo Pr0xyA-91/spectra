@@ -69,14 +69,73 @@ class TestWebServerSecurityAndStability(_LiveTestServerMixin, unittest.TestCase)
         cls._stop_server()
 
     def test_port_validation_rejects_invalid_com_and_traversal(self):
-        self.assertTrue(web_server.is_valid_port("COM1"))
-        self.assertTrue(web_server.is_valid_port("COM25"))
-        self.assertTrue(web_server.is_valid_port("/dev/ttyUSB0"))
-        self.assertTrue(web_server.is_valid_port("DEMO / SIMULATION (Jura S8)"))
-        self.assertFalse(web_server.is_valid_port("COM_EVIL"))
-        self.assertFalse(web_server.is_valid_port("COM9999"))
-        self.assertFalse(web_server.is_valid_port("../dev/ttyUSB0"))
-        self.assertFalse(web_server.is_valid_port("/etc/passwd"))
+        for ok_port in (
+            "COM1",
+            "COM3",
+            "com12",
+            "COM25",
+            "\\\\.\\COM10",
+            "COM3 (USB Serial Port (COM3))",
+            "COM4 (USB-SERIAL CH340 (COM4))",
+            "COM12 (Silicon Labs CP210x USB to UART Bridge (COM12))",
+            "\\\\.\\COM10 (FTDI USB Serial)",
+            "/dev/ttyUSB0",
+            "DEMO / SIMULATION (Jura S8)",
+        ):
+            self.assertTrue(web_server.is_valid_port(ok_port), f"Expected valid port: {ok_port!r}")
+
+        for bad_port in (
+            "COM_EVIL",
+            "COM9999",
+            "COM3; whoami",
+            "COM3 | calc",
+            "COM3 & dir",
+            "COM3 (evil; rm -rf /)",
+            "COM3 (evil & calc)",
+            "COM3 (../etc)",
+            "COM3\nInjected",
+            "../dev/ttyUSB0",
+            "/etc/passwd",
+            "",
+            None,
+        ):
+            self.assertFalse(web_server.is_valid_port(bad_port), f"Expected invalid port: {bad_port!r}")
+
+    def test_windows_com_port_normalization_and_session_reuse(self):
+        self.assertEqual(serial_io.normalize_port_name("COM12 (USB-SERIAL CH340 (COM12))"), "COM12")
+        self.assertEqual(serial_io.normalize_port_name("\\\\.\\COM12 (FTDI)"), "\\\\.\\COM12")
+        self.assertEqual(serial_io.normalize_port_name("/dev/ttyUSB0"), "/dev/ttyUSB0")
+        self.assertEqual(serial_io.normalize_port_name("  DEMO / SIMULATION (Jura S8)  "), "DEMO / SIMULATION (Jura S8)")
+
+        with mock.patch.object(serial_io.JuraSerialConnection, "_open_hardware_port", return_value=None):
+            conn = serial_io.JuraSerialConnection("COM3 (USB Serial Port (COM3))")
+            self.assertEqual(conn.port_name, "COM3")
+            self.assertEqual(conn.raw_port_label, "COM3 (USB Serial Port (COM3))")
+
+        prev_sess = web_server._active_session
+        prev_port = web_server._current_port
+        prev_mapper = web_server._mapper_engine
+        try:
+            web_server._active_session = None
+            web_server._current_port = ""
+            web_server._mapper_engine = None
+            def fake_open(self):
+                self.is_open = True
+
+            with mock.patch.object(serial_io.JuraSerialConnection, "_open_hardware_port", fake_open):
+                m1, err1 = web_server._get_or_create_mapper("COM3 (USB-SERIAL CH340 (COM3))")
+                self.assertIsNone(err1)
+                self.assertIsNotNone(m1)
+                sess1 = web_server._active_session
+                m2, err2 = web_server._get_or_create_mapper("COM3")
+                self.assertIsNone(err2)
+                self.assertIs(m2, m1)
+                self.assertIs(web_server._active_session, sess1)
+        finally:
+            web_server.cleanup_resources()
+            web_server._active_session = prev_sess
+            web_server._current_port = prev_port
+            web_server._mapper_engine = prev_mapper
 
     def test_allowed_origins_excludes_null(self):
         handler = web_server.SpectraApiHandler.__new__(web_server.SpectraApiHandler)
