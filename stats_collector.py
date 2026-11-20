@@ -1399,6 +1399,29 @@ class JuraStatsSession:
             model_name=self.model_family,
         )
         if not ov:
+            spec_source = self.profile if isinstance(self.profile, dict) else {}
+            verified = spec_source.get("verified_offsets") if isinstance(spec_source.get("verified_offsets"), dict) else None
+            if not verified and art and str(art).strip().lower() not in ("", "unknown", "n/a"):
+                art_spec = profiles_db.get_model_spec(str(art).strip())
+                if isinstance(art_spec, dict) and isinstance(art_spec.get("verified_offsets"), dict):
+                    spec_source = art_spec
+                    verified = art_spec.get("verified_offsets")
+            if isinstance(verified, dict) and (
+                verified.get("products") or verified.get("maintenance") or verified.get("maintenance_pct")
+            ):
+                ov = {
+                    "source": "community_verified",
+                    "override_key": self.ef_code or str(art or "").strip(),
+                    "products": list(verified.get("products") or []),
+                    "maintenance": list(verified.get("maintenance") or []),
+                    "maintenance_pct": list(verified.get("maintenance_pct") or []),
+                }
+                cur_fam = str(self.model_family or "").strip().lower()
+                if not cur_fam or cur_fam in ("unknown", "unknown jura", "unknown jura machine") or "generic" in cur_fam:
+                    spec_fam = str(spec_source.get("model_family") or "").strip()
+                    if spec_fam:
+                        ov["model_name"] = spec_fam
+        if not ov:
             self.override_products = None
             self.override_maint_labels = None
             self.offset_override_info = None

@@ -117,15 +117,13 @@ def shutdown_spectra_cleanly(httpd=None):
 
 def start_inprocess_server() -> Tuple[Any, int, str]:
     """
-    Starts the ThreadingHTTPServer on a free localhost port inside a daemon thread.
-    Returns (httpd, port, url).
+    Starts the SpectraThreadingHTTPServer on a free (or preferred) localhost port
+    inside a daemon thread. Returns (httpd, port, url).
     """
     import web_server
     web_server.install_tee_streams()
-    port = web_server.find_free_port(8080)
+    httpd, port = web_server.bind_http_server(default_start=8080)
     web_server._current_http_port = port
-    server_address = ("127.0.0.1", port)
-    httpd = web_server.ThreadingHTTPServer(server_address, web_server.SpectraApiHandler)
     web_server._active_httpd = httpd
 
     server_thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="SpectraHttpServer")
@@ -373,10 +371,23 @@ def try_launch_gtk_webkit(url: str, port: int, httpd, build_str: str) -> bool:
     scrolled.add(webview)
     window.add(scrolled)
 
+    restart_state = {"requested": False}
+    try:
+        import updater
+
+        def _request_gtk_restart():
+            restart_state["requested"] = True
+            GLib.idle_add(window.destroy)
+
+        updater.register_linux_restart_handler(_request_gtk_restart)
+    except Exception:
+        updater = None  # type: ignore[assignment]
+
     def on_window_destroy(widget):
         shutdown_spectra_cleanly(httpd)
         Gtk.main_quit()
-        os._exit(0)
+        if not restart_state["requested"]:
+            os._exit(0)
 
     window.connect("destroy", on_window_destroy)
     window.show_all()
@@ -385,6 +396,15 @@ def try_launch_gtk_webkit(url: str, port: int, httpd, build_str: str) -> bool:
         Gtk.main()
     except (KeyboardInterrupt, SystemExit):
         on_window_destroy(window)
+    finally:
+        if updater is not None:
+            try:
+                updater.register_linux_restart_handler(None)
+            except Exception:
+                pass
+
+    if restart_state["requested"] and updater is not None:
+        updater.relaunch_current_process(preferred_port=port)
 
     return True
 
@@ -496,6 +516,24 @@ def try_launch_pywebview(url: str, port: int, httpd, build_str: str) -> bool:
         except Exception:
             pass
 
+    restart_state = {"requested": False}
+    updater_mod = None
+    if not sys.platform.startswith("win"):
+        try:
+            import updater as _updater_mod
+            updater_mod = _updater_mod
+
+            def _request_pywebview_restart():
+                restart_state["requested"] = True
+                try:
+                    window.destroy()
+                except Exception:
+                    pass
+
+            updater_mod.register_linux_restart_handler(_request_pywebview_restart)
+        except Exception:
+            updater_mod = None
+
     def on_closed():
         _capture_and_save_win_state()
         try:
@@ -506,7 +544,8 @@ def try_launch_pywebview(url: str, port: int, httpd, build_str: str) -> bool:
         except Exception:
             pass
         shutdown_spectra_cleanly(httpd)
-        os._exit(0)
+        if not restart_state["requested"]:
+            os._exit(0)
 
     window.events.closed += on_closed
 
@@ -679,9 +718,21 @@ def try_launch_pywebview(url: str, port: int, httpd, build_str: str) -> bool:
         else:
             webview.start(debug=False)
         shutdown_spectra_cleanly(httpd)
+        if updater_mod is not None:
+            try:
+                updater_mod.register_linux_restart_handler(None)
+            except Exception:
+                pass
+        if restart_state["requested"] and updater_mod is not None:
+            updater_mod.relaunch_current_process(preferred_port=port)
         os._exit(0)
         return True
     except Exception as pv_err:
+        if updater_mod is not None:
+            try:
+                updater_mod.register_linux_restart_handler(None)
+            except Exception:
+                pass
         print(f"[!] pywebview launch failed: {pv_err}", file=sys.stderr)
         return False
 
@@ -822,8 +873,33 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
         webbrowser.open(url)
         return
 
+    restart_state = {"requested": False}
+    updater_mod = None
+    if not sys.platform.startswith("win"):
+        try:
+            import updater as _updater_mod
+            updater_mod = _updater_mod
+
+            def _request_chromeless_restart():
+                restart_state["requested"] = True
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+            updater_mod.register_linux_restart_handler(_request_chromeless_restart)
+        except Exception:
+            updater_mod = None
+
     def cleanup_and_exit():
+        if updater_mod is not None:
+            try:
+                updater_mod.register_linux_restart_handler(None)
+            except Exception:
+                pass
         shutdown_spectra_cleanly(httpd)
+        if restart_state["requested"] and updater_mod is not None:
+            updater_mod.relaunch_current_process(preferred_port=port)
         os._exit(0)
 
     import web_server
@@ -841,7 +917,11 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
         fallback_opened = False
 
         while True:
+            if restart_state["requested"]:
+                break
             time.sleep(1.0)
+            if restart_state["requested"]:
+                break
             now = time.time()
             elapsed_total = now - start_time
             last_hb = getattr(web_server, "_last_heartbeat_time", start_time)
@@ -879,7 +959,11 @@ def run_chromeless_app_window(browser_bin: str, url: str, port: int, httpd) -> N
     def watchdog():
         time.sleep(25.0)  # Initial grace period for page load
         while proc.poll() is None:
+            if restart_state["requested"]:
+                break
             time.sleep(1.5)
+            if restart_state["requested"]:
+                break
             if getattr(web_server, "_active_hw_ops", 0) > 0:
                 continue
             if time.time() - getattr(web_server, "_last_heartbeat_time", time.time()) > 18.0:

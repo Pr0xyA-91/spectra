@@ -1,9 +1,9 @@
 {
   "build": "20261119.1612",
-  "main_build": "20261119.1612",
+  "main_build": "20261120.0902",
   "windows_build": "20261119.1612",
-  "published_at": "2026-11-19T16:22:32Z",
-  "release_notes": "- Added in-app GitHub Issue Reporter (ISSUE / NAHLASIT button after Debug toggle) supporting direct authenticated API submission and 1-click pre-filled browser fallback with automatic token/path redaction\n- Replaced static ONLINE pill with a dynamic Live SPECTRA Activity Status Pill (READING %, UPDATING %, MAPPING EEPROM, AI WORKING, GITHUB SYNC, EXPORTING, MONITORING, READY, IDLE)\n- Fixed language preset persistence across restarts (eliminated App.jsx mount race + atomic locked ui_prefs.json writes)\n- Fixed Linux loopback / IPv6 / WebKitGTK POST /api/ui_prefs 403 CSRF false positives while strictly blocking foreign & cross-site sandboxed origins\n- Added optional Ticket Number / Custom Filename Prefix input with live sanitized preview for diagnostic exports (JSON, CSV, TXT, capture bundles)\n- Upgraded Tab 02 Telemetry with device-aware 6-topology Digital Twin (Jura Single/Dual/Smart Connect, Nivona, Kalerm, Jetinno), honest NO FRAME handling, port-resetting Oscilloscope, conditional AS: shunt card, and collapsible Live Raw Telemetry Frame Inspector",
+  "published_at": "2026-11-20T09:03:59Z",
+  "release_notes": "- Overhauled Linux self-updater (atomic tarball/git sync, main-thread GUI/WebView relaunch, same-port boot_id reconnect handshake, CLI --check-update/--update, and always-visible header UPDATE button)\n- Integrated verified Jura E60 (EF532M V01.31, Article 15082) offset calibration from Pr0xyA-91/spectra-captures#3 (7 beverage offsets + 6 maintenance offsets)\n- Added automatic runtime fallback to community-verified docs/models/*.json offsets (with sibling EF minor revision matching) when no user-local override is present, preserving connected machine serial and article identity",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",

@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import tls_utils
 
@@ -44,20 +44,37 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _BUILD_PATTERN = re.compile(r"(\d{8})\.(\d{4})(?:\.(\d+))?")
 _VERSION_PY_BUILD_RE = re.compile(r'__build__\s*=\s*["\']([^"\']+)["\']')
-_PRESERVED_USER_ITEMS = {
+_PRESERVED_USER_ITEMS: Set[str] = {
     "ui_prefs.json",
+    "local_overrides.json",
+    "offsets_overrides.json",
     ".env",
     "captures",
     "models",
+    "venv",
+    ".venv",
+    "node_modules",
     "__pycache__",
     ".git",
+    "spectra_backups",
 }
+
+_LINUX_EXECUTABLE_SCRIPTS: Tuple[str, ...] = (
+    "run.sh",
+    "run_ui.sh",
+    "spectra_app.py",
+    "web_server.py",
+    "cli.py",
+    "gui.py",
+    "SPECTRA.desktop",
+)
 
 _state_lock = threading.Lock()
 _update_thread: Optional[threading.Thread] = None
 _cancel_event = threading.Event()
 _cached_check: Optional[Dict[str, Any]] = None
 _cached_check_ts: float = 0.0
+_linux_restart_handler: Optional[Callable[[], None]] = None
 
 _update_state: Dict[str, Any] = {
     "status": "idle",
@@ -249,7 +266,8 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
     # 1. Try GitHub Releases API
     try:
         release_data = _fetch_json(GITHUB_API_LATEST_RELEASE, timeout=timeout, accept_github=True)
-        tag_build = extract_build_from_text(str(release_data.get("tag_name") or "")) or extract_build_from_text(
+        tag_name = str(release_data.get("tag_name") or "").strip()
+        tag_build = extract_build_from_text(tag_name) or extract_build_from_text(
             str(release_data.get("name") or "")
         )
         assets = release_data.get("assets") or []
@@ -279,17 +297,23 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                         win_asset_size = int(wmeta["size"])
 
         if tag_build:
+            linux_tarball_url = (
+                f"https://github.com/{PUBLIC_REPO}/archive/refs/tags/{tag_name}.tar.gz"
+                if tag_name
+                else RAW_LINUX_TARBALL_URL
+            )
             gh_release_candidate = {
                 "build": tag_build,
                 "priority": 3,
                 "source": "github_release",
+                "tag_name": tag_name,
                 "release_name": str(release_data.get("name") or f"Build {tag_build}"),
                 "release_url": str(release_data.get("html_url") or f"https://github.com/{PUBLIC_REPO}/releases"),
                 "release_notes": _extract_release_notes_snippet(str(release_data.get("body") or "")),
                 "published_at": str(release_data.get("published_at") or ""),
                 "download_url": (win_asset_url or RAW_WIN_UPDATER_URL)
                 if platform_name == "windows"
-                else RAW_LINUX_TARBALL_URL,
+                else linux_tarball_url,
                 "expected_sha256": win_asset_sha if platform_name == "windows" else "",
                 "expected_size": win_asset_size if platform_name == "windows" else 0,
             }
@@ -335,6 +359,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                     "build": m_build,
                     "priority": 2,
                     "source": "release_manifest",
+                    "tag_name": "",
                     "release_name": f"Build {m_build}",
                     "release_url": f"https://github.com/{PUBLIC_REPO}/releases",
                     "release_notes": _extract_release_notes_snippet(str(manifest_data.get("release_notes") or "")),
@@ -358,6 +383,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                     "build": raw_build,
                     "priority": 1,
                     "source": "raw_version",
+                    "tag_name": "",
                     "release_name": f"Build {raw_build}",
                     "release_url": f"https://github.com/{PUBLIC_REPO}",
                     "release_notes": "",
@@ -377,6 +403,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
             "error": "; ".join(errors) if errors else "No remote release metadata available",
             "current_build": current_build,
             "latest_build": "",
+            "tag_name": "",
             "update_available": False,
             "platform": platform_name,
             "install_mode": install_mode,
@@ -399,6 +426,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
         "error": "",
         "current_build": current_build,
         "latest_build": latest_build,
+        "tag_name": str(best.get("tag_name") or ""),
         "update_available": update_available,
         "platform": platform_name,
         "install_mode": install_mode,
@@ -627,101 +655,342 @@ def _safe_extract_tarball(tar_path: str, dest_dir: str) -> str:
     return extracted_root
 
 
+def register_linux_restart_handler(cb: Optional[Callable[[], None]]) -> None:
+    """Register or clear a main-thread restart callback for Linux GUI/desktop hosts."""
+    global _linux_restart_handler
+    with _state_lock:
+        _linux_restart_handler = cb
+
+
+def relaunch_current_process(preferred_port: Optional[int] = None) -> None:
+    """Replace the current Python process image cleanly after an applied update."""
+    os.environ["SPECTRA_RESTARTED_AFTER_UPDATE"] = "1"
+    if preferred_port is not None:
+        try:
+            port_val = int(preferred_port)
+            if port_val > 0:
+                os.environ["SPECTRA_PREFERRED_PORT"] = str(port_val)
+        except (TypeError, ValueError):
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:
+            pass
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def _ensure_linux_executables(root_dir: str) -> None:
+    if sys.platform.startswith("win"):
+        return
+    for name in _LINUX_EXECUTABLE_SCRIPTS:
+        path = os.path.join(root_dir, name)
+        if os.path.isfile(path):
+            try:
+                os.chmod(path, 0o755)
+            except OSError:
+                pass
+
+
 def _sync_extracted_tree(src_root: str, dst_root: str) -> None:
     """Copy updated project files from src_root into dst_root while preserving local runtime state."""
+    has_new_dist = os.path.isfile(os.path.join(src_root, "web", "dist", "index.html"))
+
     for entry in os.listdir(src_root):
-        if entry in _PRESERVED_USER_ITEMS:
+        if entry in _PRESERVED_USER_ITEMS or entry.endswith(".log"):
             continue
         src_path = os.path.join(src_root, entry)
         dst_path = os.path.join(dst_root, entry)
-        if os.path.isdir(src_path):
+
+        if entry == "web" and os.path.isdir(src_path) and has_new_dist:
+            os.makedirs(dst_path, exist_ok=True)
+            for sub in os.listdir(src_path):
+                if sub in _PRESERVED_USER_ITEMS or sub == "dist":
+                    continue
+                sub_src = os.path.join(src_path, sub)
+                sub_dst = os.path.join(dst_path, sub)
+                if os.path.isdir(sub_src):
+                    shutil.copytree(sub_src, sub_dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(sub_src, sub_dst)
+
+            src_dist = os.path.join(src_path, "dist")
+            dst_dist = os.path.join(dst_path, "dist")
+            tmp_dist = os.path.join(dst_path, ".dist_update_tmp")
+            old_dist = os.path.join(dst_path, ".dist_update_old")
+            shutil.rmtree(tmp_dist, ignore_errors=True)
+            shutil.rmtree(old_dist, ignore_errors=True)
+            shutil.copytree(src_dist, tmp_dist)
+            if os.path.exists(dst_dist):
+                os.replace(dst_dist, old_dist)
+            try:
+                os.replace(tmp_dist, dst_dist)
+            except Exception:
+                if os.path.exists(old_dist) and not os.path.exists(dst_dist):
+                    os.replace(old_dist, dst_dist)
+                raise
+            finally:
+                shutil.rmtree(tmp_dist, ignore_errors=True)
+                shutil.rmtree(old_dist, ignore_errors=True)
+        elif os.path.isdir(src_path):
             shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
         else:
             shutil.copy2(src_path, dst_path)
+
+
+def _git_env() -> Dict[str, str]:
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def _run_git(args: List[str], timeout: float = 30.0) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git"] + args,
+        cwd=PROJECT_DIR,
+        env=_git_env(),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _normalize_github_repo_slug(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    raw_clean = re.sub(r"\.git/?$", "", raw.rstrip("/"))
+    m = re.search(r"github\.com[:/]([^/\s:]+/[^/\s]+)$", raw_clean, re.IGNORECASE)
+    return m.group(1) if m else ""
+
+
+def _get_git_remotes() -> Dict[str, str]:
+    res = _run_git(["remote", "-v"], timeout=10.0)
+    remotes: Dict[str, str] = {}
+    if res.returncode != 0:
+        return remotes
+    for line in (res.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rname, rurl = parts[0].strip(), parts[1].strip()
+        if rname and rname not in remotes:
+            remotes[rname] = _normalize_github_repo_slug(rurl)
+    return remotes
+
+
+def _apply_linux_git_update(info: Dict[str, Any]) -> bool:
+    """
+    Apply a lossless git fast-forward (or zero-local-commit reset) update on Linux.
+    Returns True if updated/restart should proceed, False if already up-to-date.
+    """
+    target_build = str(info.get("latest_build") or "")
+    current_build = get_local_build()
+
+    _set_state(status="downloading", percent=15, message="Checking repository cleanliness...")
+    dirty = _run_git(["-c", "core.fileMode=false", "status", "--porcelain", "--untracked-files=no"], timeout=15.0)
+    if dirty.returncode != 0:
+        raise UpdateError(f"git status failed: {(dirty.stderr or dirty.stdout).strip()}")
+    if dirty.stdout.strip():
+        dirty_paths: List[str] = []
+        for raw_line in dirty.stdout.splitlines():
+            if len(raw_line) > 3:
+                dirty_paths.append(raw_line[3:].strip())
+            elif raw_line.strip():
+                dirty_paths.append(raw_line.strip())
+        shown = ", ".join(dirty_paths[:5])
+        extra = f" (+{len(dirty_paths) - 5} more)" if len(dirty_paths) > 5 else ""
+        raise UpdateError(
+            f"Tracked local modifications detected in git repository ({shown}{extra}). "
+            "Commit or stash changes before auto-updating."
+        )
+
+    if _cancel_event.is_set():
+        raise UpdateCancelledError("Update cancelled by user")
+
+    remotes = _get_git_remotes()
+    public_slug_lower = PUBLIC_REPO.lower()
+    branch_res = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10.0)
+    branch = branch_res.stdout.strip() if branch_res.returncode == 0 else ""
+
+    upstream_remote = ""
+    if branch and branch != "HEAD":
+        up_res = _run_git(["config", "--get", f"branch.{branch}.remote"], timeout=10.0)
+        if up_res.returncode == 0:
+            upstream_remote = up_res.stdout.strip()
+
+    matching_remote = ""
+    if upstream_remote and upstream_remote in remotes and remotes[upstream_remote].lower() == public_slug_lower:
+        matching_remote = upstream_remote
+    elif remotes.get("origin", "").lower() == public_slug_lower:
+        matching_remote = "origin"
+    elif "origin" not in remotes:
+        for rname, rslug in remotes.items():
+            if rslug.lower() == public_slug_lower:
+                matching_remote = rname
+                break
+
+    if matching_remote:
+        head_res = _run_git(["rev-parse", "HEAD"], timeout=10.0)
+        head_sha = head_res.stdout.strip() if head_res.returncode == 0 else ""
+
+        old_remote_res = _run_git(["show-ref", "--verify", "--hash", f"refs/remotes/{matching_remote}/main"], timeout=10.0)
+        old_remote_sha = old_remote_res.stdout.strip() if old_remote_res.returncode == 0 else ""
+
+        _set_state(status="downloading", percent=35, message=f"Fetching Build {target_build} from {matching_remote}...")
+        fetch = _run_git(["fetch", matching_remote, "main"], timeout=90.0)
+        if fetch.returncode != 0:
+            raise UpdateError(f"git fetch {matching_remote} main failed: {(fetch.stderr or fetch.stdout).strip()}")
+
+        if _cancel_event.is_set():
+            raise UpdateCancelledError("Update cancelled by user")
+
+        fetch_head_res = _run_git(["rev-parse", "FETCH_HEAD"], timeout=10.0)
+        fetch_sha = fetch_head_res.stdout.strip() if fetch_head_res.returncode == 0 else ""
+
+        if head_sha and fetch_sha and head_sha == fetch_sha:
+            local_now = get_local_build()
+            if not target_build or not is_remote_build_newer(local_now, target_build):
+                _set_state(
+                    status="up_to_date",
+                    percent=100,
+                    in_progress=False,
+                    restart_required=False,
+                    current_build=local_now,
+                    target_build=target_build or local_now,
+                    message=f"Already running latest Build {local_now}",
+                    finished_at=time.time(),
+                )
+                return False
+
+        _set_state(status="applying", percent=75, message="Applying fast-forward update...")
+        merge = _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=30.0)
+        if merge.returncode != 0:
+            if old_remote_sha and head_sha and head_sha == old_remote_sha:
+                _set_state(status="applying", percent=82, message="Syncing rewritten public release history...")
+                reset = _run_git(["reset", "--hard", "FETCH_HEAD"], timeout=30.0)
+                if reset.returncode != 0:
+                    raise UpdateError(f"git reset --hard FETCH_HEAD failed: {(reset.stderr or reset.stdout).strip()}")
+            else:
+                raise UpdateError(
+                    f"Local commits diverge from {matching_remote}/main and cannot be auto-merged safely. "
+                    "Pull or rebase manually before updating."
+                )
+        return True
+
+    # Case B: No remote matches PUBLIC_REPO (e.g. fork or custom checkout)
+    if branch and branch != "HEAD" and "origin" in remotes:
+        _set_state(status="downloading", percent=35, message=f"Fetching {branch} from origin...")
+        fetch = _run_git(["fetch", "origin", branch], timeout=90.0)
+        if fetch.returncode == 0:
+            if _cancel_event.is_set():
+                raise UpdateCancelledError("Update cancelled by user")
+            _set_state(status="applying", percent=75, message=f"Fast-forwarding {branch} from origin...")
+            merge = _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=30.0)
+            if merge.returncode == 0:
+                after_build = get_local_build()
+                reached_target = bool(
+                    (target_build and not is_remote_build_newer(after_build, target_build))
+                    or is_remote_build_newer(current_build, after_build)
+                )
+                if reached_target:
+                    return True
+
+    raise UpdateError(
+        f"This git checkout tracks a custom remote (origin) rather than {PUBLIC_REPO}, "
+        "so automatic public overwrite was skipped to protect local commits."
+    )
+
+
+def _apply_linux_tarball_update(info: Dict[str, Any]) -> None:
+    target_build = str(info.get("latest_build") or "")
+    current_build = get_local_build()
+    stage_dir = tempfile.mkdtemp(prefix="spectra_upd_")
+    tar_path = os.path.join(stage_dir, "spectra_main.tar.gz")
+    extract_dir = os.path.join(stage_dir, "extracted")
+    os.makedirs(extract_dir, exist_ok=True)
+    try:
+        _set_state(
+            status="downloading",
+            percent=10,
+            message=f"Downloading Build {target_build} source package...",
+        )
+        _download_file_with_progress(str(info.get("download_url") or RAW_LINUX_TARBALL_URL), tar_path, timeout=45.0)
+        if _cancel_event.is_set():
+            raise UpdateCancelledError("Update cancelled by user")
+        _set_state(status="verifying", percent=82, message="Extracting and verifying archive...")
+        src_root = _safe_extract_tarball(tar_path, extract_dir)
+
+        ver_file = os.path.join(src_root, "version.py")
+        if not os.path.isfile(ver_file):
+            raise UpdateError("Extracted update archive is missing version.py")
+        with open(ver_file, "r", encoding="utf-8", errors="ignore") as vf:
+            extracted_build = extract_build_from_text(vf.read())
+        if not extracted_build:
+            raise UpdateError("Extracted archive version.py does not contain a valid build number")
+        if target_build:
+            if extracted_build != target_build and not is_remote_build_newer(current_build, extracted_build):
+                raise UpdateError(
+                    f"Extracted archive build ({extracted_build}) does not match expected Build {target_build}"
+                )
+        elif current_build and not is_remote_build_newer(current_build, extracted_build):
+            raise UpdateError(
+                f"Extracted archive build ({extracted_build}) is not newer than installed Build {current_build}"
+            )
+
+        _set_state(status="applying", percent=92, message="Updating installed SPECTRA files...")
+        _sync_extracted_tree(src_root, PROJECT_DIR)
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
 
 
 def _apply_linux_update(
     info: Dict[str, Any],
     on_before_restart: Optional[Callable[[], None]] = None,
 ) -> None:
+    if not os.access(PROJECT_DIR, os.W_OK):
+        raise UpdateError(
+            f"SPECTRA install directory is not writable by current user: {PROJECT_DIR}. "
+            "Check directory permissions or install to a user-writable path."
+        )
+
     target_build = str(info.get("latest_build") or "")
     has_git = os.path.isdir(os.path.join(PROJECT_DIR, ".git")) and bool(shutil.which("git"))
 
     if has_git:
-        _set_state(status="downloading", percent=15, message="Checking repository cleanliness...")
-        dirty = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=PROJECT_DIR,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if dirty.returncode == 0 and dirty.stdout.strip():
-            raise UpdateError(
-                "Tracked local modifications detected in git repository. Commit or stash changes before auto-updating."
-            )
-
-        if _cancel_event.is_set():
-            raise UpdateCancelledError("Update cancelled by user")
-
-        _set_state(status="downloading", percent=35, message=f"Fetching Build {target_build} from GitHub...")
-        fetch = subprocess.run(
-            ["git", "fetch", PUBLIC_GIT_URL, "main"],
-            cwd=PROJECT_DIR,
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
-        if fetch.returncode != 0:
-            raise UpdateError(f"git fetch failed: {(fetch.stderr or fetch.stdout).strip()}")
-
-        if _cancel_event.is_set():
-            raise UpdateCancelledError("Update cancelled by user")
-
-        _set_state(status="applying", percent=75, message="Applying fast-forward update...")
-        merge = subprocess.run(
-            ["git", "merge", "--ff-only", "FETCH_HEAD"],
-            cwd=PROJECT_DIR,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if merge.returncode != 0:
-            raise UpdateError(f"git merge --ff-only failed: {(merge.stderr or merge.stdout).strip()}")
+        should_restart = _apply_linux_git_update(info)
+        if not should_restart:
+            return
     else:
-        stage_dir = tempfile.mkdtemp(prefix="spectra_upd_")
-        tar_path = os.path.join(stage_dir, "spectra_main.tar.gz")
-        extract_dir = os.path.join(stage_dir, "extracted")
-        os.makedirs(extract_dir, exist_ok=True)
-        try:
-            _set_state(
-                status="downloading",
-                percent=10,
-                message=f"Downloading Build {target_build} source package...",
-            )
-            _download_file_with_progress(str(info.get("download_url") or RAW_LINUX_TARBALL_URL), tar_path, timeout=45.0)
-            if _cancel_event.is_set():
-                raise UpdateCancelledError("Update cancelled by user")
-            _set_state(status="verifying", percent=82, message="Extracting and verifying archive...")
-            src_root = _safe_extract_tarball(tar_path, extract_dir)
-            _set_state(status="applying", percent=92, message="Updating installed SPECTRA files...")
-            _sync_extracted_tree(src_root, PROJECT_DIR)
-        finally:
-            shutil.rmtree(stage_dir, ignore_errors=True)
+        _apply_linux_tarball_update(info)
 
+    _ensure_linux_executables(PROJECT_DIR)
+    final_build = get_local_build() or target_build
     _set_state(
         status="restarting",
         percent=100,
         restart_required=True,
-        message=f"Updated to Build {target_build}. Restarting SPECTRA...",
+        current_build=final_build,
+        target_build=target_build or final_build,
+        message=f"Updated to Build {final_build}. Restarting SPECTRA...",
     )
-    time.sleep(0.55)
+    time.sleep(0.65)
+
+    with _state_lock:
+        restart_handler = _linux_restart_handler
+    if restart_handler is not None:
+        restart_handler()
+        return
+
     if on_before_restart is not None:
         try:
             on_before_restart()
         except Exception:
             pass
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    pref_port_raw = os.environ.get("SPECTRA_PREFERRED_PORT", "").strip()
+    pref_port = int(pref_port_raw) if pref_port_raw.isdigit() and int(pref_port_raw) > 0 else None
+    relaunch_current_process(preferred_port=pref_port)
 
 
 def _run_self_update(on_before_restart: Optional[Callable[[], None]], check_info: Optional[Dict[str, Any]]) -> None:

@@ -28,8 +28,8 @@ if [[ "$*" == *"--dev"* ]]; then
     exec "$PROJECT_DIR/run_ui.sh" --dev
 fi
 
-# Check if user requested CLI mode or help
-if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]]; then
+# Check if user requested CLI mode, update checks, or help
+if [[ "$*" == *"--cli"* ]] || [[ "$*" == *"-h"* ]] || [[ "$*" == *"--help"* ]] || [[ "$*" == *"--list"* ]] || [[ "$*" == *"--check-update"* ]] || [[ "$*" == *"--update"* ]]; then
     exec python3 "$PROJECT_DIR/cli.py" "$@"
 fi
 
