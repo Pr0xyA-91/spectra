@@ -140,6 +140,8 @@ def register_shutdown_callback(cb):
 
 def shutdown_for_restart():
     """Release serial/Ollama resources, shutdown UI windows, and close HTTP socket before self-update restart."""
+    if _current_http_port and _current_http_port > 0:
+        os.environ["SPECTRA_PREFERRED_PORT"] = str(_current_http_port)
     cleanup_resources()
     for cb in list(_shutdown_callbacks):
         try:
@@ -161,10 +163,16 @@ def shutdown_for_restart():
 # Debug Console & Process Monitor Ring-Buffer Telemetry
 # ============================================================================
 _server_start_time: float = time.time()
+_SERVER_BOOT_ID: str = f"{os.getpid()}-{int(_server_start_time * 1000)}"
 _debug_log_buffer: collections.deque = collections.deque(maxlen=500)
 _debug_log_lock = threading.Lock()
 _debug_log_seq: int = 0
 _current_http_port: int = 8080
+
+
+class SpectraThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 def log_debug_event(level: str, source: str, message: str, details: str = "") -> Dict[str, Any]:
@@ -1957,6 +1965,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
                 "build": __build__,
                 "version": __version__,
                 "edition": __edition__,
+                "boot_id": _SERVER_BOOT_ID,
                 "ui_prefs": load_ui_prefs(),
             })
             return
@@ -1980,6 +1989,7 @@ class SpectraApiHandler(BaseHTTPRequestHandler):
         elif url.path == "/api/update/status":
             self._send_json({
                 "success": True,
+                "boot_id": _SERVER_BOOT_ID,
                 **updater.get_update_progress(),
             })
             return
@@ -3450,6 +3460,46 @@ def find_free_port(start_port: int = 8080) -> int:
     return start_port
 
 
+def bind_http_server(
+    preferred_port: Optional[int] = None,
+    default_start: int = 8080,
+) -> Tuple[SpectraThreadingHTTPServer, int]:
+    """
+    Bind SpectraThreadingHTTPServer on preferred_port (or SPECTRA_PREFERRED_PORT env)
+    with brief SO_REUSEADDR retry tolerance for post-update execv restarts, falling
+    back cleanly to find_free_port(default_start).
+    """
+    env_pref_raw = os.environ.pop("SPECTRA_PREFERRED_PORT", "")
+    pref_port: Optional[int] = None
+    if preferred_port is not None and 0 < int(preferred_port) < 65536:
+        pref_port = int(preferred_port)
+    elif env_pref_raw.strip().isdigit():
+        val = int(env_pref_raw.strip())
+        if 0 < val < 65536:
+            pref_port = val
+
+    if pref_port is not None:
+        for _attempt in range(25):
+            try:
+                httpd = SpectraThreadingHTTPServer(("127.0.0.1", pref_port), SpectraApiHandler)
+                return httpd, pref_port
+            except OSError:
+                time.sleep(0.12)
+
+    for offset in range(50):
+        candidate = default_start + offset
+        if candidate >= 65536:
+            break
+        try:
+            httpd = SpectraThreadingHTTPServer(("127.0.0.1", candidate), SpectraApiHandler)
+            return httpd, candidate
+        except OSError:
+            continue
+
+    httpd = SpectraThreadingHTTPServer(("127.0.0.1", 0), SpectraApiHandler)
+    return httpd, int(httpd.server_address[1])
+
+
 def main(auto_open: bool = False):
     global _current_http_port, _active_httpd
     _ensure_serial_group()
@@ -3459,6 +3509,8 @@ def main(auto_open: bool = False):
         tls_utils.configure_process_tls_env()
     except Exception:
         pass
+
+    restarted_after_update = os.environ.pop("SPECTRA_RESTARTED_AFTER_UPDATE", "") == "1"
 
     requested_port: Optional[int] = None
     no_browser = "--no-browser" in sys.argv or os.environ.get("SPECTRA_NATIVE_SHELL") == "1"
@@ -3474,10 +3526,8 @@ def main(auto_open: bool = False):
             except ValueError:
                 pass
 
-    port = requested_port if (requested_port and 0 < requested_port < 65536) else find_free_port(8080)
+    httpd, port = bind_http_server(preferred_port=requested_port, default_start=8080)
     _current_http_port = port
-    server_address = ("127.0.0.1", port)
-    httpd = ThreadingHTTPServer(server_address, SpectraApiHandler)
     _active_httpd = httpd
 
     print("=" * 78)
@@ -3495,8 +3545,9 @@ def main(auto_open: bool = False):
     )
 
     # Automatically launch browser on Windows or when auto_open is True or --open is passed,
-    # unless explicitly suppressed for native shell hosting (--no-browser / SPECTRA_NATIVE_SHELL=1).
-    if not no_browser and (auto_open or sys.platform.startswith("win") or "--open" in sys.argv):
+    # unless explicitly suppressed for native shell hosting (--no-browser / SPECTRA_NATIVE_SHELL=1)
+    # or immediately following an in-place self-update restart (existing tab reloads seamlessly).
+    if not restarted_after_update and not no_browser and (auto_open or sys.platform.startswith("win") or "--open" in sys.argv):
         try:
             import webbrowser
             threading.Timer(0.8, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()

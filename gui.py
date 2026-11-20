@@ -525,6 +525,13 @@ class JuraDiagApp(Gtk.Window):
         self.btn_export.set_valign(Gtk.Align.CENTER)
         self.btn_export.connect("clicked", lambda w: self._on_export_clicked())
 
+        # Update Suite Button
+        self.btn_update = Gtk.Button(label="⬇ Update")
+        self.btn_update.get_style_context().add_class("secondary-btn")
+        self.btn_update.set_tooltip_text("Check for SPECTRA updates")
+        self.btn_update.set_valign(Gtk.Align.CENTER)
+        self.btn_update.connect("clicked", lambda w: self._on_update_clicked())
+
         # About Suite Button
         self.btn_about = Gtk.Button(label="ℹ️")
         self.btn_about.get_style_context().add_class("secondary-btn")
@@ -542,11 +549,13 @@ class JuraDiagApp(Gtk.Window):
 
         for w in [self.brand_box, self.lbl_mfr, self.mfr_combo, self.status_pill, self.lbl_port,
                   self.port_combo, self.btn_refresh, self.header_spacer, self.btn_read,
-                  self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about, self.actions_row_box]:
+                  self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export,
+                  self.btn_update, self.btn_about, self.actions_row_box]:
             p = w.get_parent()
             if p:
                 p.remove(w)
-        for btn in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about]:
+        for btn in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools,
+                    self.btn_service_report, self.btn_export, self.btn_update, self.btn_about]:
             p = btn.get_parent()
             if p:
                 p.remove(btn)
@@ -557,6 +566,7 @@ class JuraDiagApp(Gtk.Window):
             self.btn_mapper.set_label("🔬 Memory Mapper")
             self.btn_hmi_tools.set_label("📦 HMI Tools")
             self.btn_service_report.set_label("🖨️ Service Receipt")
+            self.btn_update.set_label("⬇ Update")
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.lbl_mfr, 2, 0, 1, 1)
@@ -570,7 +580,8 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.btn_hmi_tools, 10, 0, 1, 1)
             self.header_grid.attach(self.btn_service_report, 11, 0, 1, 1)
             self.header_grid.attach(self.btn_export, 12, 0, 1, 1)
-            self.header_grid.attach(self.btn_about, 13, 0, 1, 1)
+            self.header_grid.attach(self.btn_update, 13, 0, 1, 1)
+            self.header_grid.attach(self.btn_about, 14, 0, 1, 1)
             self.sub_title.show()
         else:
             # 2-row layout: Row 0 Title + Status + Ports, Row 1 Brand + Actions Toolbar (<= 960px)
@@ -578,6 +589,7 @@ class JuraDiagApp(Gtk.Window):
             self.btn_mapper.set_label("🔬 Mapper")
             self.btn_hmi_tools.set_label("📦 HMI")
             self.btn_service_report.set_label("🖨️ Receipt")
+            self.btn_update.set_label("⬇")
             self.header_grid.attach(self.brand_box, 0, 0, 1, 1)
             self.header_grid.attach(self.status_pill, 1, 0, 1, 1)
             self.header_grid.attach(self.header_spacer, 2, 0, 1, 1)
@@ -585,7 +597,8 @@ class JuraDiagApp(Gtk.Window):
             self.header_grid.attach(self.port_combo, 4, 0, 1, 1)
             self.header_grid.attach(self.btn_refresh, 5, 0, 1, 1)
 
-            for item in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools, self.btn_service_report, self.btn_export, self.btn_about]:
+            for item in [self.lbl_mfr, self.mfr_combo, self.btn_read, self.btn_mapper, self.btn_hmi_tools,
+                         self.btn_service_report, self.btn_export, self.btn_update, self.btn_about]:
                 self.actions_row_box.pack_start(item, False, False, 0)
             self.header_grid.attach(self.actions_row_box, 0, 1, 6, 1)
             self.sub_title.hide()
@@ -637,6 +650,114 @@ class JuraDiagApp(Gtk.Window):
             dialog.format_secondary_text(str(e))
             dialog.run()
             dialog.destroy()
+
+    def _on_update_clicked(self):
+        self.btn_update.set_sensitive(False)
+        self.progress_bar.set_text("Checking GitHub releases for SPECTRA updates...")
+
+        def _worker():
+            import updater
+            info = updater.check_for_updates(force=True, timeout=8.0)
+
+            def _present_result():
+                self.btn_update.set_sensitive(True)
+                if not info.get("ok"):
+                    self.progress_bar.set_text(f"Update check failed: {info.get('error') or 'Unknown error'}")
+                    dlg = Gtk.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        message_type=Gtk.MessageType.ERROR,
+                        buttons=Gtk.ButtonsType.OK,
+                        text="Update Check Failed",
+                    )
+                    dlg.format_secondary_text(str(info.get("error") or "Could not reach GitHub releases."))
+                    dlg.run()
+                    dlg.destroy()
+                    return False
+
+                cur_b = info.get("current_build") or __build__
+                lat_b = info.get("latest_build") or cur_b
+                if not info.get("update_available"):
+                    self.progress_bar.set_text(f"SPECTRA is up to date (Build {cur_b}).")
+                    dlg = Gtk.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        message_type=Gtk.MessageType.INFO,
+                        buttons=Gtk.ButtonsType.OK,
+                        text="SPECTRA is Up to Date",
+                    )
+                    dlg.format_secondary_text(f"Installed Build {cur_b} is the latest release.")
+                    dlg.run()
+                    dlg.destroy()
+                    return False
+
+                dlg = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.QUESTION,
+                    buttons=Gtk.ButtonsType.YES_NO,
+                    text=f"Update Available: Build {lat_b}",
+                )
+                dlg.format_secondary_text(
+                    f"Installed: Build {cur_b}\nLatest: Build {lat_b} ({info.get('install_mode', 'linux')})\n\n"
+                    "Install update and restart SPECTRA now?"
+                )
+                resp = dlg.run()
+                dlg.destroy()
+                if resp == Gtk.ResponseType.YES:
+                    self._start_gtk_self_update(info)
+                return False
+
+            GLib.idle_add(_present_result)
+
+        threading.Thread(target=_worker, daemon=True, name="SpectraGtkUpdateCheck").start()
+
+    def _start_gtk_self_update(self, info: Dict[str, Any]):
+        import updater
+        self.btn_update.set_sensitive(False)
+        self._restart_after_update = False
+
+        def _request_main_thread_restart():
+            self._restart_after_update = True
+            def _quit():
+                self.auto_poll_active = False
+                Gtk.main_quit()
+                return False
+            GLib.idle_add(_quit)
+
+        updater.register_linux_restart_handler(_request_main_thread_restart)
+        res = updater.start_self_update(check_info=info)
+        if not res.get("ok"):
+            updater.register_linux_restart_handler(None)
+            self.btn_update.set_sensitive(True)
+            self.progress_bar.set_text(f"Update failed: {res.get('error')}")
+            return
+
+        def _poll_progress():
+            st = updater.get_update_progress()
+            pct = max(0.0, min(1.0, float(st.get("percent") or 0) / 100.0))
+            self.progress_bar.set_fraction(pct)
+            self.progress_bar.set_text(str(st.get("message") or st.get("status") or "Updating..."))
+            if st.get("status") == "restarting" or st.get("restart_required"):
+                return False
+            if not st.get("in_progress"):
+                updater.register_linux_restart_handler(None)
+                self.btn_update.set_sensitive(True)
+                if st.get("status") == "error":
+                    dlg = Gtk.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        message_type=Gtk.MessageType.ERROR,
+                        buttons=Gtk.ButtonsType.OK,
+                        text="Self-Update Failed",
+                    )
+                    dlg.format_secondary_text(str(st.get("error") or "Unknown error"))
+                    dlg.run()
+                    dlg.destroy()
+                return False
+            return True
+
+        GLib.timeout_add(350, _poll_progress)
 
     def _on_about_clicked(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True)
@@ -1986,12 +2107,17 @@ class JuraDiagApp(Gtk.Window):
 
 def main():
     app = JuraDiagApp()
+    app._restart_after_update = False
     def _on_destroy(*_args):
         app.auto_poll_active = False
         Gtk.main_quit()
     app.connect("destroy", _on_destroy)
     app.show_all()
     Gtk.main()
+    if getattr(app, "_restart_after_update", False):
+        import updater
+        updater.register_linux_restart_handler(None)
+        updater.relaunch_current_process()
 
 
 if __name__ == "__main__":
