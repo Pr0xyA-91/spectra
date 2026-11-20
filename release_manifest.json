@@ -1,19 +1,19 @@
 {
-  "build": "20261120.0902",
-  "main_build": "20261120.0902",
-  "windows_build": "20261120.0902",
-  "published_at": "2026-11-20T09:20:56Z",
-  "release_notes": "- Overhauled Linux self-updater (atomic tarball/git sync, main-thread GUI/WebView relaunch, same-port boot_id reconnect handshake, CLI --check-update/--update, and always-visible header UPDATE button)\n- Integrated verified Jura E60 (EF532M V01.31, Article 15082) offset calibration (7 beverage offsets + 6 maintenance offsets) with automatic runtime fallback to community-verified docs/models/*.json offsets\n- Rebuilt Windows PE32+ binaries (spectra.exe, spectra_setup.exe, spectra_update.exe) for Build 20261120.0902 with updater process-tree safety, Origin loopback fix, and updated Web UI bundle",
+  "build": "20261120.1248",
+  "main_build": "20261120.1248",
+  "windows_build": "20261120.1248",
+  "published_at": "2026-11-20T13:02:40Z",
+  "release_notes": "- Fixed critical Windows \"Invalid serial port\" regression where descriptive COM port labels (COM3 (USB-SERIAL CH340 (COM3))) returned by /api/ports were rejected by port validation\n- Added canonical Windows COM port normalization across serial connections and all REST API endpoints while maintaining strict injection filtering\n- Added community-verified Jura WE6 (EA) (EF532M V02.03, Article 15417) EEPROM beverage, maintenance & cockpit % calibration (spectra-captures#4)\n- Prioritized article-number matching before base EF fallback so sibling EF532M models (15417 WE6 vs 15082 E60) never collide",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "281d5c5da6997de1c52dcf987992a8a7c911d61fafee207fe12c2563597177fc",
-      "size": 30116352
+      "sha256": "475d099e07764df90a3c14f2ed70375ca35fb2934c90be4f1c6f68041cea3841",
+      "size": 30029824
     },
     "spectra_setup.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "247d83044eab89cfac847142c2c48e93400f48e3ef1f6a7f1aa46a8dcfd0d4dd",
-      "size": 52193280
+      "sha256": "67ee53971ed543519aabaa79915118985506a1b220c7f1164af0312bb64c3e9a",
+      "size": 52106752
     }
   }
 }

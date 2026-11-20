@@ -1580,9 +1580,9 @@ export default function SpectraWorkspace({
               checkForUpdates(false);
             }}
             className="text-[10px] px-2 py-0.5 bg-black/60 hover:bg-zinc-900 text-zinc-300 border border-zinc-700 hover:border-zinc-500 font-mono font-bold tracking-wider rounded transition-colors cursor-pointer"
-            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261120.0902' })}
+            title={t('headerBuildCheckTitle', { build: liveBuild || debugSummary?.build || '20261120.1248' })}
           >
-            BUILD {liveBuild || debugSummary?.build || '20261120.0902'}
+            BUILD {liveBuild || debugSummary?.build || '20261120.1248'}
           </button>
           <div
             className={`flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${spectraActivity.cls}`}
@@ -2187,7 +2187,7 @@ export default function SpectraWorkspace({
               liveData={liveData}
               statsData={statsData}
               selectedPort={selectedPort}
-              liveBuild={liveBuild || debugSummary?.build || '20261120.0902'}
+              liveBuild={liveBuild || debugSummary?.build || '20261120.1248'}
             />
 
             {/* Bottom Row: Dynamic Physical Microswitches & Component Fault / Safety Registers */}
@@ -3377,7 +3377,7 @@ export default function SpectraWorkspace({
         statsData={statsData}
         liveData={liveData}
         selectedPort={selectedPort}
-        liveBuild={liveBuild || debugSummary?.build || '20261120.0902'}
+        liveBuild={liveBuild || debugSummary?.build || '20261120.1248'}
         onOpenGitHubConfig={() => {
           setConfigInitialSection('github');
           setShowConfigModal(true);
