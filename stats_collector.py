@@ -1400,18 +1400,21 @@ class JuraStatsSession:
         )
         if not ov:
             spec_source = self.profile if isinstance(self.profile, dict) else {}
-            verified = spec_source.get("verified_offsets") if isinstance(spec_source.get("verified_offsets"), dict) else None
-            if not verified and art and str(art).strip().lower() not in ("", "unknown", "n/a"):
-                art_spec = profiles_db.get_model_spec(str(art).strip())
+            verified = None
+            art_clean = str(art or "").strip()
+            if art_clean and art_clean.lower() not in ("unknown", "n/a"):
+                art_spec = profiles_db.get_model_spec(art_clean)
                 if isinstance(art_spec, dict) and isinstance(art_spec.get("verified_offsets"), dict):
                     spec_source = art_spec
                     verified = art_spec.get("verified_offsets")
+            if not verified and isinstance(spec_source.get("verified_offsets"), dict):
+                verified = spec_source.get("verified_offsets")
             if isinstance(verified, dict) and (
                 verified.get("products") or verified.get("maintenance") or verified.get("maintenance_pct")
             ):
                 ov = {
                     "source": "community_verified",
-                    "override_key": self.ef_code or str(art or "").strip(),
+                    "override_key": self.ef_code or art_clean,
                     "products": list(verified.get("products") or []),
                     "maintenance": list(verified.get("maintenance") or []),
                     "maintenance_pct": list(verified.get("maintenance_pct") or []),
@@ -2109,7 +2112,22 @@ class JuraStatsSession:
                             if art_profile and art_profile != profiles_db.DEFAULT_PROFILE:
                                 self.profile = art_profile
                         else:
-                            app_type = f"{hw_article} {self.model_family}"
+                            art_spec = profiles_db.get_model_spec(hw_article)
+                            if isinstance(art_spec, dict):
+                                merged_profile = dict(self.profile) if isinstance(self.profile, dict) else {}
+                                existing_alerts = merged_profile.get("alerts")
+                                for k, v in art_spec.items():
+                                    if v is not None:
+                                        merged_profile[k] = v
+                                if not merged_profile.get("alerts") and existing_alerts:
+                                    merged_profile["alerts"] = existing_alerts
+                                self.profile = merged_profile
+                                spec_fam = str(art_spec.get("model_family") or "").strip()
+                                if spec_fam:
+                                    self.model_family = spec_fam
+                                app_type = str(art_spec.get("appliance_type") or (f"{hw_article} {spec_fam}" if spec_fam else f"{hw_article} {self.model_family}")).strip()
+                            else:
+                                app_type = f"{hw_article} {self.model_family}"
                     else:
                         article_num = str(self.profile.get("article_number", "13356" if is_z5 else ("15221" if is_d4 else ("15133" if is_a1 else ("13500" if is_ena7 else "13705")))))
                         app_type = self.profile.get("appliance_type", self.model_family)

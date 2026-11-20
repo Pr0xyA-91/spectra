@@ -1,0 +1,179 @@
+{
+  "ef_code": "EF532M V02.03",
+  "model_family": "WE6 (EA)",
+  "article_number": "15417",
+  "article_numbers": [
+    "15417"
+  ],
+  "appliance_type": "15417 WE6 (EA)",
+  "address_width": 4,
+  "max_words": 512,
+  "products": [
+    {
+      "code": 1,
+      "name": "Ristretto",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 2,
+      "name": "Espresso",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 3,
+      "name": "Coffee",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 4,
+      "name": "2 x Espresso",
+      "is_double": true,
+      "active": true
+    },
+    {
+      "code": 5,
+      "name": "Hot water",
+      "is_double": false,
+      "active": true
+    },
+    {
+      "code": 6,
+      "name": "2 x Coffee",
+      "is_double": true,
+      "active": true
+    }
+  ],
+  "maintenance_counters": [
+    "Cleaning operations",
+    "Filter change",
+    "Descaling operations",
+    "Coffee system rinsing operations"
+  ],
+  "custom_registers": {
+    "0001": {
+      "name": "Product_Ristretto",
+      "description": "Community-verified beverage counter: Ristretto"
+    },
+    "0007": {
+      "name": "Coffee_system_rinsing_operations",
+      "description": "Community-verified maintenance counter: Coffee system rinsing operations"
+    },
+    "0008": {
+      "name": "Cleaning_operations",
+      "description": "Community-verified maintenance counter: Cleaning operations"
+    },
+    "0009": {
+      "name": "Descaling_operations",
+      "description": "Community-verified maintenance counter: Descaling operations"
+    },
+    "0022": {
+      "name": "Filter_change",
+      "description": "Community-verified maintenance counter: Filter change"
+    },
+    "0180": {
+      "name": "Product_Espresso",
+      "description": "Community-verified beverage counter: Espresso"
+    },
+    "0182": {
+      "name": "Product_Coffee",
+      "description": "Community-verified beverage counter: Coffee"
+    },
+    "0188": {
+      "name": "Product_Hot_water",
+      "description": "Community-verified beverage counter: Hot water"
+    },
+    "0189": {
+      "name": "Product_2_x_Espresso",
+      "description": "Community-verified beverage counter: 2 x Espresso"
+    },
+    "018B": {
+      "name": "Product_2_x_Coffee",
+      "description": "Community-verified beverage counter: 2 x Coffee"
+    }
+  },
+  "verified_offsets": {
+    "products": [
+      {
+        "name": "Ristretto",
+        "addr": 1,
+        "addr_hex": "0x0001",
+        "is_double": false
+      },
+      {
+        "name": "Espresso",
+        "addr": 384,
+        "addr_hex": "0x0180",
+        "is_double": false
+      },
+      {
+        "name": "Coffee",
+        "addr": 386,
+        "addr_hex": "0x0182",
+        "is_double": false
+      },
+      {
+        "name": "2 x Espresso",
+        "addr": 393,
+        "addr_hex": "0x0189",
+        "is_double": true
+      },
+      {
+        "name": "Hot water",
+        "addr": 392,
+        "addr_hex": "0x0188",
+        "is_double": false
+      },
+      {
+        "name": "2 x Coffee",
+        "addr": 395,
+        "addr_hex": "0x018B",
+        "is_double": true
+      }
+    ],
+    "maintenance": [
+      {
+        "name": "Cleaning operations",
+        "addr": 8,
+        "addr_hex": "0x0008"
+      },
+      {
+        "name": "Filter change",
+        "addr": 34,
+        "addr_hex": "0x0022"
+      },
+      {
+        "name": "Descaling operations",
+        "addr": 9,
+        "addr_hex": "0x0009"
+      },
+      {
+        "name": "Coffee system rinsing operations",
+        "addr": 7,
+        "addr_hex": "0x0007"
+      }
+    ],
+    "maintenance_pct": [
+      {
+        "name": "Cleaning",
+        "addr": 46,
+        "addr_hex": "0x002E",
+        "byte": "low",
+        "joe_pct": 100,
+        "eeprom_word_hex": "0x3C64",
+        "confidence": "medium"
+      },
+      {
+        "name": "Descaling",
+        "addr": 46,
+        "addr_hex": "0x002E",
+        "byte": "low",
+        "joe_pct": 100,
+        "eeprom_word_hex": "0x3C64",
+        "confidence": "medium"
+      }
+    ]
+  }
+}
