@@ -201,17 +201,33 @@ class JuraDriver(BaseApplianceDriver):
             raw_telemetry=summary
         )
 
-    def test_actuator(self, conn: Any, actuator_id: str, param: Any = None) -> bool:
-        """Send technician test mode actuator commands (AN:20, etc.)."""
+    def test_actuator(
+        self,
+        conn: Any,
+        actuator_id: str,
+        param: Any = None,
+        *,
+        confirm_lab_test: bool = False,
+    ) -> bool:
+        """Send explicitly confirmed technician bench test commands (AN:20, AN:21, FA:08)."""
+        if not confirm_lab_test:
+            return False
+        cmd_map = {
+            "enter_test_mode": "AN:20",
+            "exit_test_mode": "AN:21",
+            "pulse_pump": "FA:08",
+        }
+        cmd = cmd_map.get(actuator_id)
+        if not cmd:
+            return False
         try:
-            if actuator_id == "enter_test_mode":
-                resp = conn.query_ascii("AN:20", timeout=1.0)
-                return bool(resp and "ok" in resp.lower())
-            elif actuator_id == "exit_test_mode":
-                resp = conn.query_ascii("AN:21", timeout=1.0)
-                return bool(resp and "ok" in resp.lower())
-            elif actuator_id == "pulse_pump":
-                resp = conn.query_ascii("FA:08", timeout=1.0)
+            import serial_io
+            if hasattr(conn, "query_unsafe_lab_command"):
+                resp = conn.query_unsafe_lab_command(
+                    cmd,
+                    confirm_token=serial_io.LAB_WRITE_CONFIRM_TOKEN,
+                    timeout=1.0,
+                )
                 return bool(resp and "ok" in resp.lower())
         except Exception:
             pass

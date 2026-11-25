@@ -43,16 +43,18 @@ pub fn correlate_with_joe_export(
 
         // 2. 32-bit big-endian double-word match (e.g. GIGA / Commercial lines)
         for (&addr, &high_val) in eeprom {
-            if let Some(&low_val) = eeprom.get(&(addr + 1)) {
-                let combined = ((high_val as u32) << 16) | (low_val as u32);
-                if combined == target_count {
-                    results.push(CorrelationCandidate {
-                        beverage_name: name.clone(),
-                        ground_truth_count: target_count,
-                        matched_address: addr,
-                        matched_value: combined,
-                        is_32bit_counter: true,
-                    });
+            if let Some(next_addr) = addr.checked_add(1) {
+                if let Some(&low_val) = eeprom.get(&next_addr) {
+                    let combined = ((high_val as u32) << 16) | (low_val as u32);
+                    if combined == target_count {
+                        results.push(CorrelationCandidate {
+                            beverage_name: name.clone(),
+                            ground_truth_count: target_count,
+                            matched_address: addr,
+                            matched_value: combined,
+                            is_32bit_counter: true,
+                        });
+                    }
                 }
             }
         }
@@ -88,13 +90,7 @@ pub fn score_address_for_category(addr: u16, category: &str) -> u32 {
                 10
             }
         }
-        "cockpit" => {
-            if (0x0160..=0x016F).contains(&addr) || (0x01E0..=0x01EF).contains(&addr) {
-                100
-            } else {
-                10
-            }
-        }
+        "cockpit" if (0x0160..=0x016F).contains(&addr) || (0x01E0..=0x01EF).contains(&addr) => 100,
         _ => 10,
     }
 }

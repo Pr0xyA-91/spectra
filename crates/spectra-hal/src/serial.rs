@@ -49,6 +49,21 @@ impl SerialTransport {
             .open_native_async()
             .map_err(|e| HalError::HardwareFault(format!("Failed to open serial port {}: {e}", config.port_path)))?;
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let fd = stream.as_raw_fd();
+            let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+            if rc != 0 {
+                let err = std::io::Error::last_os_error();
+                drop(stream);
+                return Err(HalError::HardwareFault(format!(
+                    "Serial port {} is locked by another process: {err}",
+                    config.port_path
+                )));
+            }
+        }
+
         Ok(Self { config, stream })
     }
 
@@ -98,18 +113,21 @@ impl Transport for SerialTransport {
         inter_byte_delay: Option<Duration>,
     ) -> BoxFuture<'a, HalResult<()>> {
         Box::pin(async move {
-            let timeout = self.config.timeout;
             let delay_opt = inter_byte_delay.or(self.config.inter_byte_delay);
+            let pacing_total = delay_opt
+                .map(|d| d.saturating_mul(payload.len().saturating_sub(1) as u32))
+                .unwrap_or(Duration::ZERO);
+            let timeout = self.config.timeout.saturating_add(pacing_total);
             let write_fut = async {
                 if let Some(delay) = delay_opt {
                     if !delay.is_zero() {
                         for (i, &b) in payload.iter().enumerate() {
                             self.stream.write_all(&[b]).await?;
-                            self.stream.flush().await?;
                             if i + 1 < payload.len() {
                                 tokio::time::sleep(delay).await;
                             }
                         }
+                        self.stream.flush().await?;
                         return Ok::<(), std::io::Error>(());
                     }
                 }

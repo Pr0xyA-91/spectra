@@ -4,15 +4,15 @@
   "version": "0.1.0",
   "identifier": "com.spectra.diagnostics",
   "build": {
-    "frontendDist": "../web/dist",
+    "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ../web run dev",
-    "beforeBuildCommand": "npm --prefix ../web run build"
+    "beforeDevCommand": "npm --prefix ../../web run dev",
+    "beforeBuildCommand": "npm --prefix ../../web run build"
   },
   "app": {
     "windows": [
       {
-        "title": "SPECTRA — Universal Hardware Diagnostics (Build 20261104.1418)",
+        "title": "SPECTRA — Universal Hardware Diagnostics (Build 20261125.1535)",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
@@ -22,14 +22,14 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "icon": [
-      "../icon.png"
+      "../../icon.png"
     ]
   }
 }

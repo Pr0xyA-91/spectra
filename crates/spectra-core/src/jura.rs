@@ -64,7 +64,7 @@ pub fn decode_jura_date_word(val: u16) -> Option<(u16, u8, u8)> {
     if !(1..=12).contains(&month) || day < 1 {
         return None;
     }
-    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let is_leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let max_day = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -271,18 +271,55 @@ pub enum JuraResponse {
 pub struct JuraProtocol;
 
 impl JuraProtocol {
-    /// Validates commands against accidental power shutdown (`AN:`) or destructive EEPROM reset (`FA:`)
+    /// Strict read-only diagnostic command allowlist (mirrors `serial_io.SAFE_READ_PREFIXES`).
+    pub const SAFE_READ_PREFIXES: &'static [&'static str] = &[
+        "TY:", "IC:", "HZ:", "CS:", "AS:", "RT:", "RE:", "TL:",
+        "TY$:", "TL$:", "TP$:", "T1$:", "T2$:", "T3$:", "TX$:", "TZ$:",
+        "EX$:", "CS$:", "HZ$:", "RE$:", "RT$:", "DS$:", "GS$:", "SS$:",
+        "ST$:", "IC$:", "RR$:", "AS$:",
+        "@T0", "@T1", "@T2:", "@T3", "@TR:", "@TG:", "@TF:", "@TM:",
+    ];
+
+    /// Validates that a hardware command is a single-line, printable ASCII
+    /// read-only diagnostic query. Rejects standby/reset/EEPROM-write commands
+    /// and any unlisted actuator or service command (e.g. `FN:`, `PA:`, `S0:`).
     pub fn validate_safety(raw_cmd: &str) -> Result<(), CoreError> {
-        let clean = raw_cmd.trim().to_uppercase();
-        if clean == "AN:" || clean == "AN" || clean == "AN:01" {
+        // Strip at most one trailing line terminator so embedded CRLF injection fails below.
+        let stripped = if let Some(s) = raw_cmd.strip_suffix("\r\n") {
+            s
+        } else if let Some(s) = raw_cmd.strip_suffix('\r').or_else(|| raw_cmd.strip_suffix('\n')) {
+            s
+        } else {
+            raw_cmd
+        }
+        .trim_matches(' ');
+
+        if stripped.is_empty() {
             return Err(CoreError::SafetyViolation(
-                "Bare 'AN:' / 'AN:01' triggers hardware standby toggle and powers off machine".into(),
+                "Empty command is forbidden".into(),
             ));
         }
-        if clean == "FA:" || clean == "FA" {
+        if stripped.len() > 64 {
+            return Err(CoreError::SafetyViolation(format!(
+                "Command exceeds 64-byte limit ({} bytes)",
+                stripped.len()
+            )));
+        }
+        if stripped.bytes().any(|b| !(0x20..0x7F).contains(&b)) {
             return Err(CoreError::SafetyViolation(
-                "Bare 'FA:' command triggers factory reset wiping all lifetime counters".into(),
+                "Command contains control characters or non-ASCII bytes".into(),
             ));
+        }
+        let clean = stripped.to_ascii_uppercase();
+        if clean == "AN" || clean.starts_with("AN:") {
+            return Err(CoreError::SafetyViolation(format!(
+                "Prohibited 'AN' / 'AN:' command '{clean}' triggers hardware standby / powers off machine"
+            )));
+        }
+        if clean == "FA" || clean.starts_with("FA:") {
+            return Err(CoreError::SafetyViolation(format!(
+                "Prohibited 'FA' / 'FA:' command '{clean}' triggers factory reset or unverified service action"
+            )));
         }
         if clean.starts_with("WE:")
             || clean.starts_with("WT:")
@@ -291,6 +328,14 @@ impl JuraProtocol {
         {
             return Err(CoreError::SafetyViolation(format!(
                 "Command '{clean}' mutates EEPROM; forbidden in read-only telemetry profile"
+            )));
+        }
+        if !Self::SAFE_READ_PREFIXES
+            .iter()
+            .any(|prefix| clean.starts_with(prefix))
+        {
+            return Err(CoreError::SafetyViolation(format!(
+                "Command '{clean}' is not in the strict read-only telemetry allowlist"
             )));
         }
         Ok(())
@@ -345,9 +390,9 @@ impl JuraProtocol {
     /// Decodes complete 4-byte 4:1 Jura carrier groups into raw payload bytes,
     /// returning `(decoded_bytes, remaining_tail_bytes)`.
     pub fn decode_wire_bytes(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let complete_groups = raw.len() / 4;
-        let mut decoded = Vec::with_capacity(complete_groups);
-        for chunk in raw[..complete_groups * 4].chunks_exact(4) {
+        let (chunks, remainder_slice) = raw.as_chunks::<4>();
+        let mut decoded = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
             let mut b = 0u8;
             for (i, &r) in chunk.iter().enumerate() {
                 let bit0 = (r >> 2) & 1;
@@ -357,22 +402,21 @@ impl JuraProtocol {
             }
             decoded.push(b);
         }
-        let remainder = raw[complete_groups * 4..].to_vec();
-        (decoded, remainder)
+        (decoded, remainder_slice.to_vec())
     }
 
     /// Decodes a 4:1 Jura wire buffer (`4 * N` bytes) back into an ASCII string
     pub fn decode_wire_frame(raw: &[u8]) -> HalResult<String> {
-        if raw.len() % 4 != 0 {
+        if !raw.len().is_multiple_of(4) {
             return Err(HalError::EncodingError {
                 index: raw.len(),
                 raw: *raw.last().unwrap_or(&0),
             });
         }
         let mut decoded = Vec::with_capacity(raw.len() / 4);
-        for chunk in raw.chunks_exact(4) {
-            let quad: [u8; 4] = [chunk[0], chunk[1], chunk[2], chunk[3]];
-            decoded.push(jura_codec::decode_quad(&quad)?);
+        let (chunks, _) = raw.as_chunks::<4>();
+        for quad in chunks {
+            decoded.push(jura_codec::decode_quad(quad)?);
         }
         Ok(String::from_utf8_lossy(&decoded).into_owned())
     }
@@ -450,7 +494,7 @@ impl JuraProtocol {
         }
 
         let status = parts[0];
-        let is_busy = status.chars().next() == Some('1');
+        let is_busy = status.starts_with('1');
         let bu_initialized = status.chars().nth(1) == Some('1');
         let valve_busy = status.chars().nth(2) == Some('1');
         let beans_charged = status.chars().nth(3) == Some('1');
@@ -476,7 +520,7 @@ impl JuraProtocol {
         })?;
 
         let cuts = parts[7];
-        let drip_tray_missing = cuts.chars().next() == Some('1');
+        let drip_tray_missing = cuts.starts_with('1');
         let grounds_full = cuts.chars().nth(1) == Some('1');
         let water_tank_empty = cuts.chars().nth(2) == Some('1');
         let mcu_heartbeat_tick = cuts.chars().nth(3) == Some('1');
@@ -850,7 +894,11 @@ pub fn diff_eeprom_blocks(
         let base = baseline[i];
         let cur = current[i];
         if base != cur {
-            diffs.push(EepromWordDiff::new(start_addr + i as u16, base, cur));
+            if let Ok(offset) = u16::try_from(i) {
+                if let Some(addr) = start_addr.checked_add(offset) {
+                    diffs.push(EepromWordDiff::new(addr, base, cur));
+                }
+            }
         }
     }
     diffs
@@ -944,7 +992,10 @@ impl<T: Transport> JuraClient<T> {
             .await?;
 
         let start = std::time::Instant::now();
+        const MAX_FRAME_BYTES: usize = 16384;
         let mut raw_buf = Vec::with_capacity(256);
+        let mut decoded_bytes = Vec::with_capacity(64);
+        let mut decoded_groups: usize = 0;
 
         loop {
             if start.elapsed() >= self.timeout {
@@ -956,28 +1007,48 @@ impl<T: Transport> JuraClient<T> {
             if n == 0 {
                 break;
             }
+            if raw_buf.len().saturating_add(n) > MAX_FRAME_BYTES {
+                return Err(HalError::HardwareFault(format!(
+                    "Response frame exceeded {MAX_FRAME_BYTES} byte limit"
+                )));
+            }
             raw_buf.extend_from_slice(&chunk[..n]);
 
             if self.obfuscate_4byte {
-                if raw_buf.len() >= 4 && raw_buf.len() % 4 == 0 {
-                    if let Ok(decoded) = JuraProtocol::decode_wire_frame(&raw_buf) {
-                        if decoded.ends_with("\r\n")
-                            || decoded.ends_with('\n')
-                            || decoded.ends_with('\r')
-                        {
-                            break;
-                        }
-                    }
+                let total_groups = raw_buf.len() / 4;
+                while decoded_groups < total_groups {
+                    let base = decoded_groups * 4;
+                    let quad = [
+                        raw_buf[base],
+                        raw_buf[base + 1],
+                        raw_buf[base + 2],
+                        raw_buf[base + 3],
+                    ];
+                    decoded_bytes.push(jura_codec::decode_quad(&quad)?);
+                    decoded_groups += 1;
                 }
-            } else if let Ok(s) = std::str::from_utf8(&raw_buf) {
-                if s.ends_with("\r\n") || s.ends_with('\n') || s.ends_with('\r') {
+                if decoded_bytes.ends_with(b"\r\n")
+                    || decoded_bytes.ends_with(b"\n")
+                    || decoded_bytes.ends_with(b"\r")
+                {
                     break;
                 }
+            } else if (raw_buf.contains(&b'\n') || raw_buf.contains(&b'\r'))
+                && std::str::from_utf8(&raw_buf)
+                    .is_ok_and(|s| s.ends_with("\r\n") || s.ends_with('\n') || s.ends_with('\r'))
+            {
+                break;
             }
         }
 
         let decoded_str = if self.obfuscate_4byte {
-            JuraProtocol::decode_wire_frame(&raw_buf)?
+            if !raw_buf.len().is_multiple_of(4) {
+                return Err(HalError::EncodingError {
+                    index: raw_buf.len(),
+                    raw: *raw_buf.last().unwrap_or(&0),
+                });
+            }
+            String::from_utf8_lossy(&decoded_bytes).into_owned()
         } else {
             String::from_utf8_lossy(&raw_buf).to_string()
         };
@@ -1068,12 +1139,77 @@ mod tests {
 
     #[test]
     fn test_safety_invariants_reject_bare_power_and_reset() {
-        assert!(JuraProtocol::validate_safety("AN:").is_err());
-        assert!(JuraProtocol::validate_safety("AN:01").is_err());
-        assert!(JuraProtocol::validate_safety("FA:\r\n").is_err());
-        assert!(JuraProtocol::validate_safety("WE:0030,1234").is_err());
-        assert!(JuraProtocol::validate_safety("AN:0B").is_ok());
-        assert!(JuraProtocol::validate_safety("FA:08").is_ok());
+        assert!(matches!(
+            JuraProtocol::validate_safety("AN:"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("AN:01"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("AN:0B"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("FA:01"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("FA:\r\n"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("WE:0030,1234"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("TY:\r\nWE:0030,FFFF"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("TY:\nAN:"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("@T0\r\n@tw:00"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety(""),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("TY:\x00"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        // Unlisted actuator / service / write commands must be rejected by strict allowlist
+        assert!(matches!(
+            JuraProtocol::validate_safety("FN:01"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("PA:00"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("S0:01"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("TS$:4,01"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+        assert!(matches!(
+            JuraProtocol::validate_safety("TY:00000000000000000000000000000000000000000000000000000000000000000"),
+            Err(CoreError::SafetyViolation(_))
+        ));
+
+        assert_eq!(JuraProtocol::validate_safety("TY:"), Ok(()));
+        assert_eq!(JuraProtocol::validate_safety("HZ:"), Ok(()));
+        assert_eq!(JuraProtocol::validate_safety("RT:0000"), Ok(()));
+        assert_eq!(JuraProtocol::validate_safety("TY$:"), Ok(()));
+        assert_eq!(JuraProtocol::validate_safety("@TF:"), Ok(()));
     }
 
     #[test]

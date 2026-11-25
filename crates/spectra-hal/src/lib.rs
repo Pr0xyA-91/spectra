@@ -81,10 +81,10 @@ pub mod jura_codec {
     /// Encodes 1 ASCII byte into 4 UART wire bytes (2 payload bits per wire byte at bit 2 & bit 5)
     pub fn encode_byte(byte: u8) -> [u8; 4] {
         let mut out = [BASE_MASK; 4];
-        for i in 0..4 {
+        for (i, slot) in out.iter_mut().enumerate() {
             let b0 = (byte >> (i * 2)) & 0x01;
             let b1 = (byte >> (i * 2 + 1)) & 0x01;
-            out[i] = (BASE_MASK & !((1 << 2) | (1 << 5))) | (b0 << 2) | (b1 << 5);
+            *slot = (BASE_MASK & !((1 << 2) | (1 << 5))) | (b0 << 2) | (b1 << 5);
         }
         out
     }

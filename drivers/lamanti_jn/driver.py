@@ -99,7 +99,7 @@ class LamantiJNDriver(BaseApplianceDriver):
             req = self._build_jetinno_frame(board_id=0x01, cmd=0x14, payload=b"\x00\x00")
             conn.write(req)
             resp = conn.read(32, timeout_sec=0.6)
-            if resp and len(resp) >= 6 and (resp[0] == 0xFE or resp[0] == 0xFA):
+            if resp and len(resp) >= 6 and (resp[0] == 0xFE or resp[0] == 0xFA) and verify_jetinno_crc(resp):
                 model_name = "Lamanti-JN (Jetinno Commercial)"
                 return ApplianceIdentification(
                     vendor="Lamanti-JN",
@@ -128,7 +128,7 @@ class LamantiJNDriver(BaseApplianceDriver):
             resp = conn.read(64, timeout_sec=0.8)
 
             is_demo_conn = bool(getattr(conn, "is_demo", False))
-            got_frame = bool(resp and len(resp) >= 10 and resp[0] == 0xFE)
+            got_frame = bool(resp and len(resp) >= 10 and resp[0] == 0xFE and verify_jetinno_crc(resp))
 
             door_closed = True
             cup_detected = False
@@ -346,7 +346,9 @@ class LamantiJNDriver(BaseApplianceDriver):
         if progress_cb:
             progress_cb(0.35, "Extracting recipe dispense counters...")
 
-        # Vending / Commercial recipe counter list
+        is_demo_conn = bool(getattr(conn, "is_demo", False))
+
+        # Vending / Commercial recipe counter list (sample counts only on simulated demo connections)
         beverage_specs = [
             ("espresso", "Espresso", 18450),
             ("double_espresso", "Double Espresso", 4920),
@@ -362,10 +364,11 @@ class LamantiJNDriver(BaseApplianceDriver):
         ]
 
         beverages = [
-            BeverageCounter(code=b[0], name=b[1], count=b[2])
+            BeverageCounter(code=b[0], name=b[1], count=b[2] if is_demo_conn else 0)
             for b in beverage_specs
         ]
         total_cups = sum(b.count for b in beverages if b.code != "hot_water")
+        hot_water_cnt = sum(b.count for b in beverages if b.code == "hot_water")
 
         if progress_cb:
             progress_cb(0.65, "Querying component life metrics...")
@@ -380,7 +383,12 @@ class LamantiJNDriver(BaseApplianceDriver):
         ]
 
         maintenance = [
-            MaintenanceMetric(name=m[0], count=m[1], percent=m[2], warning=m[3])
+            MaintenanceMetric(
+                name=m[0],
+                count=m[1] if is_demo_conn else 0,
+                percent=m[2] if is_demo_conn else None,
+                warning=m[3],
+            )
             for m in maintenance_specs
         ]
 
@@ -397,7 +405,7 @@ class LamantiJNDriver(BaseApplianceDriver):
             model=ident.model,
             identification=ident,
             total_cups=total_cups,
-            total_preparations=total_cups + 1920,
+            total_preparations=total_cups + hot_water_cnt,
             beverages=beverages,
             maintenance=maintenance,
             switches=ls.get("switches", []),

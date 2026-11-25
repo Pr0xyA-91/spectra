@@ -8,6 +8,7 @@ across Windows (`spectra_update.exe --silent --relaunch`) and Linux (git ff-only
 pull or verified GitHub source tarball extraction + process restart).
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -38,7 +39,9 @@ PUBLIC_GIT_URL = f"https://github.com/{PUBLIC_REPO}.git"
 
 WINDOWS_UPDATER_ASSET_NAME = "spectra_update.exe"
 MIN_UPDATER_EXE_BYTES = 512 * 1024  # 512 KB sanity floor against HTML/error payloads
+MAX_HTTP_METADATA_BYTES = 2 * 1024 * 1024  # 2 MB cap on metadata/manifest fetches
 CHECK_CACHE_TTL_SEC = 300.0
+RELEASE_MANIFEST_DOMAIN_PREFIX = b"SPECTRA-RELEASE-MANIFEST-V1\n"
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,6 +51,8 @@ _PRESERVED_USER_ITEMS: Set[str] = {
     "ui_prefs.json",
     "local_overrides.json",
     "offsets_overrides.json",
+    "synced_offsets_db.json",
+    "offsets_trusted_keys.json",
     ".env",
     "captures",
     "models",
@@ -67,6 +72,17 @@ _LINUX_EXECUTABLE_SCRIPTS: Tuple[str, ...] = (
     "cli.py",
     "gui.py",
     "SPECTRA.desktop",
+)
+
+# Strictly app-owned obsolete files safe to prune after a successful update.
+# Never includes user runtime state, logs, captures, overrides, or unknown files.
+_RETIRED_APP_FILES: Tuple[str, ...] = (
+    "wrat_engine.py",
+    "CHANGELOG_CS.pdf",
+    os.path.join("web", "public", "favicon.ico"),
+    os.path.join("web", "public", "icon.png"),
+    os.path.join("web", "public", "logo.svg"),
+    os.path.join("docs", "brand", "spectra_logo.svg"),
 )
 
 _state_lock = threading.Lock()
@@ -173,8 +189,14 @@ def get_local_build() -> str:
         return "0"
 
 
-def _http_get_bytes(url: str, timeout: float = 4.0, headers: Optional[Dict[str, str]] = None) -> bytes:
-    """Fetch raw bytes over verified HTTPS with Windows SChannel fallback when needed."""
+def _http_get_bytes(
+    url: str,
+    timeout: float = 4.0,
+    headers: Optional[Dict[str, str]] = None,
+    max_bytes: int = MAX_HTTP_METADATA_BYTES,
+) -> bytes:
+    """Fetch raw bytes over verified HTTPS with redirect host validation, size cap, and Windows SChannel fallback."""
+    url = _validate_download_url(url)
     req_headers = {
         "User-Agent": f"SPECTRA-Updater/{get_local_build() or '0'}",
         "Cache-Control": "no-cache",
@@ -183,17 +205,31 @@ def _http_get_bytes(url: str, timeout: float = 4.0, headers: Optional[Dict[str, 
         req_headers.update(headers)
     req = urllib.request.Request(url, headers=req_headers)
     ctx = tls_utils.get_ssl_context()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ctx),
+        _SafeRedirectHandler(),
+    )
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-            return resp.read()
+        with opener.open(req, timeout=timeout) as resp:
+            data = resp.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise UpdateError(f"Remote metadata response exceeded maximum size ({max_bytes} bytes)")
+            return data
     except urllib.error.URLError as exc:
         if _current_platform() == "windows" and isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError):
             tmp_fd, tmp_path = tempfile.mkstemp(prefix="spectra_meta_")
             os.close(tmp_fd)
             try:
-                tls_utils.windows_schannel_download(url, tmp_path, timeout_sec=max(timeout, 10.0))
+                tls_utils.windows_schannel_download(
+                    url,
+                    tmp_path,
+                    timeout_sec=max(timeout, 10.0),
+                    allowed_hosts=_ALLOWED_DOWNLOAD_HOSTS,
+                )
+                if os.path.getsize(tmp_path) > max_bytes:
+                    raise UpdateError(f"Remote metadata response exceeded maximum size ({max_bytes} bytes)")
                 with open(tmp_path, "rb") as f:
-                    return f.read()
+                    return f.read(max_bytes + 1)
             finally:
                 try:
                     os.remove(tmp_path)
@@ -218,9 +254,50 @@ def _extract_release_notes_snippet(body: str, max_chars: int = 900) -> str:
     return text[:max_chars].rstrip() + "..."
 
 
+def verify_release_manifest_signature(
+    manifest: Dict[str, Any],
+    trusted_keys: Optional[Dict[str, bytes]] = None,
+) -> Tuple[bool, str]:
+    """
+    Verify Ed25519 signature on `release_manifest.json` using `offset_db_sync`.
+    - When `trusted_keys` is non-empty: fail-closed, requires valid `key_id` + `signature_b64`.
+    - When `trusted_keys` is empty (pre-pinning transitional mode): allows unsigned manifests
+      (`unsigned_transitional`), but rejects any manifest claiming a signature without a trusted key.
+    """
+    if not isinstance(manifest, dict):
+        return False, "Manifest must be a JSON object"
+    import offset_db_sync
+    keys = trusted_keys if trusted_keys is not None else offset_db_sync.get_trusted_public_keys()
+    sig_b64 = str(manifest.get("signature_b64") or "").strip()
+    key_id = str(manifest.get("key_id") or "").strip()
+
+    if not keys:
+        if sig_b64:
+            return False, "Untrusted key_id"
+        return True, "unsigned_transitional"
+
+    if not key_id or not sig_b64:
+        return False, "Missing key_id or signature_b64 on release_manifest.json"
+    pubkey = keys.get(key_id)
+    if pubkey is None:
+        return False, f"Untrusted key_id: {key_id!r}"
+    try:
+        sig = base64.b64decode(sig_b64, validate=True)
+    except Exception:
+        return False, "Malformed base64 signature_b64 in release_manifest.json"
+    msg = RELEASE_MANIFEST_DOMAIN_PREFIX + offset_db_sync.canonical_json_bytes(manifest)
+    if not offset_db_sync.ed25519_verify(pubkey, msg, sig):
+        return False, "Invalid Ed25519 signature on release_manifest.json"
+    return True, "verified"
+
+
 def _fetch_manifest(url: str, timeout: float) -> Optional[Dict[str, Any]]:
     try:
-        return _fetch_json(url, timeout=timeout, accept_github=False)
+        data = _fetch_json(url, timeout=timeout, accept_github=False)
+        ok, _reason = verify_release_manifest_signature(data)
+        if not ok:
+            return None
+        return data
     except Exception:
         return None
 
@@ -274,6 +351,9 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
         win_asset_url = ""
         win_asset_size = 0
         win_asset_sha = ""
+        linux_asset_url = ""
+        linux_asset_size = 0
+        linux_asset_sha = ""
         manifest_asset_url = ""
 
         for asset in assets:
@@ -283,6 +363,9 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
             if aname == WINDOWS_UPDATER_ASSET_NAME:
                 win_asset_url = str(asset.get("browser_download_url") or "")
                 win_asset_size = int(asset.get("size") or 0)
+            elif aname in ("spectra_linux.tar.gz", "linux_tarball"):
+                linux_asset_url = str(asset.get("browser_download_url") or "")
+                linux_asset_size = int(asset.get("size") or 0)
             elif aname == "release_manifest.json":
                 manifest_asset_url = str(asset.get("browser_download_url") or "")
 
@@ -290,17 +373,30 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
             manifest_data = _fetch_manifest(manifest_asset_url, timeout=min(timeout, 3.5))
             if manifest_data:
                 assets_map = manifest_data.get("assets") or {}
-                if isinstance(assets_map, dict) and WINDOWS_UPDATER_ASSET_NAME in assets_map:
-                    wmeta = assets_map[WINDOWS_UPDATER_ASSET_NAME] or {}
-                    win_asset_sha = str(wmeta.get("sha256") or "")
-                    if not win_asset_size and wmeta.get("size"):
-                        win_asset_size = int(wmeta["size"])
+                if isinstance(assets_map, dict):
+                    if WINDOWS_UPDATER_ASSET_NAME in assets_map:
+                        wmeta = assets_map[WINDOWS_UPDATER_ASSET_NAME] or {}
+                        win_asset_sha = str(wmeta.get("sha256") or "")
+                        if not win_asset_size and wmeta.get("size"):
+                            win_asset_size = int(wmeta["size"])
+                    for lkey in ("spectra_linux.tar.gz", "linux_tarball"):
+                        if lkey in assets_map and isinstance(assets_map[lkey], dict):
+                            lmeta = assets_map[lkey]
+                            linux_asset_sha = str(lmeta.get("sha256") or "")
+                            if not linux_asset_size and lmeta.get("size"):
+                                linux_asset_size = int(lmeta["size"])
+                            if not linux_asset_url and lmeta.get("url"):
+                                linux_asset_url = str(lmeta["url"])
+                            break
 
         if tag_build:
             linux_tarball_url = (
-                f"https://github.com/{PUBLIC_REPO}/archive/refs/tags/{tag_name}.tar.gz"
-                if tag_name
-                else RAW_LINUX_TARBALL_URL
+                linux_asset_url
+                or (
+                    f"https://github.com/{PUBLIC_REPO}/archive/refs/tags/{tag_name}.tar.gz"
+                    if tag_name
+                    else RAW_LINUX_TARBALL_URL
+                )
             )
             gh_release_candidate = {
                 "build": tag_build,
@@ -314,8 +410,8 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                 "download_url": (win_asset_url or RAW_WIN_UPDATER_URL)
                 if platform_name == "windows"
                 else linux_tarball_url,
-                "expected_sha256": win_asset_sha if platform_name == "windows" else "",
-                "expected_size": win_asset_size if platform_name == "windows" else 0,
+                "expected_sha256": win_asset_sha if platform_name == "windows" else linux_asset_sha,
+                "expected_size": win_asset_size if platform_name == "windows" else linux_asset_size,
             }
             candidates.append(gh_release_candidate)
     except urllib.error.HTTPError as exc:
@@ -341,12 +437,23 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
         if m_build:
             assets_map = manifest_data.get("assets") or {}
             wmeta = assets_map.get(WINDOWS_UPDATER_ASSET_NAME, {}) if isinstance(assets_map, dict) else {}
-            m_sha = str(wmeta.get("sha256") or "") if platform_name == "windows" else ""
-            m_size = int(wmeta.get("size") or 0) if platform_name == "windows" else 0
-            # Backfill verified SHA-256 / size onto github_release candidate when matching build lacks attachment metadata
+            lmeta: Dict[str, Any] = {}
+            if isinstance(assets_map, dict):
+                for lkey in ("spectra_linux.tar.gz", "linux_tarball"):
+                    if isinstance(assets_map.get(lkey), dict):
+                        lmeta = assets_map[lkey]
+                        break
+            if platform_name == "windows":
+                m_sha = str(wmeta.get("sha256") or "")
+                m_size = int(wmeta.get("size") or 0)
+                m_dl_url = str(wmeta.get("url") or RAW_WIN_UPDATER_URL)
+            else:
+                m_sha = str(lmeta.get("sha256") or "")
+                m_size = int(lmeta.get("size") or 0)
+                m_dl_url = str(lmeta.get("url") or RAW_LINUX_TARBALL_URL)
+            # Backfill verified SHA-256 / size / asset URL onto github_release candidate when matching build lacks attachment metadata
             if (
                 gh_release_candidate is not None
-                and platform_name == "windows"
                 and gh_release_candidate.get("build") == m_build
                 and not gh_release_candidate.get("expected_sha256")
                 and m_sha
@@ -354,6 +461,8 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                 gh_release_candidate["expected_sha256"] = m_sha
                 if not gh_release_candidate.get("expected_size") and m_size:
                     gh_release_candidate["expected_size"] = m_size
+                if platform_name != "windows" and lmeta.get("url"):
+                    gh_release_candidate["download_url"] = str(lmeta["url"])
             candidates.append(
                 {
                     "build": m_build,
@@ -364,9 +473,7 @@ def check_for_updates(force: bool = False, timeout: float = 4.0) -> Dict[str, An
                     "release_url": f"https://github.com/{PUBLIC_REPO}/releases",
                     "release_notes": _extract_release_notes_snippet(str(manifest_data.get("release_notes") or "")),
                     "published_at": str(manifest_data.get("published_at") or ""),
-                    "download_url": str(wmeta.get("url") or RAW_WIN_UPDATER_URL)
-                    if platform_name == "windows"
-                    else RAW_LINUX_TARBALL_URL,
+                    "download_url": m_dl_url,
                     "expected_sha256": m_sha,
                     "expected_size": m_size,
                 }
@@ -452,6 +559,7 @@ _ALLOWED_DOWNLOAD_HOSTS = {
     "objects.githubusercontent.com",
     "codeload.github.com",
     "release-assets.githubusercontent.com",
+    "api.github.com",
 }
 
 
@@ -464,6 +572,14 @@ def _validate_download_url(url: str) -> str:
     if parsed.scheme != "https" or host not in _ALLOWED_DOWNLOAD_HOSTS:
         raise UpdateError(f"Untrusted update download URL rejected: {url}")
     return url.strip()
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validate every HTTP 3xx redirect target against _ALLOWED_DOWNLOAD_HOSTS and HTTPS."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def verify_windows_updater_binary(
@@ -521,6 +637,10 @@ def _download_file_with_progress(
         },
     )
     ctx = tls_utils.get_ssl_context()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ctx),
+        _SafeRedirectHandler(),
+    )
 
     def _on_schannel_progress(bytes_read: int) -> None:
         pct = 5
@@ -534,7 +654,7 @@ def _download_file_with_progress(
         )
 
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             hdr_len = int(resp.headers.get("Content-Length") or 0)
             content_len = hdr_len or expected_size or 0
             downloaded = 0
@@ -570,6 +690,7 @@ def _download_file_with_progress(
                 cancel_check=_cancel_event.is_set,
                 progress_cb=_on_schannel_progress,
                 timeout_sec=1800.0,
+                allowed_hosts=_ALLOWED_DOWNLOAD_HOSTS,
             )
             if _cancel_event.is_set():
                 raise UpdateCancelledError("Update cancelled by user")
@@ -647,8 +768,12 @@ def _safe_extract_tarball(tar_path: str, dest_dir: str) -> str:
             target = os.path.realpath(os.path.join(abs_dest, member.name))
             if target != abs_dest and not target.startswith(abs_dest + os.sep):
                 raise UpdateError(f"Unsafe tarball member path detected: {member.name}")
-        extract_kwargs: Dict[str, Any] = {"filter": "data"} if sys.version_info >= (3, 12) else {}
-        tf.extractall(abs_dest, **extract_kwargs)
+            if sys.version_info < (3, 12):
+                member.mode &= 0o755
+        if sys.version_info >= (3, 12):
+            tf.extractall(abs_dest, filter="data")
+        else:
+            tf.extractall(abs_dest, members=members)
     extracted_root = os.path.join(abs_dest, root_name) if root_name else abs_dest
     if not os.path.isdir(extracted_root):
         raise UpdateError("Extracted update archive root directory not found")
@@ -737,6 +862,64 @@ def _sync_extracted_tree(src_root: str, dst_root: str) -> None:
             shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
         else:
             shutil.copy2(src_path, dst_path)
+
+    _cleanup_retired_app_files(dst_root)
+
+
+def _cleanup_retired_app_files(dst_root: str) -> List[str]:
+    """
+    Remove strictly known obsolete app-owned files after a successful update.
+    Never follows symlinks and never touches user data or unknown files.
+    """
+    removed: List[str] = []
+    dst_real = os.path.realpath(dst_root)
+
+    def _safe_unlink(rel_path: str) -> None:
+        full_path = os.path.join(dst_root, rel_path)
+        try:
+            if not os.path.lexists(full_path) or os.path.islink(full_path):
+                return
+            if not os.path.isfile(full_path):
+                return
+            if not os.path.realpath(full_path).startswith(dst_real + os.sep):
+                return
+            os.unlink(full_path)
+            removed.append(rel_path)
+        except OSError:
+            pass
+
+    for rel in _RETIRED_APP_FILES:
+        _safe_unlink(rel)
+
+    # Remove now-empty web/public directory if all deduplicated static icons are gone
+    web_public = os.path.join(dst_root, "web", "public")
+    try:
+        if os.path.isdir(web_public) and not os.path.islink(web_public) and not os.listdir(web_public):
+            os.rmdir(web_public)
+    except OSError:
+        pass
+
+    # Prune legacy root-level test_*.py files only when tests/ exists in the updated tree
+    tests_dir = os.path.join(dst_root, "tests")
+    if os.path.isdir(tests_dir) and not os.path.islink(tests_dir):
+        try:
+            for entry in os.listdir(dst_root):
+                if entry.startswith("test_") and entry.endswith(".py"):
+                    _safe_unlink(entry)
+        except OSError:
+            pass
+
+    # Clean up stale compiled bytecode for removed wrat_engine shim
+    pycache_dir = os.path.join(dst_root, "__pycache__")
+    if os.path.isdir(pycache_dir) and not os.path.islink(pycache_dir):
+        try:
+            for entry in os.listdir(pycache_dir):
+                if entry.startswith("wrat_engine.") and entry.endswith(".pyc"):
+                    _safe_unlink(os.path.join("__pycache__", entry))
+        except OSError:
+            pass
+
+    return removed
 
 
 def _git_env() -> Dict[str, str]:
@@ -839,7 +1022,7 @@ def _apply_linux_git_update(info: Dict[str, Any]) -> bool:
         old_remote_sha = old_remote_res.stdout.strip() if old_remote_res.returncode == 0 else ""
 
         _set_state(status="downloading", percent=35, message=f"Fetching Build {target_build} from {matching_remote}...")
-        fetch = _run_git(["fetch", matching_remote, "main"], timeout=90.0)
+        fetch = _run_git(["fetch", matching_remote, "--", "main"], timeout=90.0)
         if fetch.returncode != 0:
             raise UpdateError(f"git fetch {matching_remote} main failed: {(fetch.stderr or fetch.stdout).strip()}")
 
@@ -882,7 +1065,7 @@ def _apply_linux_git_update(info: Dict[str, Any]) -> bool:
     # Case B: No remote matches PUBLIC_REPO (e.g. fork or custom checkout)
     if branch and branch != "HEAD" and "origin" in remotes:
         _set_state(status="downloading", percent=35, message=f"Fetching {branch} from origin...")
-        fetch = _run_git(["fetch", "origin", branch], timeout=90.0)
+        fetch = _run_git(["fetch", "origin", "--", branch], timeout=90.0)
         if fetch.returncode == 0:
             if _cancel_event.is_set():
                 raise UpdateCancelledError("Update cancelled by user")
@@ -903,9 +1086,19 @@ def _apply_linux_git_update(info: Dict[str, Any]) -> bool:
     )
 
 
-def _apply_linux_tarball_update(info: Dict[str, Any]) -> None:
+def _apply_linux_tarball_update(info: Dict[str, Any], require_sha256: bool = True) -> None:
     target_build = str(info.get("latest_build") or "")
     current_build = get_local_build()
+    expected_sha = str(info.get("expected_sha256") or "").strip().lower()
+    expected_size = int(info.get("expected_size") or 0)
+    allow_unverified = os.environ.get("SPECTRA_ALLOW_UNVERIFIED_TARBALL", "").strip() == "1"
+    if require_sha256 and not allow_unverified:
+        if not expected_sha:
+            raise UpdateError(
+                "Refusing to install Linux update tarball without a verified SHA-256 checksum from release_manifest.json."
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            raise UpdateError(f"Invalid expected SHA-256 format in update manifest: {expected_sha!r}")
     stage_dir = tempfile.mkdtemp(prefix="spectra_upd_")
     tar_path = os.path.join(stage_dir, "spectra_main.tar.gz")
     extract_dir = os.path.join(stage_dir, "extracted")
@@ -916,9 +1109,26 @@ def _apply_linux_tarball_update(info: Dict[str, Any]) -> None:
             percent=10,
             message=f"Downloading Build {target_build} source package...",
         )
-        _download_file_with_progress(str(info.get("download_url") or RAW_LINUX_TARBALL_URL), tar_path, timeout=45.0)
+        _download_file_with_progress(
+            str(info.get("download_url") or RAW_LINUX_TARBALL_URL),
+            tar_path,
+            expected_size=expected_size,
+            timeout=45.0,
+        )
         if _cancel_event.is_set():
             raise UpdateCancelledError("Update cancelled by user")
+        if expected_sha:
+            _set_state(status="verifying", percent=80, message="Verifying Linux archive SHA-256 checksum...")
+            sha = hashlib.sha256()
+            with open(tar_path, "rb") as tf_bin:
+                while True:
+                    chunk = tf_bin.read(65536)
+                    if not chunk:
+                        break
+                    sha.update(chunk)
+            actual_sha = sha.hexdigest().lower()
+            if actual_sha != expected_sha:
+                raise UpdateError(f"Linux tarball SHA-256 mismatch: expected {expected_sha}, got {actual_sha}")
         _set_state(status="verifying", percent=82, message="Extracting and verifying archive...")
         src_root = _safe_extract_tarball(tar_path, extract_dir)
 
@@ -930,7 +1140,7 @@ def _apply_linux_tarball_update(info: Dict[str, Any]) -> None:
         if not extracted_build:
             raise UpdateError("Extracted archive version.py does not contain a valid build number")
         if target_build:
-            if extracted_build != target_build and not is_remote_build_newer(current_build, extracted_build):
+            if extracted_build != target_build:
                 raise UpdateError(
                     f"Extracted archive build ({extracted_build}) does not match expected Build {target_build}"
                 )

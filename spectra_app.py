@@ -19,12 +19,90 @@ import sys
 import os
 
 # Safe standard streams when running under pythonw.exe or FreeConsole() on Windows
+import re
 import tempfile
+
+_LOG_SECRET_RE = re.compile(
+    r"(?:gh[pousr]_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,}|"
+    r"(?:Authorization\s*:\s*(?:Bearer|token)\s+)[^\s\"',}]+|"
+    r"(?:access_token[\"']?\s*[:=]\s*[\"']?)[^\"'\s,}]+)",
+    re.IGNORECASE,
+)
+
+
+def _redact_log_text(text: str) -> str:
+    if not text:
+        return ""
+    return _LOG_SECRET_RE.sub("[REDACTED]", str(text))
+
+
+def _get_private_log_dir() -> str:
+    """Return user-private log directory (%LOCALAPPDATA%\\SPECTRA\\logs or ~/.config/spectra/logs)."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+        log_dir = os.path.join(base, "SPECTRA", "logs")
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        base = xdg if xdg else os.path.join(os.path.expanduser("~"), ".config")
+        log_dir = os.path.join(base, "spectra", "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(log_dir, 0o700)
+        return log_dir
+    except Exception:
+        return tempfile.gettempdir()
+
+
+class _RotatingLogStream:
+    """Bounded, thread-safe, token-redacting file stream rotating at max_bytes (256 KiB x 2 backups)."""
+
+    def __init__(self, path: str, max_bytes: int = 256 * 1024, backup_count: int = 2):
+        import threading as _threading
+        self.path = path
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._lock = _threading.Lock()
+
+    def _rotate_if_needed(self) -> None:
+        try:
+            if not os.path.exists(self.path) or os.path.getsize(self.path) < self.max_bytes:
+                return
+            for idx in range(self.backup_count, 0, -1):
+                src = self.path if idx == 1 else f"{self.path}.{idx - 1}"
+                dst = f"{self.path}.{idx}"
+                if os.path.exists(src):
+                    os.replace(src, dst)
+        except Exception:
+            pass
+
+    def write(self, s: str) -> int:
+        if not s:
+            return 0
+        cleaned = _redact_log_text(s)
+        with self._lock:
+            try:
+                self._rotate_if_needed()
+                if os.name != "nt":
+                    fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                        fh.write(cleaned)
+                else:
+                    with open(self.path, "a", encoding="utf-8") as fh:
+                        fh.write(cleaned)
+            except Exception:
+                pass
+        return len(s)
+
+    def flush(self) -> None:
+        pass
+
+
 if sys.platform.startswith("win"):
     try:
-        _log_path = os.path.join(tempfile.gettempdir(), "spectra_app.log")
+        _log_path = os.path.join(_get_private_log_dir(), "spectra_app.log")
         if sys.stdout is None or sys.stderr is None:
-            _log_file = open(_log_path, "a", encoding="utf-8", buffering=1)
+            _log_file = _RotatingLogStream(_log_path)
             if sys.stdout is None:
                 sys.stdout = _log_file
             if sys.stderr is None:
@@ -54,7 +132,6 @@ else:
 
 import time
 import shutil
-import tempfile
 import threading
 import subprocess
 from typing import Optional, List, Tuple, Any, Dict
@@ -511,8 +588,10 @@ def try_launch_pywebview(url: str, port: int, httpd, build_str: str) -> bool:
                 if isinstance(y, int) and -16384 <= y <= 32768:
                     win_state["y"] = y
             os.makedirs(os.path.dirname(win_state_path), exist_ok=True)
-            with open(win_state_path, "w", encoding="utf-8") as _f:
+            tmp_win_state = f"{win_state_path}.tmp.{os.getpid()}"
+            with open(tmp_win_state, "w", encoding="utf-8") as _f:
                 _json.dump(win_state, _f, indent=2)
+            os.replace(tmp_win_state, win_state_path)
         except Exception:
             pass
 
@@ -1091,13 +1170,14 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
         err_msg = traceback.format_exc()
-        crash_log = os.path.join(tempfile.gettempdir(), "spectra_crash.log")
+        crash_log = os.path.join(_get_private_log_dir(), "spectra_crash.log")
         try:
-            with open(crash_log, "a", encoding="utf-8") as f:
-                f.write(f"\n=======================================================\n")
-                f.write(f"SPECTRA STARTUP CRASH — {time.ctime()}\n")
-                f.write(f"=======================================================\n")
-                f.write(err_msg)
+            _RotatingLogStream(crash_log).write(
+                f"\n=======================================================\n"
+                f"SPECTRA STARTUP CRASH — {time.ctime()}\n"
+                f"=======================================================\n"
+                f"{err_msg}"
+            )
         except Exception:
             pass
 

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import SpectraWorkspace from './components/SpectraWorkspace';
-import DebugConsoleModal from './components/DebugConsoleModal';
+
+const DebugConsoleModal = React.lazy(() => import('./components/DebugConsoleModal'));
 
 export default function App() {
   const [lang, setLang] = useState(() => {
@@ -60,9 +61,18 @@ export default function App() {
 
   // 1. Native Desktop App mode lifecycle: heartbeat & window_closed / close beacon
   useEffect(() => {
-    const interval = setInterval(() => {
+    const sendHeartbeat = () => {
+      if (document.visibilityState === 'hidden') return;
       fetch('/api/app/heartbeat', { method: 'POST', keepalive: true }).catch(() => {});
-    }, 2000);
+    };
+
+    const interval = setInterval(sendHeartbeat, 2000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        sendHeartbeat();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     const handleWindowClose = () => {
       try {
@@ -88,6 +98,7 @@ export default function App() {
 
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('pagehide', handleWindowClose);
       window.removeEventListener('beforeunload', handleWindowClose);
     };
@@ -185,23 +196,70 @@ export default function App() {
 
   // 5. Periodic status poll for top-bar debug error counter badge
   useEffect(() => {
+    let active = true;
+    let controller = null;
+    let lastErrorCount = -1;
+    let lastWarnCount = -1;
+    let lastLogId = null;
+    let lastBuild = null;
+
     const checkCounts = async () => {
+      if (!active || document.visibilityState === 'hidden') return;
+      if (controller) {
+        try { controller.abort(); } catch {}
+      }
+      controller = new AbortController();
       try {
-        const res = await fetch('/api/debug/status');
+        const res = await fetch('/api/debug/status', { signal: controller.signal });
         const data = await res.json();
-        if (data && data.success) {
-          setDebugSummary(data);
+        if (!active || !data || !data.success) return;
+
+        const nextErrorCount = data.error_count || 0;
+        const nextWarnCount = data.warn_count || 0;
+        const logsArr = Array.isArray(data.logs) ? data.logs : [];
+        const latestLogId = logsArr.length > 0 ? (logsArr[logsArr.length - 1]?.id ?? null) : null;
+        const nextBuild = data.build ?? null;
+
+        const countsChanged = nextErrorCount !== lastErrorCount || nextWarnCount !== lastWarnCount;
+        if (countsChanged) {
+          lastErrorCount = nextErrorCount;
+          lastWarnCount = nextWarnCount;
           setDebugCounts({
-            errorCount: data.error_count || 0,
-            warnCount: data.warn_count || 0,
+            errorCount: nextErrorCount,
+            warnCount: nextWarnCount,
           });
+        }
+
+        if (
+          lastBuild === null ||
+          nextBuild !== lastBuild ||
+          latestLogId !== lastLogId ||
+          countsChanged
+        ) {
+          lastBuild = nextBuild;
+          lastLogId = latestLogId;
+          setDebugSummary(data);
         }
       } catch (e) {}
     };
 
     checkCounts();
     const interval = setInterval(checkCounts, 3500);
-    return () => clearInterval(interval);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkCounts();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (controller) {
+        try { controller.abort(); } catch {}
+      }
+    };
   }, []);
 
   return (
@@ -217,7 +275,11 @@ export default function App() {
         setScaleMode={setScaleMode}
         currentScale={currentScale}
       />
-      <DebugConsoleModal isOpen={isDebugOpen} onClose={() => setIsDebugOpen(false)} lang={lang} />
+      {isDebugOpen && (
+        <Suspense fallback={null}>
+          <DebugConsoleModal isOpen={isDebugOpen} onClose={() => setIsDebugOpen(false)} lang={lang} />
+        </Suspense>
+      )}
     </>
   );
 }

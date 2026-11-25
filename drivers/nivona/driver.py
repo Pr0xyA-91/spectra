@@ -366,14 +366,17 @@ class NivonaDriver(BaseApplianceDriver):
             ("ground_coffee", "Pre-ground Powder Deliveries", 34)
         ]
 
+        is_demo_conn = bool(getattr(conn, "is_demo", False))
+
         # Read actual EEPROM/RAM registers if available
         beverages: List[BeverageCounter] = []
         total_cups = 0
+        non_coffee_preps = 0
 
         # Query registers
         for idx, (code, name, fallback_val) in enumerate(beverage_specs):
             reg_offset = f"RE:{idx*2:04X}"
-            count_val = fallback_val
+            count_val = fallback_val if is_demo_conn else 0
             try:
                 resp = self._query_ascii(conn, reg_offset, timeout=0.4)
                 if resp and resp.startswith("re:"):
@@ -392,11 +395,13 @@ class NivonaDriver(BaseApplianceDriver):
             ))
             if code not in ("steam", "hot_water", "warm_milk"):
                 total_cups += count_val
+            elif code in ("hot_water", "warm_milk"):
+                non_coffee_preps += count_val
 
         if progress_cb:
             progress_cb(0.65, "Extracting hygiene and maintenance counters...")
 
-        # Maintenance statistics
+        # Maintenance statistics (sample counts only on simulated demo connections)
         maintenance_specs = [
             ("Times Cleaned", 18, None, False),
             ("Milk Frother Cleanings", 15, None, False),
@@ -407,7 +412,12 @@ class NivonaDriver(BaseApplianceDriver):
         ]
 
         maintenance = [
-            MaintenanceMetric(name=m[0], count=m[1], percent=m[2], warning=m[3])
+            MaintenanceMetric(
+                name=m[0],
+                count=m[1] if is_demo_conn else 0,
+                percent=m[2],
+                warning=m[3],
+            )
             for m in maintenance_specs
         ]
 
@@ -424,7 +434,7 @@ class NivonaDriver(BaseApplianceDriver):
             model=ident.model,
             identification=ident,
             total_cups=total_cups,
-            total_preparations=total_cups + 441 + 100,
+            total_preparations=total_cups + non_coffee_preps,
             beverages=beverages,
             maintenance=maintenance,
             switches=ls.get("switches", []),

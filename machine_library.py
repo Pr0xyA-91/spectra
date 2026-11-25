@@ -11,7 +11,10 @@ Precedence hierarchy for runtime EEPROM decoding:
   Local Override > Verified Model Spec > Built-in Profile
 """
 
+import copy
 import json
+import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,6 +36,20 @@ _EMPTY_NORM: Dict[str, List[Dict[str, Any]]] = {
     "maintenance": [],
     "maintenance_pct": [],
 }
+
+_CATALOG_LOCK = threading.Lock()
+_CACHED_BASE_CATALOG: Optional[Dict[str, Dict[str, Any]]] = None
+_CACHED_CATALOG_SIG: Optional[Tuple[float, float, str, str]] = None
+_CACHED_OFFSET_DB_STATUS: Optional[Dict[str, Any]] = None
+
+
+def invalidate_machine_library_cache() -> None:
+    """Clear the cached base machine catalog."""
+    global _CACHED_BASE_CATALOG, _CACHED_CATALOG_SIG, _CACHED_OFFSET_DB_STATUS
+    with _CATALOG_LOCK:
+        _CACHED_BASE_CATALOG = None
+        _CACHED_CATALOG_SIG = None
+        _CACHED_OFFSET_DB_STATUS = None
 
 
 def _parse_addr_int(raw: Any) -> Optional[int]:
@@ -160,15 +177,30 @@ def _matches_connected(
     return False
 
 
-def list_machines(
-    detected_ef: str = "",
-    detected_art: str = "",
-    detected_model: str = "",
-) -> Dict[str, Any]:
-    """
-    Build a unified searchable catalog of every machine across built-in profiles,
-    verified model JSON specs, and local user/community offset overrides.
-    """
+def _build_base_catalog_cached() -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    global _CACHED_BASE_CATALOG, _CACHED_CATALOG_SIG, _CACHED_OFFSET_DB_STATUS
+
+    ov_path = profiles_db.EEPROM_OVERRIDES_FILE
+    try:
+        ov_mtime = os.stat(ov_path).st_mtime if os.path.exists(ov_path) else -1.0
+    except OSError:
+        ov_mtime = -1.0
+
+    synced_path = ""
+    synced_mtime = -1.0
+    try:
+        import offset_db_sync
+        synced_path = offset_db_sync.SYNCED_OFFSETS_FILE
+        if os.path.exists(synced_path):
+            synced_mtime = os.stat(synced_path).st_mtime
+    except Exception:
+        pass
+
+    sig = (ov_mtime, synced_mtime, ov_path, synced_path)
+    with _CATALOG_LOCK:
+        if _CACHED_BASE_CATALOG is not None and _CACHED_CATALOG_SIG == sig and _CACHED_OFFSET_DB_STATUS is not None:
+            return copy.deepcopy(_CACHED_BASE_CATALOG), dict(_CACHED_OFFSET_DB_STATUS)
+
     profiles = profiles_db.load_profiles() or {}
     specs = profiles_db.load_model_specs() or {}
     overrides = profiles_db.list_eeprom_offset_overrides() or {}
@@ -247,7 +279,46 @@ def list_machines(
         if spec_offsets["products"] or spec_offsets["maintenance"]:
             entry["offsets"] = spec_offsets
 
-    # 3. Local calibrated overrides (~/.config/spectra/eeprom_overrides.json)
+    # 2b. Layer 2: Ed25519-Verified Synced Offset DB (~/.config/spectra/synced_offsets_db.json)
+    offset_db_status = {"offset_db_version": f"bundled-{version.BUILD_NUMBER}", "source": "bundled_factory"}
+    synced_db = None
+    try:
+        import offset_db_sync
+        offset_db_status = offset_db_sync.get_offset_db_status()
+        synced_db = offset_db_sync.load_synced_offset_db()
+    except Exception:
+        synced_db = None
+
+    if synced_db and isinstance(synced_db.get("machines"), dict):
+        for mid, sspec in synced_db["machines"].items():
+            if not isinstance(sspec, dict):
+                continue
+            ef = _norm_ef(sspec.get("ef_code") or "")
+            arts_in = [str(a).strip() for a in (sspec.get("article_numbers") or []) if str(a).strip()]
+            if sspec.get("article_number") and str(sspec["article_number"]).strip() not in arts_in:
+                arts_in.append(str(sspec["article_number"]).strip())
+            key = str(mid or ef or (f"ART_{arts_in[0]}" if arts_in else "SYNCED"))
+            entry = _get_or_init(key, ef, str(sspec.get("model_family") or key))
+            entry["series"] = str(sspec.get("series") or entry["series"] or "")
+            entry["has_synced_pack"] = True
+            entry["has_verified_spec"] = True
+            if "Synced Offset DB (Ed25519)" not in entry["sources"]:
+                entry["sources"].append("Synced Offset DB (Ed25519)")
+            entry["active_source"] = "Synced Offset DB (Ed25519)"
+            entry["address_width"] = int(sspec.get("address_width") or entry["address_width"])
+            entry["max_words"] = int(sspec.get("max_words") or entry["max_words"])
+            arts = set(entry["article_numbers"]) | set(arts_in)
+            entry["article_numbers"] = sorted(arts)
+            sv = sspec.get("verified_offsets") if isinstance(sspec.get("verified_offsets"), dict) else {}
+            sv_offsets = _extract_override_offsets(sv)
+            if sv_offsets["products"] or sv_offsets["maintenance"] or sv_offsets["maintenance_pct"]:
+                entry["offsets"] = sv_offsets
+                entry["product_labels"] = [p["name"] for p in sv_offsets["products"]]
+                entry["maintenance_labels"] = [m["name"] for m in sv_offsets["maintenance"]]
+            if sspec.get("notes"):
+                entry["notes"] = str(sspec["notes"])
+
+    # 3. Layer 1 (Highest): Local calibrated overrides (~/.config/spectra/eeprom_overrides.json)
     for ov_key, ov in overrides.items():
         if not isinstance(ov, dict):
             continue
@@ -279,9 +350,28 @@ def list_machines(
         if ov.get("notes"):
             entry["notes"] = str(ov["notes"])
 
+    with _CATALOG_LOCK:
+        _CACHED_BASE_CATALOG = copy.deepcopy(catalog_by_key)
+        _CACHED_OFFSET_DB_STATUS = dict(offset_db_status)
+        _CACHED_CATALOG_SIG = sig
+
+    return catalog_by_key, offset_db_status
+
+
+def list_machines(
+    detected_ef: str = "",
+    detected_art: str = "",
+    detected_model: str = "",
+) -> Dict[str, Any]:
+    """
+    Build a unified searchable catalog of every machine across built-in profiles,
+    verified model JSON specs, and local user/community offset overrides.
+    """
+    catalog_by_key, offset_db_status = _build_base_catalog_cached()
     machines = list(catalog_by_key.values())
     active_match = None
     for m in machines:
+        m.setdefault("has_synced_pack", False)
         m["product_count"] = len(m["offsets"]["products"]) or len(m["product_labels"])
         m["maintenance_count"] = len(m["offsets"]["maintenance"]) or len(m["maintenance_labels"])
         m["pct_count"] = len(m["offsets"]["maintenance_pct"])
@@ -290,7 +380,8 @@ def list_machines(
         if matched and (
             active_match is None
             or (m["has_local_override"] and not active_match["has_local_override"])
-            or (m["has_verified_spec"] and not active_match["has_verified_spec"])
+            or (m["has_synced_pack"] and not active_match.get("has_synced_pack") and not active_match["has_local_override"])
+            or (m["has_verified_spec"] and not active_match["has_verified_spec"] and not active_match["has_local_override"])
         ):
             active_match = m
 
@@ -298,6 +389,7 @@ def list_machines(
         key=lambda x: (
             0 if x["is_connected_match"] else 1,
             0 if x["has_local_override"] else 1,
+            0 if x.get("has_synced_pack") else 1,
             0 if x["has_verified_spec"] else 1,
             x["model_family"].lower(),
             x["ef_code"],
@@ -307,7 +399,10 @@ def list_machines(
     return {
         "total_machines": len(machines),
         "verified_specs_count": sum(1 for m in machines if m["has_verified_spec"]),
+        "synced_db_count": sum(1 for m in machines if m.get("has_synced_pack")),
         "local_overrides_count": sum(1 for m in machines if m["has_local_override"]),
+        "offset_db_version": offset_db_status.get("offset_db_version", f"bundled-{version.BUILD_NUMBER}"),
+        "offset_db_source": offset_db_status.get("source", "bundled_factory"),
         "connected_match": active_match,
         "machines": machines,
     }
@@ -344,10 +439,16 @@ def build_offset_patch_payload(
     serial_num = str(override.get("serial_number") or ident.get("serial_number") or "").strip()
     market_reg = str(override.get("market_region") or ident.get("market_region") or "").strip()
     norms = _extract_override_offsets(override)
+    try:
+        import offset_db_sync
+        odb_ver = offset_db_sync.get_offset_db_version()
+    except Exception:
+        odb_ver = f"bundled-{version.BUILD_NUMBER}"
 
     patch: Dict[str, Any] = {
         "schema": SCHEMA_PATCH_V1,
         "build": version.BUILD_NUMBER,
+        "offset_db_version": odb_ver,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "identity": {
             "manufacturer": ident.get("manufacturer") or "Jura",

@@ -14,16 +14,49 @@
 #include <wchar.h>
 #include <shellapi.h>
 #include <conio.h>
+#include "win_safe.h"
+#include "zip_extract.h"
 
-#define SPECTRA_BUILD        "20261120.0902"
-#define SPECTRA_VERSION      "Build 20261120.0902"
+#define SPECTRA_BUILD        "20261125.1535"
+#define SPECTRA_VERSION      "Build 20261125.1535"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void log_updater(const wchar_t *fmt, ...) {
-    wchar_t temp_dir[MAX_PATH];
-    if (GetTempPathW(MAX_PATH, temp_dir) == 0) return;
+    wchar_t base_dir[MAX_PATH];
+    wchar_t log_dir[MAX_PATH];
     wchar_t log_path[MAX_PATH];
-    swprintf(log_path, MAX_PATH, L"%ls\\spectra_update.log", temp_dir);
+    DWORD lad_len = GetEnvironmentVariableW(L"LOCALAPPDATA", base_dir, MAX_PATH);
+    if (lad_len > 0 && lad_len < MAX_PATH && is_safe_install_path(base_dir)) {
+        int dn = swprintf(log_dir, MAX_PATH, L"%ls\\SPECTRA", base_dir);
+        if (dn > 0 && dn < MAX_PATH) {
+            CreateDirectoryW(log_dir, NULL);
+            dn = swprintf(log_dir, MAX_PATH, L"%ls\\SPECTRA\\logs", base_dir);
+            if (dn > 0 && dn < MAX_PATH) {
+                CreateDirectoryW(log_dir, NULL);
+                if (swprintf(log_path, MAX_PATH, L"%ls\\spectra_update.log", log_dir) <= 0) {
+                    return;
+                }
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    } else {
+        if (GetTempPathW(MAX_PATH, base_dir) == 0) return;
+        if (swprintf(log_path, MAX_PATH, L"%ls\\spectra_update.log", base_dir) <= 0) return;
+    }
+
+    /* Rotate log if larger than 256 KiB */
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(log_path, GetFileExInfoStandard, &fad) &&
+        (fad.nFileSizeHigh > 0 || fad.nFileSizeLow >= 256u * 1024u)) {
+        wchar_t rot_path[MAX_PATH];
+        int rn = swprintf(rot_path, MAX_PATH, L"%ls.1", log_path);
+        if (rn > 0 && rn < MAX_PATH) {
+            MoveFileExW(log_path, rot_path, MOVEFILE_REPLACE_EXISTING);
+        }
+    }
 
     FILE *f = _wfopen(log_path, L"a");
     if (!f) return;
@@ -41,12 +74,28 @@ static void log_updater(const wchar_t *fmt, ...) {
     fclose(f);
 }
 
-static BOOL contains_ci_w(const wchar_t *hay, const wchar_t *needle) {
-    if (!hay || !needle || !needle[0]) return FALSE;
-    size_t nlen = wcslen(needle);
-    for (const wchar_t *p = hay; *p; p++) {
-        if (_wcsnicmp(p, needle, nlen) == 0) {
-            return TRUE;
+static BOOL path_matches_install_scope(const wchar_t *img_path, const wchar_t *target_dir) {
+    if (!img_path || !img_path[0] || !target_dir || !target_dir[0]) return FALSE;
+    size_t tlen = wcslen(target_dir);
+    while (tlen > 3 && (target_dir[tlen - 1] == L'\\' || target_dir[tlen - 1] == L'/')) {
+        tlen--;
+    }
+    if (_wcsnicmp(img_path, target_dir, tlen) == 0 &&
+        (img_path[tlen] == L'\\' || img_path[tlen] == L'/' || img_path[tlen] == L'\0')) {
+        return TRUE;
+    }
+
+    /* Check immediate parent if target_dir ends with \build_* */
+    wchar_t norm_dir[MAX_PATH];
+    if (tlen < MAX_PATH) {
+        safe_wcopy(norm_dir, tlen + 1, target_dir);
+        const wchar_t *last_slash = wcsrchr(norm_dir, L'\\');
+        if (last_slash && _wcsnicmp(last_slash + 1, L"build_", 6) == 0) {
+            size_t plen = (size_t)(last_slash - norm_dir);
+            if (plen > 0 && _wcsnicmp(img_path, norm_dir, plen) == 0 &&
+                (img_path[plen] == L'\\' || img_path[plen] == L'/')) {
+                return TRUE;
+            }
         }
     }
     return FALSE;
@@ -58,8 +107,7 @@ static void strip_dir_arg(const wchar_t *raw, wchar_t *out, size_t max_len) {
         return;
     }
     while (*raw == L'"' || *raw == L' ') raw++;
-    wcsncpy(out, raw, max_len - 1);
-    out[max_len - 1] = L'\0';
+    safe_wcopy(out, max_len, raw);
     size_t len = wcslen(out);
     while (len > 0 && (out[len - 1] == L'"' || out[len - 1] == L' ' || out[len - 1] == L'\\' || out[len - 1] == L'/')) {
         if (len <= 3 && out[1] == L':' && (out[len - 1] == L'\\' || out[len - 1] == L'/')) {
@@ -78,7 +126,7 @@ static void print_banner(void) {
 
 static BOOL dir_exists(const wchar_t *path) {
     DWORD attr = GetFileAttributesW(path);
-    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) && !(attr & FILE_ATTRIBUTE_REPARSE_POINT));
 }
 
 static BOOL file_exists(const wchar_t *path) {
@@ -119,22 +167,16 @@ static void kill_running_spectra(const wchar_t *target_dir) {
                 }
 
                 HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
-                if (!hProc && is_spectra_bin) {
-                    hProc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
-                }
                 if (!hProc) {
                     continue;
                 }
 
-                BOOL should_kill = is_spectra_bin;
-                if (is_helper_bin) {
-                    wchar_t img_path[MAX_PATH * 2];
-                    DWORD img_len = (DWORD)(sizeof(img_path) / sizeof(wchar_t));
-                    if (QueryFullProcessImageNameW(hProc, 0, img_path, &img_len)) {
-                        if ((target_dir && target_dir[0] && contains_ci_w(img_path, target_dir)) ||
-                            contains_ci_w(img_path, L"\\SPECTRA\\")) {
-                            should_kill = TRUE;
-                        }
+                BOOL should_kill = FALSE;
+                wchar_t img_path[MAX_PATH * 2];
+                DWORD img_len = (DWORD)(sizeof(img_path) / sizeof(wchar_t));
+                if (QueryFullProcessImageNameW(hProc, 0, img_path, &img_len)) {
+                    if (path_matches_install_scope(img_path, target_dir)) {
+                        should_kill = TRUE;
                     }
                 }
 
@@ -167,66 +209,70 @@ static BOOL find_install_dir(wchar_t *out_dir, size_t max_len) {
     HKEY hKey;
     const wchar_t *subKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SPECTRA";
     if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        wchar_t regPath[MAX_PATH];
-        DWORD size = sizeof(regPath);
+        wchar_t regPath[MAX_PATH + 1];
+        DWORD size = (DWORD)(MAX_PATH * sizeof(wchar_t));
         DWORD type = REG_SZ;
-        if (RegQueryValueExW(hKey, L"InstallLocation", NULL, &type, (LPBYTE)regPath, &size) == ERROR_SUCCESS) {
+        if (RegQueryValueExW(hKey, L"InstallLocation", NULL, &type, (LPBYTE)regPath, &size) == ERROR_SUCCESS &&
+            (type == REG_SZ || type == REG_EXPAND_SZ) && size >= sizeof(wchar_t)) {
+            size_t chars = size / sizeof(wchar_t);
+            if (chars > MAX_PATH) chars = MAX_PATH;
+            regPath[chars] = L'\0';
+            regPath[MAX_PATH] = L'\0';
             RegCloseKey(hKey);
-            if (dir_exists(regPath)) {
-                wcsncpy(out_dir, regPath, max_len);
+
+            wchar_t resolvedPath[MAX_PATH];
+            if (type == REG_EXPAND_SZ) {
+                DWORD exp = ExpandEnvironmentStringsW(regPath, resolvedPath, MAX_PATH);
+                if (exp == 0 || exp >= MAX_PATH) {
+                    resolvedPath[0] = L'\0';
+                }
+            } else {
+                safe_wcopy(resolvedPath, MAX_PATH, regPath);
+            }
+            strip_dir_arg(resolvedPath, resolvedPath, MAX_PATH);
+            if (resolvedPath[0] != L'\0' && dir_exists(resolvedPath)) {
+                safe_wcopy(out_dir, max_len, resolvedPath);
                 return TRUE;
             }
+        } else {
+            RegCloseKey(hKey);
         }
-        RegCloseKey(hKey);
     }
 
     // 2. Check default %LOCALAPPDATA%\Programs\SPECTRA
     wchar_t local_app_data[MAX_PATH];
-    if (GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH) > 0) {
+    DWORD lad_len = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH);
+    if (lad_len > 0 && lad_len < MAX_PATH) {
         wchar_t candidate[MAX_PATH];
-        swprintf(candidate, MAX_PATH, L"%ls\\Programs\\SPECTRA", local_app_data);
-        if (dir_exists(candidate)) {
+        int cn = swprintf(candidate, MAX_PATH, L"%ls\\Programs\\SPECTRA", local_app_data);
+        if (cn > 0 && cn < MAX_PATH && dir_exists(candidate)) {
             wchar_t build_sub[MAX_PATH];
-            swprintf(build_sub, MAX_PATH, L"%ls\\build_%hs", candidate, SPECTRA_BUILD);
-            if (dir_exists(build_sub)) {
-                wcsncpy(out_dir, build_sub, max_len);
+            int bn = swprintf(build_sub, MAX_PATH, L"%ls\\build_%hs", candidate, SPECTRA_BUILD);
+            if (bn > 0 && bn < MAX_PATH && dir_exists(build_sub)) {
+                safe_wcopy(out_dir, max_len, build_sub);
                 return TRUE;
             }
-            wcsncpy(out_dir, candidate, max_len);
+            safe_wcopy(out_dir, max_len, candidate);
             return TRUE;
         }
     }
 
-    // 3. Check executable directory (if updater is placed adjacent to SPECTRA files)
+    // 3. Check executable directory (ONLY if updater is placed directly inside an existing SPECTRA folder)
     wchar_t exe_dir[MAX_PATH];
-    GetModuleFileNameW(NULL, exe_dir, MAX_PATH);
-    wchar_t *last_slash = wcsrchr(exe_dir, L'\\');
-    if (last_slash) *last_slash = L'\0';
+    DWORD mlen = GetModuleFileNameW(NULL, exe_dir, MAX_PATH);
+    if (mlen > 0 && mlen < MAX_PATH) {
+        wchar_t *last_slash = wcsrchr(exe_dir, L'\\');
+        if (last_slash) *last_slash = L'\0';
 
-    wchar_t test_file[MAX_PATH];
-    swprintf(test_file, MAX_PATH, L"%ls\\spectra_app.py", exe_dir);
-    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
-        wcsncpy(out_dir, exe_dir, max_len);
-        return TRUE;
-    }
-    swprintf(test_file, MAX_PATH, L"%ls\\spectra.exe", exe_dir);
-    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
-        wcsncpy(out_dir, exe_dir, max_len);
-        return TRUE;
-    }
-    swprintf(test_file, MAX_PATH, L"%ls\\profiles_data.json", exe_dir);
-    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
-        wcsncpy(out_dir, exe_dir, max_len);
-        return TRUE;
-    }
-
-    // 4. Check current working directory
-    wchar_t cur_dir[MAX_PATH];
-    GetCurrentDirectoryW(MAX_PATH, cur_dir);
-    swprintf(test_file, MAX_PATH, L"%ls\\profiles_data.json", cur_dir);
-    if (GetFileAttributesW(test_file) != INVALID_FILE_ATTRIBUTES) {
-        wcsncpy(out_dir, cur_dir, max_len);
-        return TRUE;
+        wchar_t test_app[MAX_PATH];
+        wchar_t test_exe[MAX_PATH];
+        int n1 = swprintf(test_app, MAX_PATH, L"%ls\\spectra_app.py", exe_dir);
+        int n2 = swprintf(test_exe, MAX_PATH, L"%ls\\spectra.exe", exe_dir);
+        if (n1 > 0 && n1 < MAX_PATH && n2 > 0 && n2 < MAX_PATH &&
+            file_exists(test_app) && file_exists(test_exe)) {
+            safe_wcopy(out_dir, max_len, exe_dir);
+            return TRUE;
+        }
     }
 
     return FALSE;
@@ -242,8 +288,10 @@ static void clear_locked_binaries(const wchar_t *dir) {
     for (int i = 0; i < 4; i++) {
         wchar_t src[MAX_PATH];
         wchar_t bak[MAX_PATH];
-        swprintf(src, MAX_PATH, L"%ls\\%ls", dir, bins[i]);
-        swprintf(bak, MAX_PATH, L"%ls\\%ls.old", dir, bins[i]);
+        int ns = swprintf(src, MAX_PATH, L"%ls\\%ls", dir, bins[i]);
+        int nb = swprintf(bak, MAX_PATH, L"%ls\\%ls.old", dir, bins[i]);
+        if (ns <= 0 || ns >= MAX_PATH || nb <= 0 || nb >= MAX_PATH) continue;
+        if (!is_not_reparse_point(src) || !is_not_reparse_point(bak)) continue;
         DeleteFileW(bak);
         if (file_exists(src) && !DeleteFileW(src)) {
             MoveFileExW(src, bak, MOVEFILE_REPLACE_EXISTING);
@@ -270,20 +318,137 @@ static void cleanup_old_backups(const wchar_t *dir) {
     }
 }
 
-static BOOL extract_payload_to_single_dir(const wchar_t *target_dir, const void *pData, DWORD size) {
-    wchar_t zip_path[MAX_PATH];
-    swprintf(zip_path, MAX_PATH, L"%ls\\update.zip", target_dir);
+static void safe_delete_regular_file(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return;
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+    if (attrs & FILE_ATTRIBUTE_READONLY) {
+        SetFileAttributesW(path, attrs & ~FILE_ATTRIBUTE_READONLY);
+    }
+    DeleteFileW(path);
+}
 
-    HANDLE hFile = CreateFileW(zip_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        log_updater(L"Failed to create %ls (err=%lu)", zip_path, GetLastError());
-        wprintf(L"[-] Failed to write update package to %ls (Error: %lu)\n", zip_path, GetLastError());
-        return FALSE;
+static void safe_delete_flat_dir(const wchar_t *dir_path) {
+    DWORD attrs = GetFileAttributesW(dir_path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return;
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+
+    wchar_t pattern[MAX_PATH * 2];
+    int pn = swprintf(pattern, MAX_PATH * 2, L"%ls\\*", dir_path);
+    if (pn <= 0 || pn >= MAX_PATH * 2) return;
+
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(pattern, &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                continue;
+            }
+            wchar_t child[MAX_PATH * 2];
+            int cn = swprintf(child, MAX_PATH * 2, L"%ls\\%ls", dir_path, fd.cFileName);
+            if (cn > 0 && cn < MAX_PATH * 2) {
+                safe_delete_regular_file(child);
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+    }
+    RemoveDirectoryW(dir_path);
+}
+
+static void cleanup_obsolete_install_files(const wchar_t *dir) {
+    static const wchar_t *retired_files[] = {
+        L"wrat_engine.py",
+        L"CHANGELOG_CS.pdf",
+        L"web\\public\\favicon.ico",
+        L"web\\public\\icon.png",
+        L"web\\public\\logo.svg",
+        L"docs\\brand\\spectra_logo.svg"
+    };
+    size_t count = sizeof(retired_files) / sizeof(retired_files[0]);
+    for (size_t i = 0; i < count; i++) {
+        wchar_t target[MAX_PATH * 2];
+        int n = swprintf(target, MAX_PATH * 2, L"%ls\\%ls", dir, retired_files[i]);
+        if (n > 0 && n < MAX_PATH * 2) {
+            safe_delete_regular_file(target);
+        }
     }
 
-    DWORD written = 0;
-    WriteFile(hFile, pData, size, &written, NULL);
-    CloseHandle(hFile);
+    /* Remove now-empty web\public directory (RemoveDirectoryW only succeeds if empty) */
+    wchar_t web_public[MAX_PATH * 2];
+    int wn = swprintf(web_public, MAX_PATH * 2, L"%ls\\web\\public", dir);
+    if (wn > 0 && wn < MAX_PATH * 2) {
+        DWORD attrs = GetFileAttributesW(web_public);
+        if (attrs != INVALID_FILE_ATTRIBUTES &&
+            (attrs & FILE_ATTRIBUTE_DIRECTORY) &&
+            !(attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            RemoveDirectoryW(web_public);
+        }
+    }
+
+    /* Prune legacy root-level test_*.py scripts (tests were consolidated into tests/) */
+    wchar_t test_pat[MAX_PATH * 2];
+    int tn = swprintf(test_pat, MAX_PATH * 2, L"%ls\\test_*.py", dir);
+    if (tn > 0 && tn < MAX_PATH * 2) {
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(test_pat, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                    continue;
+                }
+                wchar_t fpath[MAX_PATH * 2];
+                int fn = swprintf(fpath, MAX_PATH * 2, L"%ls\\%ls", dir, fd.cFileName);
+                if (fn > 0 && fn < MAX_PATH * 2) {
+                    safe_delete_regular_file(fpath);
+                }
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+
+    /* Prune stale compiled bytecode for retired wrat_engine shim */
+    wchar_t pyc_pat[MAX_PATH * 2];
+    int cn = swprintf(pyc_pat, MAX_PATH * 2, L"%ls\\__pycache__\\wrat_engine.*.pyc", dir);
+    if (cn > 0 && cn < MAX_PATH * 2) {
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(pyc_pat, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                    continue;
+                }
+                wchar_t fpath[MAX_PATH * 2];
+                int fn = swprintf(fpath, MAX_PATH * 2, L"%ls\\__pycache__\\%ls", dir, fd.cFileName);
+                if (fn > 0 && fn < MAX_PATH * 2) {
+                    safe_delete_regular_file(fpath);
+                }
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+
+    log_updater(L"Pruned obsolete app files in %ls", dir);
+}
+
+static BOOL extract_payload_to_single_dir(const wchar_t *target_dir, const void *pData, DWORD size) {
+    /* Stage old web\dist\assets aside so stale hashed JS/CSS bundles do not accumulate */
+    wchar_t assets_dir[MAX_PATH * 2];
+    wchar_t assets_old[MAX_PATH * 2];
+    BOOL assets_staged = FALSE;
+    int an = swprintf(assets_dir, MAX_PATH * 2, L"%ls\\web\\dist\\assets", target_dir);
+    int bn = swprintf(assets_old, MAX_PATH * 2, L"%ls\\web\\dist\\assets.old", target_dir);
+    if (an > 0 && an < MAX_PATH * 2 && bn > 0 && bn < MAX_PATH * 2) {
+        safe_delete_flat_dir(assets_old);
+        DWORD a_attrs = GetFileAttributesW(assets_dir);
+        if (a_attrs != INVALID_FILE_ATTRIBUTES &&
+            (a_attrs & FILE_ATTRIBUTE_DIRECTORY) &&
+            !(a_attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            if (MoveFileExW(assets_dir, assets_old, MOVEFILE_REPLACE_EXISTING)) {
+                assets_staged = TRUE;
+            }
+        }
+    }
 
     BOOL extracted = FALSE;
     for (int attempt = 0; attempt < 3 && !extracted; attempt++) {
@@ -293,52 +458,20 @@ static BOOL extract_payload_to_single_dir(const wchar_t *target_dir, const void 
             Sleep(700);
         }
         clear_locked_binaries(target_dir);
-
-        // Extraction command via Windows tar.exe (built-in Windows 10/11)
-        wchar_t cmd[4096];
-        swprintf(cmd, 4096, L"tar.exe -xf \"%ls\" -C \"%ls\"", zip_path, target_dir);
-
-        STARTUPINFOW si;
-        PROCESS_INFORMATION pi;
-        ZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        ZeroMemory(&pi, sizeof(pi));
-
-        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 30000);
-            DWORD code = 1;
-            GetExitCodeProcess(pi.hProcess, &code);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            log_updater(L"tar.exe exit=%lu (attempt=%d)", code, attempt);
-            if (code == 0) extracted = TRUE;
-        } else {
-            log_updater(L"CreateProcessW tar.exe failed (err=%lu)", GetLastError());
-        }
-
-        // Fallback to PowerShell Expand-Archive (Win7+)
-        if (!extracted) {
-            swprintf(cmd, 4096, L"powershell.exe -NoProfile -NonInteractive -Command \"Expand-Archive -Path '%ls' -DestinationPath '%ls' -Force\"", zip_path, target_dir);
-            ZeroMemory(&si, sizeof(si));
-            si.cb = sizeof(si);
-            si.dwFlags = STARTF_USESHOWWINDOW;
-            si.wShowWindow = SW_HIDE;
-            ZeroMemory(&pi, sizeof(pi));
-            if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
-                WaitForSingleObject(pi.hProcess, 45000);
-                DWORD code = 1;
-                GetExitCodeProcess(pi.hProcess, &code);
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-                log_updater(L"Expand-Archive exit=%lu (attempt=%d)", code, attempt);
-                if (code == 0) extracted = TRUE;
-            }
-        }
+        extracted = extract_zip_from_memory((const unsigned char *)pData, (size_t)size, target_dir);
+        log_updater(L"in-memory zip extraction=%d (attempt=%d)", (int)extracted, attempt);
     }
 
-    DeleteFileW(zip_path);
+    if (extracted) {
+        if (assets_staged) {
+            safe_delete_flat_dir(assets_old);
+        }
+        cleanup_obsolete_install_files(target_dir);
+    } else if (assets_staged && !dir_exists(assets_dir)) {
+        /* Roll back staged UI assets if all extraction attempts failed */
+        MoveFileExW(assets_old, assets_dir, MOVEFILE_REPLACE_EXISTING);
+    }
+
     cleanup_old_backups(target_dir);
     return extracted;
 }
@@ -362,19 +495,25 @@ static BOOL extract_update_payload(const wchar_t *target_dir) {
 
     // Also update sibling build_* subdirectories OR parent SPECTRA folder if present
     wchar_t pattern[MAX_PATH];
-    swprintf(pattern, MAX_PATH, L"%ls\\build_*", target_dir);
-    WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFileW(pattern, &fd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
-                wchar_t sub_dir[MAX_PATH];
-                swprintf(sub_dir, MAX_PATH, L"%ls\\%ls", target_dir, fd.cFileName);
-                log_updater(L"Also updating bundled directory: %ls", sub_dir);
-                extract_payload_to_single_dir(sub_dir, pData, size);
-            }
-        } while (FindNextFileW(hFind, &fd));
-        FindClose(hFind);
+    int pn = swprintf(pattern, MAX_PATH, L"%ls\\build_*", target_dir);
+    if (pn > 0 && pn < MAX_PATH) {
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(pattern, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                    !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+                    wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+                    wchar_t sub_dir[MAX_PATH];
+                    int sn = swprintf(sub_dir, MAX_PATH, L"%ls\\%ls", target_dir, fd.cFileName);
+                    if (sn > 0 && sn < MAX_PATH && is_not_reparse_point(sub_dir)) {
+                        log_updater(L"Also updating bundled directory: %ls", sub_dir);
+                        extract_payload_to_single_dir(sub_dir, pData, size);
+                    }
+                }
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
     }
 
     const wchar_t *last_slash = wcsrchr(target_dir, L'\\');
@@ -382,11 +521,10 @@ static BOOL extract_update_payload(const wchar_t *target_dir) {
         wchar_t parent_dir[MAX_PATH];
         size_t plen = (size_t)(last_slash - target_dir);
         if (plen > 0 && plen < MAX_PATH) {
-            wcsncpy(parent_dir, target_dir, plen);
-            parent_dir[plen] = L'\0';
+            safe_wcopy(parent_dir, plen + 1, target_dir);
             wchar_t parent_marker[MAX_PATH];
-            swprintf(parent_marker, MAX_PATH, L"%ls\\spectra.exe", parent_dir);
-            if (file_exists(parent_marker)) {
+            int mn = swprintf(parent_marker, MAX_PATH, L"%ls\\spectra.exe", parent_dir);
+            if (mn > 0 && mn < MAX_PATH && is_not_reparse_point(parent_dir) && file_exists(parent_marker)) {
                 log_updater(L"Also updating parent installation directory: %ls", parent_dir);
                 extract_payload_to_single_dir(parent_dir, pData, size);
             }
@@ -407,6 +545,7 @@ static void update_registry_version(void) {
 }
 
 int wmain(int argc, wchar_t *argv[]) {
+    enable_safe_dll_search();
     BOOL silent = FALSE;
     BOOL force_relaunch = FALSE;
     wchar_t custom_dir[MAX_PATH] = L"";
@@ -441,7 +580,7 @@ int wmain(int argc, wchar_t *argv[]) {
 
     wchar_t target_dir[MAX_PATH];
     if (custom_dir[0] != L'\0') {
-        wcsncpy(target_dir, custom_dir, MAX_PATH);
+        safe_wcopy(target_dir, MAX_PATH, custom_dir);
     } else {
         if (!find_install_dir(target_dir, MAX_PATH)) {
             wprintf(L"[-] ERROR: SPECTRA installation could not be located.\n");
@@ -451,6 +590,12 @@ int wmain(int argc, wchar_t *argv[]) {
             }
             return 1;
         }
+    }
+
+    if (!is_safe_install_path(target_dir)) {
+        log_updater(L"Rejected unsafe target directory: %ls", target_dir);
+        wprintf(L"[-] ERROR: Target directory contains unsafe characters.\n");
+        return 1;
     }
 
     wprintf(L"[*] Target Installation Directory: %ls\n", target_dir);

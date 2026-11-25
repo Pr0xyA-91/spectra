@@ -121,6 +121,8 @@ impl AdbStream {
 pub struct AdbSerialBridge {
     config: AdbBridgeConfig,
     stream: AdbStream,
+    owns_adb_forward: bool,
+    adb_binary: PathBuf,
 }
 
 impl AdbSerialBridge {
@@ -145,6 +147,91 @@ impl AdbSerialBridge {
             )));
         }
         Ok(())
+    }
+
+    /// Validates an ADB CLI argument (`device_serial` or `remote_forward_spec`) against flag injection.
+    pub fn validate_adb_arg(field: &str, value: &str) -> HalResult<()> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.starts_with('-') {
+            return Err(HalError::HardwareFault(format!(
+                "Invalid {field}: must be non-empty and cannot start with '-' (got: {value})"
+            )));
+        }
+        if trimmed.bytes().any(|b| !(0x20..0x7F).contains(&b)) {
+            return Err(HalError::HardwareFault(format!(
+                "Invalid {field}: contains control characters or non-ASCII bytes"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validates that local ADB endpoints strictly target loopback (for TCP) or a safe non-flag Unix path.
+    pub fn validate_endpoint(endpoint: &AdbSocketEndpoint) -> HalResult<()> {
+        match endpoint {
+            AdbSocketEndpoint::Tcp(addr) => {
+                if !addr.ip().is_loopback() || addr.port() == 0 {
+                    return Err(HalError::HardwareFault(format!(
+                        "ADB TCP endpoint must use a loopback IP and non-zero port (got: {addr})"
+                    )));
+                }
+                Ok(())
+            }
+            AdbSocketEndpoint::Unix(path) => {
+                let Some(path_str) = path.to_str() else {
+                    return Err(HalError::HardwareFault(
+                        "ADB Unix endpoint path must be valid UTF-8".into(),
+                    ));
+                };
+                if path_str.is_empty()
+                    || path_str.starts_with('-')
+                    || path_str.bytes().any(|b| !(0x20..0x7F).contains(&b))
+                {
+                    return Err(HalError::HardwareFault(format!(
+                        "Invalid ADB Unix socket path: {path_str}"
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Resolves the `adb` binary without searching the current working directory (prevents CWD binary hijacking).
+    pub fn resolve_adb_binary() -> HalResult<PathBuf> {
+        if let Ok(explicit) = std::env::var("SPECTRA_ADB_PATH") {
+            let trimmed = explicit.trim();
+            if !trimmed.is_empty() {
+                let candidate = PathBuf::from(trimmed);
+                if candidate.is_absolute() && candidate.is_file() {
+                    return Ok(candidate);
+                }
+                return Err(HalError::HardwareFault(format!(
+                    "SPECTRA_ADB_PATH must point to an existing absolute file (got: {trimmed})"
+                )));
+            }
+        }
+
+        let bin_name = if cfg!(windows) { "adb.exe" } else { "adb" };
+        let cwd = std::env::current_dir().ok();
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                if dir.as_os_str().is_empty() || !dir.is_absolute() {
+                    continue;
+                }
+                if let Some(ref cur) = cwd {
+                    if dir == *cur {
+                        continue;
+                    }
+                }
+                let candidate = dir.join(bin_name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+            }
+        }
+
+        Err(HalError::HardwareFault(format!(
+            "Could not locate '{bin_name}' in absolute PATH directories (set SPECTRA_ADB_PATH to override)"
+        )))
     }
 
     /// Builds the `stty` shell configuration command string for the target Android SBC.
@@ -174,6 +261,13 @@ impl AdbSerialBridge {
     /// and establishes a socket connection to the bridged endpoint.
     pub async fn connect(config: AdbBridgeConfig) -> HalResult<Self> {
         Self::validate_tty_path(&config.tty_path)?;
+        Self::validate_endpoint(&config.endpoint)?;
+        if let Some(ref serial) = config.device_serial {
+            Self::validate_adb_arg("device_serial", serial)?;
+        }
+        Self::validate_adb_arg("remote_forward_spec", &config.remote_forward_spec)?;
+
+        let adb_binary = Self::resolve_adb_binary()?;
 
         let stty_cmd = format!(
             "stty -F {} {} cs8 -parenb -cstopb raw -echo -echoe -echok",
@@ -181,7 +275,7 @@ impl AdbSerialBridge {
         );
 
         // 1. Configure serial port mode on remote Android target
-        let mut stty_proc = tokio::process::Command::new("adb");
+        let mut stty_proc = tokio::process::Command::new(&adb_binary);
         if let Some(ref serial) = config.device_serial {
             stty_proc.arg("-s").arg(serial);
         }
@@ -202,7 +296,7 @@ impl AdbSerialBridge {
 
         // 2. Setup adb forward tunnel
         let local_spec = config.endpoint.to_adb_local_spec();
-        let mut fwd_proc = tokio::process::Command::new("adb");
+        let mut fwd_proc = tokio::process::Command::new(&adb_binary);
         if let Some(ref serial) = config.device_serial {
             fwd_proc.arg("-s").arg(serial);
         }
@@ -250,13 +344,28 @@ impl AdbSerialBridge {
             }
         };
 
-        Ok(Self { config, stream })
+        Ok(Self {
+            config,
+            stream,
+            owns_adb_forward: true,
+            adb_binary,
+        })
     }
 
     /// Wraps an existing, already connected `AdbStream` with the provided configuration.
     pub fn from_stream(config: AdbBridgeConfig, stream: AdbStream) -> HalResult<Self> {
         Self::validate_tty_path(&config.tty_path)?;
-        Ok(Self { config, stream })
+        Self::validate_endpoint(&config.endpoint)?;
+        if let Some(ref serial) = config.device_serial {
+            Self::validate_adb_arg("device_serial", serial)?;
+        }
+        Self::validate_adb_arg("remote_forward_spec", &config.remote_forward_spec)?;
+        Ok(Self {
+            config,
+            stream,
+            owns_adb_forward: false,
+            adb_binary: PathBuf::new(),
+        })
     }
 
     /// Returns a reference to the active bridge configuration.
@@ -275,6 +384,38 @@ impl AdbSerialBridge {
     }
 }
 
+impl Drop for AdbSerialBridge {
+    fn drop(&mut self) {
+        if !self.owns_adb_forward || self.adb_binary.as_os_str().is_empty() {
+            return;
+        }
+        let adb_binary = self.adb_binary.clone();
+        let serial = self.config.device_serial.clone();
+        let local_spec = self.config.endpoint.to_adb_local_spec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        if std::thread::Builder::new()
+            .name("spectra-adb-drop".to_string())
+            .spawn(move || {
+                let mut cmd = std::process::Command::new(&adb_binary);
+                if let Some(ref s) = serial {
+                    cmd.arg("-s").arg(s);
+                }
+                cmd.arg("forward")
+                    .arg("--remove")
+                    .arg(local_spec)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                let _ = cmd.status();
+                let _ = tx.send(());
+            })
+            .is_ok()
+        {
+            let _ = rx.recv_timeout(Duration::from_millis(1500));
+        }
+    }
+}
+
 impl Transport for AdbSerialBridge {
     fn write_raw<'a>(
         &'a mut self,
@@ -282,22 +423,35 @@ impl Transport for AdbSerialBridge {
         inter_byte_delay: Option<Duration>,
     ) -> BoxFuture<'a, HalResult<()>> {
         Box::pin(async move {
-            if let Some(delay) = inter_byte_delay {
-                if !delay.is_zero() {
-                    for (i, &b) in payload.iter().enumerate() {
-                        self.stream.write_all_buf(&[b]).await?;
-                        self.stream.flush_buf().await?;
-                        if i + 1 < payload.len() {
-                            tokio::time::sleep(delay).await;
-                        }
-                    }
-                    return Ok(());
-                }
-            }
+            let pacing_total = inter_byte_delay
+                .map(|d| d.saturating_mul(payload.len().saturating_sub(1) as u32))
+                .unwrap_or(Duration::ZERO);
+            let write_timeout = self.config.connect_timeout.saturating_add(pacing_total);
 
-            self.stream.write_all_buf(payload).await?;
-            self.stream.flush_buf().await?;
-            Ok(())
+            let write_fut = async {
+                if let Some(delay) = inter_byte_delay {
+                    if !delay.is_zero() {
+                        for (i, &b) in payload.iter().enumerate() {
+                            self.stream.write_all_buf(&[b]).await?;
+                            if i + 1 < payload.len() {
+                                tokio::time::sleep(delay).await;
+                            }
+                        }
+                        self.stream.flush_buf().await?;
+                        return Ok::<(), std::io::Error>(());
+                    }
+                }
+
+                self.stream.write_all_buf(payload).await?;
+                self.stream.flush_buf().await?;
+                Ok(())
+            };
+
+            match tokio::time::timeout(write_timeout, write_fut).await {
+                Err(_) => Err(HalError::Timeout(write_timeout)),
+                Ok(Err(e)) => Err(HalError::Io(e)),
+                Ok(Ok(())) => Ok(()),
+            }
         })
     }
 
@@ -343,6 +497,37 @@ mod tests {
         assert!(AdbSerialBridge::validate_tty_path("/dev/pts/0").is_err());
         assert!(AdbSerialBridge::validate_tty_path("/dev/tty").is_err());
         assert!(AdbSerialBridge::validate_tty_path("").is_err());
+
+        // Rejection of ADB CLI flag injection
+        assert!(AdbSerialBridge::validate_adb_arg("device_serial", "emulator-5554").is_ok());
+        assert!(AdbSerialBridge::validate_adb_arg("device_serial", "-Hevil").is_err());
+        assert!(AdbSerialBridge::validate_adb_arg("remote_forward_spec", "--remove-all").is_err());
+
+        // Loopback-only enforcement for TCP endpoints and flag rejection for Unix sockets
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Tcp(
+            SocketAddr::from(([127, 0, 0, 1], 9999))
+        ))
+        .is_ok());
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Tcp(
+            SocketAddr::from(([0, 0, 0, 0], 9999))
+        ))
+        .is_err());
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Tcp(
+            SocketAddr::from(([192, 168, 1, 50], 9999))
+        ))
+        .is_err());
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Tcp(
+            SocketAddr::from(([127, 0, 0, 1], 0))
+        ))
+        .is_err());
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Unix(PathBuf::from(
+            "/tmp/spectra_adb.sock"
+        )))
+        .is_ok());
+        assert!(AdbSerialBridge::validate_endpoint(&AdbSocketEndpoint::Unix(PathBuf::from(
+            "-evil"
+        )))
+        .is_err());
     }
 
     #[cfg(unix)]

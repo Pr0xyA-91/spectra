@@ -9,8 +9,10 @@ import os
 import re
 import sys
 import json
+import base64
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -25,6 +27,11 @@ def get_config_dir() -> Path:
     """Return user configuration directory for SPECTRA."""
     if _CONFIG_DIR_OVERRIDE is not None:
         _CONFIG_DIR_OVERRIDE.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                os.chmod(_CONFIG_DIR_OVERRIDE, 0o700)
+            except OSError:
+                pass
         return _CONFIG_DIR_OVERRIDE
 
     if sys.platform.startswith("win"):
@@ -41,6 +48,11 @@ def get_config_dir() -> Path:
             p = Path.home() / ".config" / "spectra"
 
     p.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(p, 0o700)
+        except OSError:
+            pass
     return p
 
 
@@ -71,10 +83,149 @@ def _get_auth_file() -> Path:
     return get_config_dir() / "github_auth.json"
 
 
+_CRYPTPROTECT_UI_FORBIDDEN = 0x01
+
+
+def _get_win32_dpapi_handles(data_blob_cls):
+    """Return configured (crypt32, kernel32) DLL handles with 64-bit safe ctypes signatures."""
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is not None:
+        crypt32 = win_dll("crypt32", use_last_error=True)
+        kernel32 = win_dll("kernel32", use_last_error=True)
+    else:
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+
+    p_blob = ctypes.POINTER(data_blob_cls)
+    for fn_name in ("CryptProtectData", "CryptUnprotectData"):
+        fn = getattr(crypt32, fn_name)
+        fn.argtypes = [
+            p_blob,
+            wintypes.LPCWSTR if fn_name == "CryptProtectData" else ctypes.POINTER(wintypes.LPWSTR),
+            p_blob,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            p_blob,
+        ]
+        fn.restype = wintypes.BOOL
+
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    return crypt32, kernel32
+
+
+def _dpapi_protect(plaintext: str) -> str:
+    """Encrypt UTF-8 plaintext with Windows DPAPI CryptProtectData and return base64."""
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+    raw = plaintext.encode("utf-8")
+    in_buf = (ctypes.c_ubyte * max(len(raw), 1))()
+    if raw:
+        ctypes.memmove(in_buf, raw, len(raw))
+    in_blob = DATA_BLOB(len(raw), in_buf if raw else None)
+    out_blob = DATA_BLOB()
+
+    crypt32, kernel32 = _get_win32_dpapi_handles(DATA_BLOB)
+    if not crypt32.CryptProtectData(
+        ctypes.byref(in_blob),
+        None,
+        None,
+        None,
+        None,
+        _CRYPTPROTECT_UI_FORBIDDEN,
+        ctypes.byref(out_blob),
+    ):
+        err_code = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+        raise ctypes.WinError(err_code) if hasattr(ctypes, "WinError") else OSError(f"CryptProtectData failed ({err_code})")
+    try:
+        enc_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData) if out_blob.cbData else b""
+        return base64.b64encode(enc_bytes).decode("ascii")
+    finally:
+        if out_blob.pbData:
+            kernel32.LocalFree(ctypes.cast(out_blob.pbData, ctypes.c_void_p))
+
+
+def _dpapi_unprotect(cipher_b64: str) -> str:
+    """Decrypt base64 Windows DPAPI blob via CryptUnprotectData and return UTF-8 text."""
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+    raw = base64.b64decode(cipher_b64.encode("ascii"))
+    in_buf = (ctypes.c_ubyte * max(len(raw), 1))()
+    if raw:
+        ctypes.memmove(in_buf, raw, len(raw))
+    in_blob = DATA_BLOB(len(raw), in_buf if raw else None)
+    out_blob = DATA_BLOB()
+
+    crypt32, kernel32 = _get_win32_dpapi_handles(DATA_BLOB)
+    if not crypt32.CryptUnprotectData(
+        ctypes.byref(in_blob),
+        None,
+        None,
+        None,
+        None,
+        _CRYPTPROTECT_UI_FORBIDDEN,
+        ctypes.byref(out_blob),
+    ):
+        err_code = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+        raise ctypes.WinError(err_code) if hasattr(ctypes, "WinError") else OSError(f"CryptUnprotectData failed ({err_code})")
+    try:
+        dec_bytes = ctypes.string_at(out_blob.pbData, out_blob.cbData) if out_blob.cbData else b""
+        return dec_bytes.decode("utf-8")
+    finally:
+        if out_blob.pbData:
+            kernel32.LocalFree(ctypes.cast(out_blob.pbData, ctypes.c_void_p))
+
+
+def _write_auth_payload_atomic(auth_file: Path, payload: Dict[str, Any]) -> None:
+    parent = auth_file.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(parent, 0o700)
+        except OSError:
+            pass
+    with tempfile.NamedTemporaryFile(
+        "w",
+        dir=str(parent),
+        prefix=".github_auth_",
+        suffix=".tmp",
+        delete=False,
+        encoding="utf-8",
+    ) as f:
+        json.dump(payload, f)
+        tmp_file = f.name
+    try:
+        if os.name != "nt":
+            try:
+                os.chmod(tmp_file, 0o600)
+            except OSError:
+                pass
+        os.replace(tmp_file, str(auth_file))
+    except Exception:
+        try:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+        except OSError:
+            pass
+        raise
+
+
 def save_stored_token(token: str, login: str, method: str = "token") -> bool:
     """
     Persist authentication token securely.
-    Tries keyring first; falls back to chmod 0600 JSON file in config dir.
+    Tries keyring first; falls back to DPAPI-encrypted (Windows) or chmod 0600 JSON (POSIX).
     Never logs token.
     """
     token = token.strip()
@@ -91,27 +242,20 @@ def save_stored_token(token: str, login: str, method: str = "token") -> bool:
     except Exception:
         keyring_saved = False
 
-    # 2. Persist metadata (and token only if keyring failed) with 0o600 permissions
+    # 2. Persist metadata (and protected token only if keyring failed)
     try:
         auth_file = _get_auth_file()
-        payload = (
-            {"login": login, "method": method, "keyring": True}
-            if keyring_saved
-            else {"token": token, "login": login, "method": method}
-        )
-        if os.name != "nt":
-            tmp_file = f"{auth_file}.tmp.{os.getpid()}"
-            fd = os.open(tmp_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                os.chmod(tmp_file, 0o600)
-            except Exception:
-                pass
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-            os.replace(tmp_file, str(auth_file))
+        if keyring_saved:
+            payload: Dict[str, Any] = {"login": login, "method": method, "keyring": True}
+        elif os.name == "nt":
+            payload = {
+                "token_dpapi": _dpapi_protect(token),
+                "login": login,
+                "method": method,
+            }
         else:
-            with open(auth_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
+            payload = {"token": token, "login": login, "method": method}
+        _write_auth_payload_atomic(auth_file, payload)
         return True
     except Exception:
         return keyring_saved
@@ -136,13 +280,31 @@ def get_stored_token() -> Optional[Dict[str, str]]:
         try:
             with open(auth_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                t = data.get("token")
-                if t and str(t).strip():
-                    return {
-                        "token": str(t).strip(),
-                        "login": str(data.get("login", "user")).strip(),
-                        "method": str(data.get("method", "stored"))
-                    }
+            if not isinstance(data, dict):
+                return None
+            login = str(data.get("login", "user")).strip()
+            method = str(data.get("method", "stored"))
+            if data.get("token_dpapi"):
+                if os.name == "nt":
+                    plain = _dpapi_unprotect(str(data["token_dpapi"]))
+                    if plain and plain.strip():
+                        return {"token": plain.strip(), "login": login, "method": method}
+                return None
+            t = data.get("token")
+            if t and str(t).strip():
+                plain_tok = str(t).strip()
+                # Auto-migrate legacy plaintext Windows token to DPAPI
+                if os.name == "nt":
+                    try:
+                        migrated = {"token_dpapi": _dpapi_protect(plain_tok), "login": login, "method": method}
+                        _write_auth_payload_atomic(auth_file, migrated)
+                    except Exception:
+                        pass
+                return {
+                    "token": plain_tok,
+                    "login": login,
+                    "method": method,
+                }
         except Exception:
             pass
 
@@ -209,32 +371,49 @@ def resolve_token() -> Optional[Dict[str, str]]:
 def validate_token(token: str, timeout: int = 10) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Validate token against GET https://api.github.com/user.
+    For classic PATs (ghp_/gho_), also verifies that 'public_repo' or 'repo' scope is granted.
     Returns: (is_valid, login_name, error_message)
     """
     if not token or not token.strip():
         return False, None, "Empty token provided."
 
+    clean_token = token.strip()
     req = urllib.request.Request(
         "https://api.github.com/user",
         headers={
-            "Authorization": f"Bearer {token.strip()}",
+            "Authorization": f"Bearer {clean_token}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "SPECTRA-Diagnostics"
-        }
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "SPECTRA-Diagnostics",
+        },
     )
     try:
         import tls_utils
         with urllib.request.urlopen(req, timeout=timeout, context=tls_utils.get_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             login = data.get("login") or "user"
+            headers = getattr(resp, "headers", None)
+            scopes_hdr = headers.get("X-OAuth-Scopes") if headers is not None and hasattr(headers, "get") else None
+            if isinstance(scopes_hdr, str) and clean_token.startswith(("ghp_", "gho_")):
+                scopes = {s.strip().lower() for s in scopes_hdr.split(",") if s.strip()}
+                if "repo" not in scopes and "public_repo" not in scopes:
+                    return (
+                        False,
+                        None,
+                        "GitHub token is missing the 'public_repo' (or 'repo') scope required to create issues and upload captures.",
+                    )
             return True, login, None
     except urllib.error.HTTPError as he:
+        err_info = _extract_github_http_error(he)
         if he.code == 401:
-            return False, None, "Invalid GitHub token: 401 Unauthorized"
+            detail = f" ({err_info['message']})" if err_info["message"] else ""
+            return False, None, f"Invalid GitHub token: 401 Unauthorized{detail}"
         elif he.code == 403:
-            return False, None, "Access forbidden or API rate limit exceeded: 403 Forbidden"
+            detail = err_info["message"] or "Access forbidden or API rate limit exceeded"
+            return False, None, f"403 Forbidden: {detail}"
         else:
-            return False, None, f"GitHub API error {he.code}: {he.reason}"
+            detail = err_info["message"] or he.reason
+            return False, None, f"GitHub API error {he.code}: {detail}"
     except urllib.error.URLError as ue:
         return False, None, f"Network error contacting GitHub: {ue.reason}"
     except Exception as e:
@@ -426,15 +605,20 @@ def get_auth_status() -> Dict[str, Any]:
 DEFAULT_ISSUES_REPO = "Pr0xyA-91/spectra"
 _REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TOKEN_REDACT_PATTERNS = (
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{10,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{10,}\b"),
-    re.compile(r"(?i)(Authorization\s*:\s*Bearer\s+)[^\s\"']+"),
-    re.compile(r"(?i)(token[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)(?:_|%5[Ff])[A-Za-z0-9_%-]{10,}\b"),
+    re.compile(r"\bgithub(?:_|%5[Ff])pat(?:_|%5[Ff])[A-Za-z0-9_%-]{10,}\b"),
+    re.compile(r"(?i)((?:Proxy-)?Authorization\s*:\s*(?:Bearer|token|Basic)\s+)[^\s\"']+"),
+    re.compile(r"(?i)(https?://)([^:@/\s]+:[^@/\s]+)@"),
+    re.compile(r"(?i)((?:token|access_token|api_key|password|client_secret)[\"']?\s*[:=]\s*[\"']?)[^\s\"',}&]+"),
 )
 _USER_PATH_PATTERNS = (
-    (re.compile(r"/home/[^/\s\"']+/"), "~/"),
-    (re.compile(r"/Users/[^/\s\"']+/"), "~/"),
-    (re.compile(r"(?i)[A-Z]:\\Users\\[^\\\s\"']+\\"), "~\\"),
+    (re.compile(r"file:///home/[^/\s\"']+(?:/|$)"), "file:///~/"),
+    (re.compile(r"/home/[^/\s\"']+(?:/|$)"), "~/"),
+    (re.compile(r"/Users/[^/\s\"']+(?:/|$)"), "~/"),
+    (re.compile(r"/root(?:/|$)"), "~/"),
+    (re.compile(r"(?i)[A-Z]:\\Users\\[^\\\s\"']+(?:\\|$)"), "~\\"),
+    (re.compile(r"(?i)[A-Z]:/Users/[^/\s\"']+(?:/|$)"), "~/"),
+    (re.compile(r"\\\\[A-Za-z0-9_.-]+\\[^\\\s\"']+(?:\\[^\s\"']*)?"), "\\\\<REDACTED_UNC>"),
 )
 
 
@@ -487,6 +671,100 @@ def build_github_issue_web_url(
     return f"https://github.com/{target_repo}/issues/new?{urllib.parse.urlencode(params)}"
 
 
+def _extract_github_http_error(he: urllib.error.HTTPError) -> Dict[str, Any]:
+    """Safely parse GitHub API HTTPError body and headers without leaking secrets."""
+    raw_body = ""
+    try:
+        raw_bytes = he.read()
+        if isinstance(raw_bytes, bytes):
+            raw_body = raw_bytes.decode("utf-8", errors="ignore")
+        elif isinstance(raw_bytes, str):
+            raw_body = raw_bytes
+    except Exception:
+        raw_body = ""
+
+    body_json: Dict[str, Any] = {}
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+            if isinstance(parsed, dict):
+                body_json = parsed
+        except Exception:
+            pass
+
+    api_message = sanitize_issue_text(str(body_json.get("message") or "").strip(), max_chars=400)
+    errors_raw = body_json.get("errors")
+    errors_list = errors_raw if isinstance(errors_raw, list) else []
+
+    headers = getattr(he, "headers", None)
+
+    def _hdr(name: str) -> str:
+        if headers is None or not hasattr(headers, "get"):
+            return ""
+        val = headers.get(name)
+        return val.strip() if isinstance(val, str) else ""
+
+    oauth_scopes = _hdr("X-OAuth-Scopes")
+    accepted_scopes = _hdr("X-Accepted-OAuth-Scopes")
+    rate_remaining = _hdr("X-RateLimit-Remaining")
+    retry_after = _hdr("Retry-After")
+
+    msg_lower = api_message.lower()
+    is_rate_limit = (
+        rate_remaining == "0"
+        or bool(retry_after)
+        or "rate limit" in msg_lower
+    )
+    has_label_field_err = any(
+        isinstance(item, dict) and str(item.get("field") or "").lower() == "label"
+        for item in errors_list
+    )
+    is_label_error = (
+        he.code == 422
+        or (
+            he.code == 403
+            and not is_rate_limit
+            and ("label" in msg_lower or has_label_field_err)
+        )
+    )
+
+    return {
+        "code": he.code,
+        "reason": str(getattr(he, "reason", "") or ""),
+        "message": api_message,
+        "errors": errors_list,
+        "oauth_scopes": oauth_scopes,
+        "accepted_scopes": accepted_scopes,
+        "rate_remaining": rate_remaining,
+        "retry_after": retry_after,
+        "is_rate_limit": is_rate_limit,
+        "is_label_error": is_label_error,
+    }
+
+
+def _format_github_http_error(err_info: Dict[str, Any], prefix: str = "GitHub API error") -> str:
+    """Format a user-actionable, sanitized GitHub API error string."""
+    code = err_info.get("code")
+    reason = err_info.get("reason") or ""
+    message = err_info.get("message") or ""
+    oauth_scopes = err_info.get("oauth_scopes") or ""
+
+    if code == 401:
+        if message:
+            return f"{prefix} 401: {message} (check or refresh your GitHub sign-in)."
+        return f"{prefix} 401: Unauthorized (check or refresh your GitHub sign-in)."
+    if code == 403:
+        if err_info.get("is_rate_limit"):
+            return f"{prefix} 403: {message or 'GitHub API rate limit exceeded'}."
+        if message:
+            scope_hint = ""
+            if oauth_scopes and any(k in message.lower() for k in ("scope", "permission", "accessible")):
+                scope_hint = f" [token scopes: {oauth_scopes}]"
+            return f"{prefix} 403: {message}{scope_hint}"
+        return f"{prefix} 403: Forbidden (insufficient token permissions or rate limit exceeded)."
+    return f"{prefix} {code}: {message or reason}"
+
+
 def create_github_issue(
     title: str,
     body: str,
@@ -537,6 +815,7 @@ def create_github_issue(
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
                 "Content-Type": "application/json",
                 "User-Agent": "SPECTRA-Diagnostics",
             },
@@ -558,14 +837,16 @@ def create_github_issue(
         with _post_issue(include_labels=True) as resp:
             return _format_success(resp.read())
     except urllib.error.HTTPError as he:
-        if he.code == 422 and clean_labels:
+        err_info = _extract_github_http_error(he)
+        if clean_labels and err_info["is_label_error"]:
             try:
                 with _post_issue(include_labels=False) as resp2:
                     return _format_success(resp2.read())
             except urllib.error.HTTPError as he2:
+                err_info2 = _extract_github_http_error(he2)
                 return {
                     "success": False,
-                    "error": f"GitHub API error {he2.code}: {he2.reason}",
+                    "error": _format_github_http_error(err_info2),
                     "web_url": web_url,
                     "repo": target_repo,
                 }
@@ -576,15 +857,9 @@ def create_github_issue(
                     "web_url": web_url,
                     "repo": target_repo,
                 }
-        if he.code == 401:
-            msg = "GitHub API error 401: Unauthorized (check or refresh your GitHub sign-in)."
-        elif he.code == 403:
-            msg = "GitHub API error 403: Forbidden (insufficient token permissions or rate limit exceeded)."
-        else:
-            msg = f"GitHub API error {he.code}: {he.reason}"
         return {
             "success": False,
-            "error": msg,
+            "error": _format_github_http_error(err_info),
             "web_url": web_url,
             "repo": target_repo,
         }

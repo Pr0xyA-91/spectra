@@ -315,12 +315,19 @@ def _smart_connect_probe_sweep(conn, on_progress=None) -> Dict[int, int]:
     return eeprom
 
 
-def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]:
+def sweep_eeprom(conn, max_words: int = 512, on_progress=None, address_width: int = 4) -> Dict[int, int]:
     """Safely sweep EEPROM memory using RT: block reads with RE: fast-fail and Smart Connect fallback."""
     if getattr(conn, "_is_smart_connect", False):
         sc_map = _smart_connect_probe_sweep(conn, on_progress=on_progress)
         if sc_map:
             return sc_map
+
+    addr_w = 2 if int(address_width or 4) == 2 else 4
+    if addr_w == 2 and max_words > 256:
+        max_words = 256
+
+    def _fmt_addr(a: int) -> str:
+        return f"{a:02X}" if addr_w == 2 else f"{a:04X}"
 
     eeprom: Dict[int, int] = {}
     num_blocks = (max_words + 15) // 16
@@ -336,12 +343,13 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
         if on_progress:
             on_progress(pct, blk)
 
-        cmd = f"RT:{blk:04X}"
+        blk_hex = _fmt_addr(blk)
+        cmd = f"RT:{blk_hex}"
         try:
             ans = conn.query_ascii(cmd, timeout=1.5)
         except (IOError, OSError) as exc:
             if not getattr(conn, "is_open", True):
-                raise IOError(f"Serial port disconnected at block 0x{blk:04X}: {exc}") from exc
+                raise IOError(f"Serial port disconnected at block 0x{blk_hex}: {exc}") from exc
             ans = None
 
         block_ok = False
@@ -360,12 +368,12 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
             any_block_ok = True
             consecutive_failed_blocks = 0
         else:
-            # Probe first word RE:{blk:04X} before falling back to remaining 15 words
+            # Probe first word RE:{blk_hex} before falling back to remaining 15 words
             try:
-                first_ans = conn.query_ascii(f"RE:{blk:04X}", timeout=1.0)
+                first_ans = conn.query_ascii(f"RE:{blk_hex}", timeout=1.0)
             except (IOError, OSError) as exc:
                 if not getattr(conn, "is_open", True):
-                    raise IOError(f"Serial port disconnected at word 0x{blk:04X}: {exc}") from exc
+                    raise IOError(f"Serial port disconnected at word 0x{blk_hex}: {exc}") from exc
                 first_ans = None
 
             if first_ans and first_ans.lower().startswith("re:"):
@@ -379,11 +387,12 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
                     if not getattr(conn, "is_open", True):
                         raise IOError("Serial port disconnected during EEPROM sweep.")
                     addr = blk + offset
+                    addr_hex = _fmt_addr(addr)
                     try:
-                        w_ans = conn.query_ascii(f"RE:{addr:04X}", timeout=1.0)
+                        w_ans = conn.query_ascii(f"RE:{addr_hex}", timeout=1.0)
                     except (IOError, OSError) as exc:
                         if not getattr(conn, "is_open", True):
-                            raise IOError(f"Serial port disconnected at word 0x{addr:04X}: {exc}") from exc
+                            raise IOError(f"Serial port disconnected at word 0x{addr_hex}: {exc}") from exc
                         w_ans = None
                     if w_ans and w_ans.lower().startswith("re:"):
                         try:
@@ -396,7 +405,7 @@ def sweep_eeprom(conn, max_words: int = 512, on_progress=None) -> Dict[int, int]
                 for offset in range(16):
                     eeprom[blk + offset] = 0x0000
                 consecutive_failed_blocks += 1
-                if not any_block_ok and consecutive_failed_blocks >= 2:
+                if (not any_block_ok and consecutive_failed_blocks >= 2) or consecutive_failed_blocks >= 3:
                     break
 
     has_nonzero = any(v not in (0, 0xFFFF) for v in eeprom.values())
@@ -491,7 +500,7 @@ def correlate_with_joe(
                 return 100
             if 0x0330 <= addr <= 0x033F:
                 return 95
-            if 0x0001 <= addr <= 0x0006:
+            if 0x0000 <= addr <= 0x0006:
                 return 90
             if 0x00E0 <= addr <= 0x00E6:
                 return 80
@@ -668,12 +677,26 @@ def capture_machine_bundle(
     """
     gateways = query_gateways(conn)
 
-    # Determine geometry
+    # Determine geometry & address width
+    tl = gateways.get("TL:", "").upper()
+    ty = gateways.get("TY:", "").upper()
+    ty_clean = ty.replace("TY:", "").strip()
+    address_width = 4
+    try:
+        from spectra_stats.calibration import TWO_DIGIT_ADDRESS_EFS
+        prof_hint = profiles_db.find_profile(ty_clean) if (profiles_db and ty_clean) else None
+        if (isinstance(prof_hint, dict) and prof_hint.get("address_width") == 2) or any(
+            ty_clean.startswith(p) for p in TWO_DIGIT_ADDRESS_EFS
+        ):
+            address_width = 2
+    except Exception:
+        pass
+
     if max_words <= 0:
-        tl = gateways.get("TL:", "").upper()
-        ty = gateways.get("TY:", "").upper()
         port_name = getattr(conn, "raw_port_label", getattr(conn, "port_name", ""))
-        if "EF529" in ty or "D4" in port_name.upper():
+        if address_width == 2:
+            max_words = 256
+        elif "EF529" in ty or "D4" in port_name.upper():
             max_words = 1024
         elif not getattr(conn, "_is_smart_connect", False) and ("RL78" in tl or "EF533" in ty or "EF535" in ty or "EF536" in ty):
             probe_200 = conn.query_ascii("RT:0200", timeout=1.0)
@@ -684,7 +707,7 @@ def capture_machine_bundle(
         else:
             max_words = 512
 
-    eeprom = sweep_eeprom(conn, max_words=max_words, on_progress=on_progress)
+    eeprom = sweep_eeprom(conn, max_words=max_words, on_progress=on_progress, address_width=address_width)
     identity = decode_machine_identity(eeprom, gateways)
 
     model_name = (joe_data or {}).get("model_name")
@@ -695,10 +718,10 @@ def capture_machine_bundle(
             if art_num in getattr(stats_collector, "ARTICLE_MODEL_MAP", {}):
                 fam_info = stats_collector.ARTICLE_MODEL_MAP[art_num]
                 model_name = fam_info[0] if isinstance(fam_info, (list, tuple)) else str(fam_info)
-            elif profiles_db:
-                prof = profiles_db.get_profile_by_firmware(gateways.get("TY:", ""))
-                if prof:
-                    model_name = prof.name
+            elif profiles_db and ty_clean:
+                prof = profiles_db.find_profile(ty_clean)
+                if isinstance(prof, dict) and prof.get("model_family") and prof != profiles_db.DEFAULT_PROFILE:
+                    model_name = str(prof["model_family"])
         except Exception:
             pass
 
@@ -709,10 +732,17 @@ def capture_machine_bundle(
     correlations = correlate_with_joe(eeprom, joe_data or {}, use_ollama=use_ollama, ollama_model=ollama_model) if joe_data else {}
     mock_code = generate_mock_python_code(gateways, eeprom, model_name)
 
+    try:
+        import offset_db_sync
+        offset_db_ver = offset_db_sync.get_offset_db_version()
+    except Exception:
+        offset_db_ver = f"bundled-{BUILD_NUMBER}"
+
     return {
         "metadata": {
             "timestamp": datetime.datetime.now().isoformat(),
             "spectra_build": BUILD_NUMBER,
+            "offset_db_version": offset_db_ver,
             "probe_version": "1.1.0",
             "port": getattr(conn, "raw_port_label", getattr(conn, "port_name", "UNKNOWN"))
         },
@@ -742,6 +772,7 @@ def build_text_report(bundle: Dict[str, Any]) -> str:
         sep,
         f"  Capture Timestamp : {meta['timestamp']}",
         f"  SPECTRA Build     : {meta.get('spectra_build', BUILD_NUMBER)}",
+        f"  Offset DB Version : {meta.get('offset_db_version', f'bundled-{BUILD_NUMBER}')}",
         f"  Probe Version     : {meta['probe_version']}",
         f"  Target Port       : {meta['port']}",
         f"  Platform Family   : {ident['platform_family']}",
@@ -881,19 +912,25 @@ def upload_capture_to_community_repo(
         offset_fix.get("products") or offset_fix.get("maintenance") or offset_fix.get("maintenance_pct")
     )
 
+    safe_model = github_auth.sanitize_issue_text(str(model_name), max_chars=200)
+    safe_article = github_auth.sanitize_issue_text(str(article_number), max_chars=80)
+    safe_serial = github_auth.sanitize_issue_text(str(serial_number), max_chars=120)
+    safe_market = github_auth.sanitize_issue_text(str(market_region), max_chars=80)
+    safe_fw = github_auth.sanitize_issue_text(str(firmware), max_chars=120)
+
     title = (
-        f"[Offset Fix + Capture] {model_name} (Article {article_number})"
+        f"[Offset Fix + Capture] {safe_model} (Article {safe_article})"
         if has_offset_fix
-        else f"[Capture] {model_name} (Article {article_number})"
+        else f"[Capture] {safe_model} (Article {safe_article})"
     )
     header = (
         f"### Machine Details\n"
-        f"- **Manufacturer**: {ident.get('manufacturer', 'Jura')}\n"
-        f"- **Model Name**: {model_name}\n"
-        f"- **Article Number**: {article_number}\n"
-        f"- **Serial Number**: {serial_number}\n"
-        f"- **Market / Region**: {market_region}\n"
-        f"- **Firmware**: {firmware}\n"
+        f"- **Manufacturer**: {github_auth.sanitize_issue_text(str(ident.get('manufacturer', 'Jura')), max_chars=80)}\n"
+        f"- **Model Name**: {safe_model}\n"
+        f"- **Article Number**: {safe_article}\n"
+        f"- **Serial Number**: {safe_serial}\n"
+        f"- **Market / Region**: {safe_market}\n"
+        f"- **Firmware**: {safe_fw}\n"
         f"- **Build**: {build_val}\n"
         f"- **Timestamp**: {timestamp}\n"
         f"- **EEPROM Words**: {words_count}\n"
@@ -912,13 +949,15 @@ def upload_capture_to_community_repo(
         if market_region and market_region != "N/A":
             merged_ident["market_region"] = market_region
         harvest_patch = machine_library.build_offset_patch_payload(offset_fix, identity=merged_ident)
+        if isinstance(harvest_patch, dict) and isinstance(harvest_patch.get("override"), dict) and harvest_patch["override"].get("notes"):
+            harvest_patch["override"]["notes"] = github_auth.sanitize_issue_text(str(harvest_patch["override"]["notes"]), max_chars=2000)
 
         fix_lines = [
             "### Verified EEPROM Offset Fix (Local AI Calibration)",
-            f"- **Model Used**: `{offset_fix.get('model_used', 'local_ai')}`",
+            f"- **Model Used**: `{github_auth.sanitize_issue_text(str(offset_fix.get('model_used', 'local_ai')), max_chars=120)}`",
         ]
         if offset_fix.get("notes"):
-            fix_lines.append(f"- **Notes**: {offset_fix.get('notes')}")
+            fix_lines.append(f"- **Notes**: {github_auth.sanitize_issue_text(str(offset_fix.get('notes')), max_chars=2000)}")
         fix_lines.extend([
             "",
             "| Category | Item | Address | J.O.E. Ref | EEPROM Raw | Exact |",
@@ -975,7 +1014,34 @@ def upload_capture_to_community_repo(
         return False, "Authentication missing: please sign in with GitHub or provide an access token.", web_url
 
     # 3. Format payload: direct issue body vs Gist fallback (65,536 char limit)
-    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    sanitized_data = json.loads(json.dumps(data, ensure_ascii=False))
+    if isinstance(sanitized_data, dict):
+        # Ensure required spectra-captures catalog root keys are always present
+        meta_obj = sanitized_data.get("metadata")
+        if not isinstance(meta_obj, dict):
+            meta_obj = {}
+            sanitized_data["metadata"] = meta_obj
+        meta_obj.setdefault("timestamp", timestamp)
+        meta_obj.setdefault("spectra_build", str(build_val))
+        meta_obj.setdefault("probe_version", f"Build {build_val}")
+        if not isinstance(sanitized_data.get("identity"), dict):
+            sanitized_data["identity"] = dict(ident)
+        if not isinstance(sanitized_data.get("gateways"), dict):
+            sanitized_data["gateways"] = {}
+        if not isinstance(sanitized_data.get("eeprom_words"), dict):
+            sanitized_data["eeprom_words"] = {}
+
+        for k_fix in ("ai_offset_fix", "override"):
+            if isinstance(sanitized_data.get(k_fix), dict) and sanitized_data[k_fix].get("notes"):
+                sanitized_data[k_fix]["notes"] = github_auth.sanitize_issue_text(
+                    str(sanitized_data[k_fix]["notes"]), max_chars=2000
+                )
+        if isinstance(sanitized_data.get("joe_ground_truth"), dict) and isinstance(sanitized_data["joe_ground_truth"].get("raw_lines"), list):
+            sanitized_data["joe_ground_truth"]["raw_lines"] = [
+                github_auth.sanitize_issue_text(str(ln), max_chars=500)
+                for ln in sanitized_data["joe_ground_truth"]["raw_lines"]
+            ]
+    json_str = github_auth.sanitize_issue_text(json.dumps(sanitized_data, indent=2, ensure_ascii=False), max_chars=250000)
     direct_body = (
         header +
         fix_section +
@@ -1007,6 +1073,7 @@ def upload_capture_to_community_repo(
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
                 "Content-Type": "application/json",
                 "User-Agent": "SPECTRA-Diagnostics"
             }
@@ -1017,12 +1084,8 @@ def upload_capture_to_community_repo(
                 g_data = json.loads(g_resp.read().decode("utf-8"))
                 gist_url = g_data.get("html_url")
         except urllib.error.HTTPError as he:
-            if he.code == 401:
-                return False, "GitHub API error 401: Unauthorized (bad credentials)", None
-            elif he.code == 403:
-                return False, "GitHub API error 403: Forbidden (rate limit or insufficient token scopes)", None
-            else:
-                return False, f"GitHub Gist API error {he.code}: {he.reason}", None
+            err_info = github_auth._extract_github_http_error(he)
+            return False, github_auth._format_github_http_error(err_info, prefix="GitHub Gist API error"), None
         except urllib.error.URLError as ue:
             return False, f"Network error creating capture gist: {ue.reason}", None
         except Exception as e:
@@ -1052,6 +1115,7 @@ def upload_capture_to_community_repo(
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
                 "Content-Type": "application/json",
                 "User-Agent": "SPECTRA-Diagnostics"
             }
@@ -1065,27 +1129,20 @@ def upload_capture_to_community_repo(
             issue_url = resp_data.get("html_url")
             return True, f"Capture uploaded successfully: {issue_url}", issue_url
     except urllib.error.HTTPError as he:
-        if he.code == 422:
-            # Retry without label
+        err_info = github_auth._extract_github_http_error(he)
+        if err_info["is_label_error"]:
+            # Retry without label (422 missing label or 403 non-collaborator label creation denied)
             try:
                 with _post_issue(include_label=False) as resp2:
                     resp_data2 = json.loads(resp2.read().decode("utf-8"))
                     issue_url = resp_data2.get("html_url")
                     return True, f"Capture uploaded successfully: {issue_url}", issue_url
             except urllib.error.HTTPError as he2:
-                if he2.code == 401:
-                    return False, "GitHub API error 401: Unauthorized (bad credentials)", None
-                elif he2.code == 403:
-                    return False, "GitHub API error 403: Forbidden (rate limit or permissions)", None
-                return False, f"GitHub API error {he2.code}: {he2.reason}", None
+                err_info2 = github_auth._extract_github_http_error(he2)
+                return False, github_auth._format_github_http_error(err_info2), None
             except Exception as e2:
                 return False, f"GitHub API error on retry: {e2}", None
-        elif he.code == 401:
-            return False, "GitHub API error 401: Unauthorized (bad credentials)", None
-        elif he.code == 403:
-            return False, "GitHub API error 403: Forbidden (rate limit or permissions)", None
-        else:
-            return False, f"GitHub API error {he.code}: {he.reason}", None
+        return False, github_auth._format_github_http_error(err_info), None
     except urllib.error.URLError as ue:
         return False, f"Network error contacting GitHub API: {ue.reason}", None
     except Exception as e:

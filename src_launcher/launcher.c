@@ -12,9 +12,11 @@
 #include <wchar.h>
 #include <shellapi.h>
 #include <conio.h>
+#include "win_safe.h"
+#include "zip_extract.h"
 
-#define SPECTRA_BUILD        "20261120.0902"
-#define SPECTRA_VERSION      "Build 20261120.0902"
+#define SPECTRA_BUILD        "20261125.1535"
+#define SPECTRA_VERSION      "Build 20261125.1535"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 // ============================================================================
@@ -62,10 +64,14 @@ static BOOL dir_exists(const wchar_t *path) {
 
 static void create_dir_recursive(const wchar_t *path) {
     wchar_t temp[MAX_PATH];
-    wcsncpy(temp, path, MAX_PATH);
+    safe_wcopy(temp, MAX_PATH, path);
     size_t len = wcslen(temp);
     for (size_t i = 1; i < len; i++) {
         if (temp[i] == L'\\' || temp[i] == L'/') {
+            if (i == 2 && temp[1] == L':') {
+                temp[i] = L'\\';
+                continue;
+            }
             temp[i] = L'\0';
             CreateDirectoryW(temp, NULL);
             temp[i] = L'\\';
@@ -89,6 +95,9 @@ static BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
     }
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
+    if (ctx->target_pid != 0 && pid != ctx->target_pid) {
+        return TRUE;
+    }
     wchar_t title[256];
     if (GetWindowTextW(hwnd, title, 256) > 0) {
         // Match main window: "SPECTRA — Universal...", "SPECTRA - Universal...", or browser title containing SPECTRA
@@ -294,13 +303,10 @@ static BOOL extract_embedded_payload(const wchar_t *target_dir) {
     if (!hData) return FALSE;
 
     DWORD size = SizeofResource(NULL, hRes);
-    void *pData = LockResource(hData);
+    const unsigned char *pData = (const unsigned char *)LockResource(hData);
     if (!pData || size == 0) return FALSE;
 
     create_dir_recursive(target_dir);
-
-    wchar_t zip_path[MAX_PATH];
-    swprintf(zip_path, MAX_PATH, L"%ls\\bundle.zip", target_dir);
 
     if (g_hSplash) {
         g_status_text = L"First-run extraction in progress...";
@@ -310,57 +316,7 @@ static BOOL extract_embedded_payload(const wchar_t *target_dir) {
         wprintf(L"[*] Extracting standalone SPECTRA runtime (first run initialization)...\n");
     }
 
-    HANDLE hFile = CreateFileW(zip_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        return FALSE;
-    }
-
-    DWORD written = 0;
-    WriteFile(hFile, pData, size, &written, NULL);
-    CloseHandle(hFile);
-
-    // Extraction command via Windows tar.exe (built-in Windows 10/11)
-    wchar_t cmd[4096];
-    swprintf(cmd, 4096, L"tar.exe -xf \"%ls\" -C \"%ls\"", zip_path, target_dir);
-
-    STARTUPINFOW si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    ZeroMemory(&pi, sizeof(pi));
-
-    BOOL extracted = FALSE;
-    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 30000);
-        DWORD code = 0;
-        GetExitCodeProcess(pi.hProcess, &code);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        if (code == 0) extracted = TRUE;
-    }
-
-    // Fallback to PowerShell Expand-Archive (Win7+)
-    if (!extracted) {
-        swprintf(cmd, 4096, L"powershell.exe -NoProfile -NonInteractive -Command \"Expand-Archive -Path '%ls' -DestinationPath '%ls' -Force\"", zip_path, target_dir);
-        ZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        ZeroMemory(&pi, sizeof(pi));
-        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, target_dir, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 60000);
-            DWORD code = 0;
-            GetExitCodeProcess(pi.hProcess, &code);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            if (code == 0) extracted = TRUE;
-        }
-    }
-
-    DeleteFileW(zip_path);
-    return extracted;
+    return extract_zip_from_memory(pData, (size_t)size, target_dir);
 }
 
 // ============================================================================
@@ -373,44 +329,44 @@ static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_di
     if (prefer_gui) {
         swprintf(candidate, MAX_PATH, L"%ls\\pythonw.exe", app_dir);
         if (file_exists(candidate)) {
-            wcsncpy(out_path, candidate, max_len);
+            safe_wcopy(out_path, max_len, candidate);
             return TRUE;
         }
         swprintf(candidate, MAX_PATH, L"%ls\\python\\pythonw.exe", app_dir);
         if (file_exists(candidate)) {
-            wcsncpy(out_path, candidate, max_len);
+            safe_wcopy(out_path, max_len, candidate);
             return TRUE;
         }
     }
 
     swprintf(candidate, MAX_PATH, L"%ls\\python.exe", app_dir);
     if (file_exists(candidate)) {
-        wcsncpy(out_path, candidate, max_len);
+        safe_wcopy(out_path, max_len, candidate);
         return TRUE;
     }
     swprintf(candidate, MAX_PATH, L"%ls\\python\\python.exe", app_dir);
     if (file_exists(candidate)) {
-        wcsncpy(out_path, candidate, max_len);
+        safe_wcopy(out_path, max_len, candidate);
         return TRUE;
     }
 
     // 2. Search in system PATH
     if (prefer_gui) {
         if (SearchPathW(NULL, L"pythonw.exe", NULL, MAX_PATH, candidate, NULL) > 0) {
-            wcsncpy(out_path, candidate, max_len);
+            safe_wcopy(out_path, max_len, candidate);
             return TRUE;
         }
     }
     if (SearchPathW(NULL, L"python.exe", NULL, MAX_PATH, candidate, NULL) > 0) {
-        wcsncpy(out_path, candidate, max_len);
+        safe_wcopy(out_path, max_len, candidate);
         return TRUE;
     }
     if (SearchPathW(NULL, L"py.exe", NULL, MAX_PATH, candidate, NULL) > 0) {
-        wcsncpy(out_path, candidate, max_len);
+        safe_wcopy(out_path, max_len, candidate);
         return TRUE;
     }
     if (SearchPathW(NULL, L"python3.exe", NULL, MAX_PATH, candidate, NULL) > 0) {
-        wcsncpy(out_path, candidate, max_len);
+        safe_wcopy(out_path, max_len, candidate);
         return TRUE;
     }
 
@@ -424,13 +380,13 @@ static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_di
             if (prefer_gui) {
                 swprintf(candidate, MAX_PATH, L"%ls\\Programs\\Python\\%ls\\pythonw.exe", local_app_data, subdirs[i]);
                 if (file_exists(candidate)) {
-                    wcsncpy(out_path, candidate, max_len);
+                    safe_wcopy(out_path, max_len, candidate);
                     return TRUE;
                 }
             }
             swprintf(candidate, MAX_PATH, L"%ls\\Programs\\Python\\%ls\\python.exe", local_app_data, subdirs[i]);
             if (file_exists(candidate)) {
-                wcsncpy(out_path, candidate, max_len);
+                safe_wcopy(out_path, max_len, candidate);
                 return TRUE;
             }
         }
@@ -444,13 +400,13 @@ static BOOL find_python(wchar_t *out_path, size_t max_len, const wchar_t *app_di
         if (prefer_gui) {
             swprintf(candidate, MAX_PATH, L"%ls\\pythonw.exe", std_paths[i]);
             if (file_exists(candidate)) {
-                wcsncpy(out_path, candidate, max_len);
+                safe_wcopy(out_path, max_len, candidate);
                 return TRUE;
             }
         }
         swprintf(candidate, MAX_PATH, L"%ls\\python.exe", std_paths[i]);
         if (file_exists(candidate)) {
-            wcsncpy(out_path, candidate, max_len);
+            safe_wcopy(out_path, max_len, candidate);
             return TRUE;
         }
     }
@@ -464,6 +420,10 @@ extern HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(PCWSTR AppID);
 // Main GUI Entry Point (wWinMain)
 // ============================================================================
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    (void)hPrevInstance;
+    (void)pCmdLine;
+    (void)nCmdShow;
+    enable_safe_dll_search();
     SetCurrentProcessExplicitAppUserModelID(L"SPECTRA.Diagnostics.Suite");
     int argc = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -539,24 +499,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (last_slash) *last_slash = L'\0';
 
     wchar_t app_dir[MAX_PATH];
-    wcsncpy(app_dir, exe_dir, MAX_PATH);
+    safe_wcopy(app_dir, MAX_PATH, exe_dir);
 
-    // 1. Check if spectra_app.py exists adjacent or in parent directory
+    // 1. Check if spectra_app.py exists adjacent (or in parent ONLY for thin dev-tree bin\spectra.exe without embedded RCDATA)
     wchar_t candidate_script[MAX_PATH];
     BOOL found_local = FALSE;
+    BOOL has_embedded_bundle = (FindResourceW(NULL, MAKEINTRESOURCEW(101), RT_RCDATA) != NULL);
 
-    swprintf(candidate_script, MAX_PATH, L"%ls\\spectra_app.py", app_dir);
-    if (file_exists(candidate_script)) {
+    int cs_n = swprintf(candidate_script, MAX_PATH, L"%ls\\spectra_app.py", app_dir);
+    if (cs_n > 0 && cs_n < MAX_PATH && file_exists(candidate_script) && is_not_reparse_point(candidate_script)) {
         found_local = TRUE;
-    } else {
-        swprintf(candidate_script, MAX_PATH, L"%ls\\..\\spectra_app.py", app_dir);
-        if (file_exists(candidate_script)) {
-            wchar_t full_parent[MAX_PATH];
-            GetFullPathNameW(candidate_script, MAX_PATH, full_parent, NULL);
-            wchar_t *slash = wcsrchr(full_parent, L'\\');
-            if (slash) *slash = L'\0';
-            wcsncpy(app_dir, full_parent, MAX_PATH);
-            found_local = TRUE;
+    } else if (!has_embedded_bundle) {
+        const wchar_t *dir_leaf = wcsrchr(app_dir, L'\\');
+        if (dir_leaf && _wcsicmp(dir_leaf + 1, L"bin") == 0) {
+            int ps_n = swprintf(candidate_script, MAX_PATH, L"%ls\\..\\spectra_app.py", app_dir);
+            if (ps_n > 0 && ps_n < MAX_PATH && file_exists(candidate_script)) {
+                wchar_t full_parent[MAX_PATH];
+                DWORD fp_len = GetFullPathNameW(candidate_script, MAX_PATH, full_parent, NULL);
+                if (fp_len > 0 && fp_len < MAX_PATH) {
+                    wchar_t *slash = wcsrchr(full_parent, L'\\');
+                    if (slash) *slash = L'\0';
+                    if (is_not_reparse_point(full_parent)) {
+                        safe_wcopy(app_dir, MAX_PATH, full_parent);
+                        found_local = TRUE;
+                    }
+                }
+            }
         }
     }
 
@@ -564,31 +532,37 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     python_exe[0] = L'\0';
 
     // 2. If not found locally, check or extract embedded standalone bundle
-    if (!found_local) {
+    if (!found_local && has_embedded_bundle) {
         wchar_t local_app_data[MAX_PATH];
-        if (GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH) > 0) {
+        DWORD lad_len = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, MAX_PATH);
+        if (lad_len > 0 && lad_len < MAX_PATH && is_safe_install_path(local_app_data)) {
+            wchar_t spectra_root[MAX_PATH];
             wchar_t bundle_dir[MAX_PATH];
-            swprintf(bundle_dir, MAX_PATH, L"%ls\\Programs\\SPECTRA\\build_%hs", local_app_data, SPECTRA_BUILD);
-
-            wchar_t bundled_script[MAX_PATH];
-            swprintf(bundled_script, MAX_PATH, L"%ls\\spectra_app.py", bundle_dir);
-            wchar_t bundled_python[MAX_PATH];
-            swprintf(bundled_python, MAX_PATH, !is_cli_mode ? L"%ls\\pythonw.exe" : L"%ls\\python.exe", bundle_dir);
-
-            if (!file_exists(bundled_script) || (!file_exists(bundled_python) && !file_exists(candidate_script))) {
-                if (extract_embedded_payload(bundle_dir)) {
-                    wcsncpy(app_dir, bundle_dir, MAX_PATH);
-                    if (file_exists(bundled_python)) {
-                        wcsncpy(python_exe, bundled_python, MAX_PATH);
+            int rn = swprintf(spectra_root, MAX_PATH, L"%ls\\Programs\\SPECTRA", local_app_data);
+            int bn = swprintf(bundle_dir, MAX_PATH, L"%ls\\Programs\\SPECTRA\\build_%hs", local_app_data, SPECTRA_BUILD);
+            if (rn > 0 && rn < MAX_PATH && bn > 0 && bn < MAX_PATH &&
+                is_not_reparse_point(spectra_root) && is_not_reparse_point(bundle_dir)) {
+                wchar_t bundled_script[MAX_PATH];
+                wchar_t bundled_python[MAX_PATH];
+                int sn = swprintf(bundled_script, MAX_PATH, L"%ls\\spectra_app.py", bundle_dir);
+                int pn = swprintf(bundled_python, MAX_PATH, !is_cli_mode ? L"%ls\\pythonw.exe" : L"%ls\\python.exe", bundle_dir);
+                if (sn > 0 && sn < MAX_PATH && pn > 0 && pn < MAX_PATH) {
+                    if (!file_exists(bundled_script) || (!file_exists(bundled_python) && !file_exists(candidate_script))) {
+                        if (extract_embedded_payload(bundle_dir)) {
+                            safe_wcopy(app_dir, MAX_PATH, bundle_dir);
+                            if (file_exists(bundled_python)) {
+                                safe_wcopy(python_exe, MAX_PATH, bundled_python);
+                            }
+                            found_local = TRUE;
+                        }
+                    } else {
+                        safe_wcopy(app_dir, MAX_PATH, bundle_dir);
+                        if (file_exists(bundled_python)) {
+                            safe_wcopy(python_exe, MAX_PATH, bundled_python);
+                        }
+                        found_local = TRUE;
                     }
-                    found_local = TRUE;
                 }
-            } else {
-                wcsncpy(app_dir, bundle_dir, MAX_PATH);
-                if (file_exists(bundled_python)) {
-                    wcsncpy(python_exe, bundled_python, MAX_PATH);
-                }
-                found_local = TRUE;
             }
         }
     }
@@ -613,20 +587,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     MB_ICONWARNING | MB_OK
                 );
             }
+            if (argv) LocalFree(argv);
             return 1;
         }
     }
 
     // 3b. Native Desktop Shell Cutover: prefer spectra-shell.exe directly in GUI mode
     wchar_t shell_exe[MAX_PATH];
-    swprintf(shell_exe, MAX_PATH, L"%ls\\spectra-shell.exe", app_dir);
-    if (!is_cli_mode && !is_browser_mode && file_exists(shell_exe)) {
+    int sh_n = swprintf(shell_exe, MAX_PATH, L"%ls\\spectra-shell.exe", app_dir);
+    if (sh_n > 0 && sh_n < MAX_PATH && !is_cli_mode && !is_browser_mode && file_exists(shell_exe) && is_not_reparse_point(shell_exe)) {
         if (g_hSplash) {
             DestroyWindow(g_hSplash);
             g_hSplash = NULL;
         }
         wchar_t shell_cmd[32768];
-        swprintf(shell_cmd, 32768, L"\"%ls\" --root \"%ls\"", shell_exe, app_dir);
+        size_t shell_pos = 0;
+        shell_cmd[0] = L'\0';
+        if (!safe_append_win32_arg(shell_cmd, 32768, &shell_pos, shell_exe) ||
+            !safe_wappendf(shell_cmd, 32768, &shell_pos, L" --root") ||
+            !safe_append_win32_arg(shell_cmd, 32768, &shell_pos, app_dir)) {
+            if (argv) LocalFree(argv);
+            return 1;
+        }
+        LPWSTR shell_cmd_ptr = (shell_cmd[0] == L' ') ? (shell_cmd + 1) : shell_cmd;
 
         STARTUPINFOW si_shell;
         PROCESS_INFORMATION pi_shell;
@@ -636,7 +619,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         si_shell.wShowWindow = SW_SHOWNORMAL;
         ZeroMemory(&pi_shell, sizeof(pi_shell));
 
-        if (CreateProcessW(NULL, shell_cmd, NULL, NULL, FALSE, 0, NULL, app_dir, &si_shell, &pi_shell)) {
+        if (CreateProcessW(shell_exe, shell_cmd_ptr, NULL, NULL, FALSE, 0, NULL, app_dir, &si_shell, &pi_shell)) {
             WaitForSingleObject(pi_shell.hProcess, INFINITE);
             DWORD shell_exit = 0;
             GetExitCodeProcess(pi_shell.hProcess, &shell_exit);
@@ -672,19 +655,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 5. Construct command line
+    // 5. Construct command line cleanly with proper Win32 argument escaping
     wchar_t cmd_line[32768];
-    int offset = swprintf(cmd_line, 32768, L"\"%ls\" \"%ls\"", python_exe, script_path);
+    size_t cmd_pos = 0;
+    cmd_line[0] = L'\0';
+    if (!safe_wappendf(cmd_line, 32768, &cmd_pos, L"\"%ls\"", python_exe) ||
+        !safe_append_win32_arg(cmd_line, 32768, &cmd_pos, script_path)) {
+        if (g_hSplash) DestroyWindow(g_hSplash);
+        if (argv) LocalFree(argv);
+        return 1;
+    }
 
     for (int i = 1; i < argc; i++) {
-        offset += swprintf(cmd_line + offset, 32768 - offset, L" \"%ls\"", argv[i]);
+        if (!safe_append_win32_arg(cmd_line, 32768, &cmd_pos, argv[i])) {
+            if (g_hSplash) DestroyWindow(g_hSplash);
+            if (argv) LocalFree(argv);
+            return 1;
+        }
     }
 
     if (argc <= 1) {
-        offset += swprintf(cmd_line + offset, 32768 - offset, L" --open");
+        if (!safe_wappendf(cmd_line, 32768, &cmd_pos, L" --open")) {
+            if (g_hSplash) DestroyWindow(g_hSplash);
+            if (argv) LocalFree(argv);
+            return 1;
+        }
     }
 
-    // 6. Launch child process
+    // 6. Launch child process with explicit lpApplicationName
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
@@ -699,7 +697,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     DWORD creation_flags = !is_cli_mode ? CREATE_NO_WINDOW : 0;
     BOOL success = CreateProcessW(
-        NULL,
+        python_exe,
         cmd_line,
         NULL,
         NULL,

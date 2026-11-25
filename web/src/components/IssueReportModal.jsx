@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Flag,
   X,
@@ -13,6 +13,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
+import { safeExternalUrl, openSafeExternalUrl } from '../utils/urlSafety';
 
 const ISSUE_CATEGORIES = [
   { id: 'bug', labelKey: 'issueCatBug', color: 'rose' },
@@ -31,10 +32,11 @@ export default function IssueReportModal({
   liveData = null,
   selectedPort = '',
   liveBuild = '',
+  offsetDbVersion = '',
   onOpenGitHubConfig = () => {},
   onSubmittingChange = () => {},
 }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
 
   const [category, setCategory] = useState('bug');
   const [title, setTitle] = useState('');
@@ -76,6 +78,7 @@ export default function IssueReportModal({
       ef_code: efCode,
       protocol,
       port_type: portType,
+      offset_db_version: offsetDbVersion || statsData?.offset_db_version || '',
     },
   });
 
@@ -102,12 +105,12 @@ export default function IssueReportModal({
       }));
 
       if (mode === 'url_only') {
-        if (data.web_url) {
-          window.open(data.web_url, '_blank', 'noopener,noreferrer');
+        const safeUrl = safeExternalUrl(data.web_url);
+        if (safeUrl && openSafeExternalUrl(safeUrl)) {
           setResult({
             success: true,
             openedBrowser: true,
-            web_url: data.web_url,
+            web_url: safeUrl,
             repo: data.repo,
           });
         } else {
@@ -268,6 +271,7 @@ export default function IssueReportModal({
                 </div>
                 <div className="text-[10px] text-gray-500 font-mono mt-0.5">
                   Build {liveBuild || 'current'}
+                  {(offsetDbVersion || statsData?.offset_db_version) ? ` · Offset DB ${offsetDbVersion || statsData?.offset_db_version}` : ''}
                   {machineModel ? ` · ${machineModel}` : ''}
                   {efCode ? ` (${efCode})` : ''}
                   {protocol ? ` · ${protocol}` : ''}
@@ -310,7 +314,7 @@ export default function IssueReportModal({
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                 )}
                 <div className="space-y-1 flex-1 min-w-0">
-                  {result.success && result.issue_url ? (
+                  {result.success && safeExternalUrl(result.issue_url) ? (
                     <>
                       <div className="font-bold">
                         {t('issueCreatedSuccess', {
@@ -318,7 +322,7 @@ export default function IssueReportModal({
                         })}
                       </div>
                       <a
-                        href={result.issue_url}
+                        href={safeExternalUrl(result.issue_url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center space-x-1 text-sky-300 hover:text-white underline break-all"
@@ -332,9 +336,9 @@ export default function IssueReportModal({
                   ) : (
                     <>
                       <div>{result.error || t('issueUnknownError')}</div>
-                      {result.web_url && (
+                      {safeExternalUrl(result.web_url) && (
                         <a
-                          href={result.web_url}
+                          href={safeExternalUrl(result.web_url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center space-x-1 text-sky-300 hover:text-white underline"

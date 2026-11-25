@@ -7,6 +7,7 @@ Communicates via Modbus RTU serial protocol (9600 / 115200 baud, 8N1).
 
 from typing import Dict, List, Any, Optional, Callable, Tuple
 import struct
+import time
 
 from drivers.base import (
     BaseApplianceDriver,
@@ -94,6 +95,22 @@ class LamantiKLDriver(BaseApplianceDriver):
         has_actuator_tests=True
     )
 
+    def _read_exact_modbus_frame(self, conn: Any, expected_min_bytes: int, timeout_sec: float) -> bytes:
+        buf = bytearray()
+        deadline = time.monotonic() + max(0.05, timeout_sec)
+        target_len = expected_min_bytes
+        while len(buf) < target_len:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
+            chunk = conn.read(max(64, target_len - len(buf)), timeout_sec=min(rem, 0.25))
+            if not chunk:
+                break
+            buf.extend(chunk)
+            if len(buf) >= 3 and buf[1] == 0x04:
+                target_len = max(target_len, 3 + buf[2] + 2)
+        return bytes(buf)
+
     def probe(self, conn: Any) -> Optional[ApplianceIdentification]:
         """
         Probe serial line using standard Kalerm Modbus frame:
@@ -102,7 +119,7 @@ class LamantiKLDriver(BaseApplianceDriver):
         try:
             req = self._build_read_frame(slave=0x01, func=0x04, reg=0x0000, count=1)
             conn.write(req)
-            resp = conn.read(32, timeout_sec=0.6)
+            resp = self._read_exact_modbus_frame(conn, 7, timeout_sec=0.6)
             if resp and len(resp) >= 5 and verify_modbus_crc(resp):
                 if resp[0] == 0x01 and resp[1] == 0x04:
                     # Machine responded with valid Modbus frame!
@@ -113,7 +130,7 @@ class LamantiKLDriver(BaseApplianceDriver):
                     # Try reading model identifier register
                     id_req = self._build_read_frame(slave=0x01, func=0x04, reg=0x0064, count=3)
                     conn.write(id_req)
-                    id_resp = conn.read(32, timeout_sec=0.6)
+                    id_resp = self._read_exact_modbus_frame(conn, 11, timeout_sec=0.6)
                     if id_resp and len(id_resp) >= 7 and verify_modbus_crc(id_resp):
                         # Decode model code if present
                         model_name = "Lamanti X-line (X680C Commercial)"
@@ -144,7 +161,7 @@ class LamantiKLDriver(BaseApplianceDriver):
         try:
             req = self._build_read_frame(slave=0x01, func=0x04, reg=0x0000, count=21)
             conn.write(req)
-            resp = conn.read(64, timeout_sec=0.8)
+            resp = self._read_exact_modbus_frame(conn, 47, timeout_sec=0.8)
 
             is_demo_conn = bool(getattr(conn, "is_demo", False))
             got_frame = bool(resp and len(resp) >= 47 and verify_modbus_crc(resp) and resp[1] == 0x04)
@@ -394,7 +411,9 @@ class LamantiKLDriver(BaseApplianceDriver):
         if progress_cb:
             progress_cb(0.35, "Reading beverage distribution registers...")
 
-        # Beverage counters list
+        is_demo_conn = bool(getattr(conn, "is_demo", False))
+
+        # Beverage counters list (sample counts only on simulated demo connections)
         beverage_specs = [
             ("espresso", "Espresso", 12450),
             ("double_espresso", "Double Espresso", 3120),
@@ -409,10 +428,11 @@ class LamantiKLDriver(BaseApplianceDriver):
         ]
 
         beverages = [
-            BeverageCounter(code=b[0], name=b[1], count=b[2])
+            BeverageCounter(code=b[0], name=b[1], count=b[2] if is_demo_conn else 0)
             for b in beverage_specs
         ]
         total_cups = sum(b.count for b in beverages if b.code not in ("hot_water", "warm_milk"))
+        non_coffee_preps = sum(b.count for b in beverages if b.code in ("hot_water", "warm_milk"))
 
         if progress_cb:
             progress_cb(0.65, "Querying hygiene & maintenance cycles...")
@@ -427,7 +447,7 @@ class LamantiKLDriver(BaseApplianceDriver):
         ]
 
         maintenance = [
-            MaintenanceMetric(name=m[0], count=m[1], percent=m[2], warning=m[3])
+            MaintenanceMetric(name=m[0], count=m[1] if is_demo_conn else 0, percent=m[2], warning=m[3])
             for m in maintenance_specs
         ]
 
@@ -444,7 +464,7 @@ class LamantiKLDriver(BaseApplianceDriver):
             model=ident.model,
             identification=ident,
             total_cups=total_cups,
-            total_preparations=total_cups + 1640 + 890,
+            total_preparations=total_cups + non_coffee_preps,
             beverages=beverages,
             maintenance=maintenance,
             switches=ls.get("switches", []),

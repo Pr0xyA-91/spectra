@@ -6,26 +6,37 @@
 //! `/api/github/*`, `/api/stats`, etc.) to a loopback Python sidecar when hybrid mode is active.
 
 use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode};
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::Incoming;
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{watch, oneshot};
+use tokio::sync::{oneshot, watch, Semaphore};
 
 use crate::{send_jura_command, AppState};
 use spectra_core::matches_connected_machine;
 use spectra_hal::SerialTransport;
 
-const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
-const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DEBUG_LOG_ENTRIES: usize = 500;
+const MAX_CONCURRENT_GATEWAY_CONNS: usize = 64;
+const GATEWAY_IO_TIMEOUT: Duration = Duration::from_secs(15);
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
+
+type GatewayBody = BoxBody<Bytes, Infallible>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidecarState {
@@ -98,9 +109,17 @@ impl GatewayHandle {
     }
 }
 
+#[derive(Clone)]
+struct CachedProfileEntry {
+    ef_code: String,
+    model_family: String,
+    products: Vec<String>,
+}
+
 struct GatewayShared {
     app_root: PathBuf,
     dist_root: PathBuf,
+    gw_port: u16,
     pure_rust: bool,
     build: String,
     edition: String,
@@ -109,6 +128,7 @@ struct GatewayShared {
     last_heartbeat_epoch_ms: AtomicU64,
     started_epoch_ms: u64,
     logs: Mutex<VecDeque<DebugLogEntry>>,
+    profiles_cache: OnceLock<Vec<CachedProfileEntry>>,
 }
 
 fn now_epoch_ms() -> u64 {
@@ -185,6 +205,7 @@ pub async fn start_gateway_server(cfg: GatewayConfig) -> Result<GatewayHandle, S
     let shared = Arc::new(GatewayShared {
         dist_root: cfg.app_root.join("web").join("dist"),
         app_root: cfg.app_root,
+        gw_port: port,
         pure_rust: cfg.pure_rust,
         build,
         edition,
@@ -193,6 +214,7 @@ pub async fn start_gateway_server(cfg: GatewayConfig) -> Result<GatewayHandle, S
         last_heartbeat_epoch_ms: AtomicU64::new(now_ms),
         started_epoch_ms: now_ms,
         logs: Mutex::new(VecDeque::with_capacity(MAX_DEBUG_LOG_ENTRIES)),
+        profiles_cache: OnceLock::new(),
     });
 
     shared.push_log(
@@ -205,6 +227,8 @@ pub async fn start_gateway_server(cfg: GatewayConfig) -> Result<GatewayHandle, S
         String::new(),
     );
 
+    let conn_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_GATEWAY_CONNS));
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -213,9 +237,24 @@ pub async fn start_gateway_server(cfg: GatewayConfig) -> Result<GatewayHandle, S
                     let Ok((stream, _)) = res else {
                         break;
                     };
+                    let Ok(permit) = Arc::clone(&conn_semaphore).try_acquire_owned() else {
+                        drop(stream);
+                        continue;
+                    };
                     let state = Arc::clone(&shared);
                     tokio::spawn(async move {
-                        let _ = handle_connection(stream, state).await;
+                        let _permit = permit;
+                        let io = TokioIo::new(stream);
+                        let svc = service_fn(move |req| {
+                            let st = Arc::clone(&state);
+                            async move { Ok::<_, Infallible>(handle_request(req, st).await) }
+                        });
+                        let conn = hyper::server::conn::http1::Builder::new()
+                            .timer(hyper_util::rt::TokioTimer::new())
+                            .header_read_timeout(GATEWAY_IO_TIMEOUT)
+                            .keep_alive(false)
+                            .serve_connection(io, svc);
+                        let _ = conn.await;
                     });
                 }
             }
@@ -244,101 +283,171 @@ impl GatewayShared {
             });
         }
     }
-}
 
-struct ParsedHttpRequest {
-    method: String,
-    target: String,
-    path: String,
-    query: String,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-}
-
-async fn read_http_request(stream: &mut TcpStream) -> Result<Option<ParsedHttpRequest>, String> {
-    let mut buf = Vec::with_capacity(4096);
-    let mut tmp = [0u8; 4096];
-    let head_end;
-
-    loop {
-        if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
-            head_end = pos;
-            break;
-        }
-        if buf.len() >= MAX_REQUEST_HEAD_BYTES {
-            return Err("HTTP header too large".to_string());
-        }
-        let n = stream
-            .read(&mut tmp)
-            .await
-            .map_err(|e| format!("Socket read error: {e}"))?;
-        if n == 0 {
-            if buf.is_empty() {
-                return Ok(None);
+    fn cached_profiles(&self) -> &[CachedProfileEntry] {
+        self.profiles_cache.get_or_init(|| {
+            let mut parsed = Vec::new();
+            let profiles_path = self.app_root.join("profiles_data.json");
+            if let Ok(raw) = fs::read_to_string(profiles_path) {
+                if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&raw) {
+                    for (ef_code, entry) in map {
+                        let model_family = entry
+                            .get("model_family")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&ef_code)
+                            .to_string();
+                        let products: Vec<String> = entry
+                            .get("products")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        parsed.push(CachedProfileEntry {
+                            ef_code,
+                            model_family,
+                            products,
+                        });
+                    }
+                }
             }
-            return Err("Unexpected EOF reading HTTP headers".to_string());
-        }
-        buf.extend_from_slice(&tmp[..n]);
+            parsed
+        })
     }
+}
 
-    let head_str = std::str::from_utf8(&buf[..head_end])
-        .map_err(|_| "Invalid UTF-8 in HTTP headers".to_string())?;
-    let mut lines = head_str.split("\r\n");
-    let req_line = lines.next().ok_or_else(|| "Empty request line".to_string())?;
-    let mut parts = req_line.split_whitespace();
-    let method = parts.next().unwrap_or("GET").to_uppercase();
-    let target = parts.next().unwrap_or("/").to_string();
-
-    let (path_raw, query) = match target.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (target.clone(), String::new()),
+fn is_loopback_host(host: &str) -> bool {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let host_only = if let Some(rest) = trimmed.strip_prefix('[') {
+        let Some((ip, tail)) = rest.split_once(']') else {
+            return false;
+        };
+        if !tail.is_empty() {
+            let Some(port_str) = tail.strip_prefix(':') else {
+                return false;
+            };
+            if port_str.is_empty() || port_str.parse::<u16>().is_err() {
+                return false;
+            }
+        }
+        return ip.eq_ignore_ascii_case("::1");
+    } else if let Some((h, port_str)) = trimmed.rsplit_once(':') {
+        if port_str.is_empty() || port_str.parse::<u16>().is_err() {
+            return false;
+        }
+        h
+    } else {
+        trimmed
     };
 
-    let mut headers = Vec::new();
-    let mut content_len: usize = 0;
-    for line in lines {
-        if let Some((k, v)) = line.split_once(':') {
-            let key = k.trim().to_string();
-            let val = v.trim().to_string();
-            if key.eq_ignore_ascii_case("content-length") {
-                content_len = val.parse::<usize>().unwrap_or(0);
-            }
-            headers.push((key, val));
-        }
-    }
-
-    if content_len > MAX_REQUEST_BODY_BYTES {
-        return Err("Request body exceeds 64 MiB limit".to_string());
-    }
-
-    let body_start = head_end + 4;
-    let mut body = buf[body_start..].to_vec();
-    while body.len() < content_len {
-        let remaining = content_len - body.len();
-        let to_read = remaining.min(tmp.len());
-        let n = stream
-            .read(&mut tmp[..to_read])
-            .await
-            .map_err(|e| format!("Socket body read error: {e}"))?;
-        if n == 0 {
-            return Err("Unexpected EOF reading HTTP body".to_string());
-        }
-        body.extend_from_slice(&tmp[..n]);
-    }
-    body.truncate(content_len);
-
-    Ok(Some(ParsedHttpRequest {
-        method,
-        target,
-        path: percent_decode(&path_raw),
-        query,
-        headers,
-        body,
-    }))
+    host_only.eq_ignore_ascii_case("localhost") || host_only == "127.0.0.1"
 }
 
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+fn extract_loopback_origin_port(raw: &str) -> Option<u16> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let rest = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))?;
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let (host_only, port_str) = if let Some(rest_v6) = authority.strip_prefix('[') {
+        let (ip, tail) = rest_v6.split_once(']')?;
+        let port_s = tail.strip_prefix(':')?;
+        (ip, port_s)
+    } else {
+        authority.rsplit_once(':')?
+    };
+    if !(host_only.eq_ignore_ascii_case("localhost")
+        || host_only == "127.0.0.1"
+        || host_only.eq_ignore_ascii_case("::1"))
+    {
+        return None;
+    }
+    port_str.parse::<u16>().ok()
+}
+
+fn is_allowed_origin_for_port(origin: &str, gw_port: u16) -> bool {
+    let trimmed = origin.trim().trim_end_matches('/');
+    if matches!(
+        trimmed,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    ) {
+        return true;
+    }
+    let Some(port) = extract_loopback_origin_port(trimmed) else {
+        return false;
+    };
+    if port == gw_port {
+        return true;
+    }
+    if std::env::var("SPECTRA_DEV_CORS").as_deref() == Ok("1") && matches!(port, 5173 | 4173) {
+        return true;
+    }
+    false
+}
+
+fn is_allowed_origin(origin: &str, headers: &HeaderMap, gw_port: u16) -> bool {
+    let trimmed = origin.trim();
+    if trimmed.eq_ignore_ascii_case("null") {
+        // Mirror web_server.py: allow `Origin: null` ONLY when browser-enforced headers
+        // prove loopback origin (blocks cross-origin sandboxed iframe CSRF).
+        if let Some(sec_fetch) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+            let s = sec_fetch.trim();
+            if s.eq_ignore_ascii_case("same-origin") {
+                return true;
+            }
+            if s.eq_ignore_ascii_case("cross-site") {
+                return false;
+            }
+        }
+        if let Some(referer) = headers.get(http::header::REFERER).and_then(|v| v.to_str().ok()) {
+            return is_allowed_origin_for_port(referer, gw_port);
+        }
+        return false;
+    }
+    is_allowed_origin_for_port(trimmed, gw_port)
+}
+
+fn validate_request_security(headers: &HeaderMap, path: &str, gw_port: u16) -> Result<(), Box<Response<GatewayBody>>> {
+    let host_ok = headers
+        .get(http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(is_loopback_host);
+
+    if !host_ok {
+        return Err(Box::new(json_response(
+            StatusCode::FORBIDDEN,
+            &json!({"success": false, "error": "Forbidden: invalid or missing loopback Host header"}),
+        )));
+    }
+
+    if path.starts_with("/api/") {
+        if let Some(sec_fetch) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+            if sec_fetch.trim().eq_ignore_ascii_case("cross-site") {
+                return Err(Box::new(json_response(
+                    StatusCode::FORBIDDEN,
+                    &json!({"success": false, "error": "Forbidden: cross-site API request rejected"}),
+                )));
+            }
+        }
+        if let Some(origin) = headers.get(http::header::ORIGIN).and_then(|v| v.to_str().ok()) {
+            if !is_allowed_origin(origin, headers, gw_port) {
+                return Err(Box::new(json_response(
+                    StatusCode::FORBIDDEN,
+                    &json!({"success": false, "error": "Forbidden: non-loopback or cross-port Origin rejected"}),
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn percent_decode(input: &str) -> String {
@@ -384,46 +493,60 @@ fn parse_query_params(query: &str) -> HashMap<String, String> {
     map
 }
 
-async fn write_http_response(
-    stream: &mut TcpStream,
-    status_line: &str,
-    content_type: &str,
-    cache_control: &str,
-    body: &[u8],
-) -> Result<(), String> {
-    let header = format!(
-        "HTTP/1.1 {status_line}\r\n\
-         Content-Type: {content_type}\r\n\
-         Content-Length: {}\r\n\
-         Cache-Control: {cache_control}\r\n\
-         X-Content-Type-Options: nosniff\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
+fn attach_security_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
     );
-    stream
-        .write_all(header.as_bytes())
-        .await
-        .and_then(|_| Ok(()))
-        .map_err(|e| e.to_string())?;
-    stream.write_all(body).await.map_err(|e| e.to_string())?;
-    let _ = stream.flush().await;
-    Ok(())
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
 }
 
-async fn write_json_response(stream: &mut TcpStream, status: &str, val: &Value) -> Result<(), String> {
+fn bytes_response(
+    status: StatusCode,
+    content_type: &'static str,
+    cache_control: &'static str,
+    body: Bytes,
+) -> Response<GatewayBody> {
+    let mut resp = Response::new(Full::new(body).map_err(|never| match never {}).boxed());
+    *resp.status_mut() = status;
+    let headers = resp.headers_mut();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        HeaderValue::from_static(content_type),
+    );
+    headers.insert(
+        http::header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    attach_security_headers(headers);
+    resp
+}
+
+fn json_response(status: StatusCode, val: &Value) -> Response<GatewayBody> {
     let body = serde_json::to_vec(val).unwrap_or_else(|_| b"{}".to_vec());
-    write_http_response(
-        stream,
+    bytes_response(
         status,
         "application/json; charset=utf-8",
         "no-store",
-        &body,
+        Bytes::from(body),
     )
-    .await
 }
 
 fn mime_type_for_path(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "html" | "htm" => "text/html; charset=utf-8",
         "js" | "mjs" => "application/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -459,39 +582,81 @@ fn sanitize_safe_subpath(root: &Path, req_rel: &str) -> Option<PathBuf> {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, state: Arc<GatewayShared>) -> Result<(), String> {
-    let Some(req) = read_http_request(&mut stream).await? else {
-        return Ok(());
-    };
+async fn read_limited_body(body: Incoming) -> Result<Bytes, Box<Response<GatewayBody>>> {
+    let limited = Limited::new(body, MAX_REQUEST_BODY_BYTES);
+    match limited.collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("length limit exceeded") {
+                Err(Box::new(json_response(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &json!({"success": false, "error": "Request body exceeds 16 MiB limit"}),
+                )))
+            } else {
+                Err(Box::new(json_response(
+                    StatusCode::BAD_REQUEST,
+                    &json!({"success": false, "error": format!("Invalid request body: {msg}")}),
+                )))
+            }
+        }
+    }
+}
+
+async fn handle_request(req: Request<Incoming>, state: Arc<GatewayShared>) -> Response<GatewayBody> {
+    let path_raw = req.uri().path().to_string();
+    let path = percent_decode(&path_raw);
+    let query = req.uri().query().unwrap_or("").to_string();
+    let target = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    let method = req.method().clone();
+
+    if let Err(resp) = validate_request_security(req.headers(), &path, state.gw_port) {
+        return *resp;
+    }
+
+    if let Some(content_len) = req
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        if content_len > MAX_REQUEST_BODY_BYTES {
+            return json_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &json!({"success": false, "error": "Request body exceeds 16 MiB limit"}),
+            );
+        }
+    }
 
     // 1. Static assets served natively in Rust with zero Python dependency
-    if req.method == "GET" && !req.path.starts_with("/api/") {
-        if let Some((file_path, is_html)) = resolve_static_asset(&state, &req.path) {
-            if let Ok(bytes) = fs::read(&file_path) {
+    if method == Method::GET && !path.starts_with("/api/") {
+        if let Some((file_path, is_html)) = resolve_static_asset(&state, &path) {
+            if let Ok(bytes) = tokio::fs::read(&file_path).await {
                 let mime = mime_type_for_path(&file_path);
                 let cache = if is_html {
                     "no-store, no-cache, must-revalidate"
                 } else {
                     "public, max-age=300"
                 };
-                return write_http_response(&mut stream, "200 OK", mime, cache, &bytes).await;
+                return bytes_response(StatusCode::OK, mime, cache, Bytes::from(bytes));
             }
         }
-        return write_http_response(
-            &mut stream,
-            "404 Not Found",
+        return bytes_response(
+            StatusCode::NOT_FOUND,
             "text/plain; charset=utf-8",
             "no-store",
-            b"Not Found",
-        )
-        .await;
+            Bytes::from_static(b"Not Found"),
+        );
     }
 
     // 2. Core Rust-owned API endpoints (fast path in both hybrid and pure-rust modes)
-    if req.method == "GET" && req.path == "/api/version" {
-        return write_json_response(
-            &mut stream,
-            "200 OK",
+    if method == Method::GET && path == "/api/version" {
+        return json_response(
+            StatusCode::OK,
             &json!({
                 "success": true,
                 "build": state.build,
@@ -501,49 +666,64 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<GatewayShared>) -> 
                 "gateway": "rust",
                 "pure_rust": state.pure_rust,
             }),
-        )
-        .await;
+        );
     }
 
-    if req.method == "POST" && req.path == "/api/app/heartbeat" {
-        state.last_heartbeat_epoch_ms.store(now_epoch_ms(), Ordering::Relaxed);
-        return write_json_response(
-            &mut stream,
-            "200 OK",
+    if method == Method::POST && path == "/api/app/heartbeat" {
+        state
+            .last_heartbeat_epoch_ms
+            .store(now_epoch_ms(), Ordering::Relaxed);
+        return json_response(
+            StatusCode::OK,
             &json!({
                 "success": true,
                 "status": "ALIVE",
                 "gateway": "rust"
             }),
-        )
-        .await;
+        );
     }
 
-    if req.method == "POST" && (req.path == "/api/app/window_closed" || req.path == "/api/app/close") {
-        let immediate = serde_json::from_slice::<Value>(&req.body)
+    if method == Method::POST && (path == "/api/app/window_closed" || path == "/api/app/close") {
+        let req_headers = req.headers().clone();
+        let body_bytes = match read_limited_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return *resp,
+        };
+        let immediate = serde_json::from_slice::<Value>(&body_bytes)
             .ok()
             .and_then(|v| v.get("immediate").and_then(|b| b.as_bool()))
             .unwrap_or(false);
         if !immediate {
-            return write_json_response(
-                &mut stream,
-                "200 OK",
+            return json_response(
+                StatusCode::OK,
                 &json!({
                     "success": true,
                     "status": "IGNORED_NATIVE_CONTAINER"
                 }),
-            )
-            .await;
+            );
         }
+        if state.pure_rust {
+            return handle_pure_rust_api(method, &path, &query, &body_bytes, &state).await;
+        }
+        return proxy_to_sidecar(method, &target, &req_headers, body_bytes, &state).await;
     }
 
     // 3. Standalone --pure-rust execution (zero Python process required)
     if state.pure_rust {
-        return handle_pure_rust_api(&mut stream, &req, &state).await;
+        let body_bytes = match read_limited_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return *resp,
+        };
+        return handle_pure_rust_api(method, &path, &query, &body_bytes, &state).await;
     }
 
-    // 4. Hybrid Phase 3 sidecar reverse-proxy for legacy Python-backed routes
-    proxy_to_sidecar(&mut stream, &req, &state).await
+    // 4. Hybrid Phase 3 sidecar reverse-proxy for legacy Python-backed routes (streams upstream body)
+    let req_headers = req.headers().clone();
+    let body_bytes = match read_limited_body(req.into_body()).await {
+        Ok(b) => b,
+        Err(resp) => return *resp,
+    };
+    proxy_to_sidecar(method, &target, &req_headers, body_bytes, &state).await
 }
 
 fn resolve_static_asset(state: &GatewayShared, req_path: &str) -> Option<(PathBuf, bool)> {
@@ -575,12 +755,18 @@ fn resolve_static_asset(state: &GatewayShared, req_path: &str) -> Option<(PathBu
 }
 
 async fn handle_pure_rust_api(
-    stream: &mut TcpStream,
-    req: &ParsedHttpRequest,
+    method: Method,
+    path: &str,
+    query: &str,
+    body_bytes: &[u8],
     state: &GatewayShared,
-) -> Result<(), String> {
-    if req.method == "GET" && req.path == "/api/ports" {
-        let mut ports = SerialTransport::list_ports().unwrap_or_default();
+) -> Response<GatewayBody> {
+    if method == Method::GET && path == "/api/ports" {
+        let mut ports = tokio::task::spawn_blocking(SerialTransport::list_ports)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
         for demo in [
             "DEMO / SIMULATION (Jura Impressa XJ5)",
             "DEMO / SIMULATION (Jura Z6)",
@@ -592,19 +778,19 @@ async fn handle_pure_rust_api(
         ] {
             ports.push(demo.to_string());
         }
-        return write_json_response(stream, "200 OK", &Value::from(ports)).await;
+        return json_response(StatusCode::OK, &Value::from(ports));
     }
 
-    if req.method == "GET" && req.path == "/api/machines" {
-        let params = parse_query_params(&req.query);
+    if method == Method::GET && path == "/api/machines" {
+        let params = parse_query_params(query);
         let det_ef = params.get("ef").map(String::as_str).unwrap_or("");
         let det_art = params.get("art").map(String::as_str).unwrap_or("");
         let det_model = params.get("model").map(String::as_str).unwrap_or("");
-        let catalog = build_rust_machine_catalog(&state.app_root, det_ef, det_art, det_model);
-        return write_json_response(stream, "200 OK", &catalog).await;
+        let catalog = build_rust_machine_catalog(state, det_ef, det_art, det_model);
+        return json_response(StatusCode::OK, &catalog);
     }
 
-    if req.method == "GET" && req.path == "/api/debug/status" {
+    if method == Method::GET && path == "/api/debug/status" {
         let logs: Vec<DebugLogEntry> = state
             .logs
             .lock()
@@ -612,9 +798,8 @@ async fn handle_pure_rust_api(
             .unwrap_or_default();
         let err_cnt = logs.iter().filter(|l| l.level == "ERROR").count();
         let warn_cnt = logs.iter().filter(|l| l.level == "WARN").count();
-        return write_json_response(
-            stream,
-            "200 OK",
+        return json_response(
+            StatusCode::OK,
             &json!({
                 "success": true,
                 "build": state.build,
@@ -628,105 +813,118 @@ async fn handle_pure_rust_api(
                 "error_count": err_cnt,
                 "warn_count": warn_cnt,
             }),
-        )
-        .await;
+        );
     }
 
-    if req.method == "POST" && req.path == "/api/debug/clear" {
+    if method == Method::POST && path == "/api/debug/clear" {
         if let Ok(mut g) = state.logs.lock() {
             g.clear();
         }
         state.push_log("INFO", "DEBUG", "Debug log cleared".into(), String::new());
-        return write_json_response(stream, "200 OK", &json!({"success": true})).await;
+        return json_response(StatusCode::OK, &json!({"success": true}));
     }
 
-    if req.method == "POST" && req.path == "/api/debug/client_error" {
-        let body: Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let msg = body.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string();
-        let details = body.get("details").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let source = body.get("source").and_then(|v| v.as_str()).unwrap_or("FRONTEND").to_string();
+    if method == Method::POST && path == "/api/debug/client_error" {
+        let body: Value = serde_json::from_slice(body_bytes).unwrap_or_default();
+        let msg = body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error")
+            .to_string();
+        let details = body
+            .get("details")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let source = body
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("FRONTEND")
+            .to_string();
         state.push_log("ERROR", &source, msg, details);
-        return write_json_response(stream, "200 OK", &json!({"success": true})).await;
+        return json_response(StatusCode::OK, &json!({"success": true}));
     }
 
-    if req.method == "POST" && req.path == "/api/command" {
-        let body: Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let cmd = body.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if method == Method::POST && path == "/api/command" {
+        let body: Value = match serde_json::from_slice(body_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                return json_response(
+                    StatusCode::BAD_REQUEST,
+                    &json!({"success": false, "error": format!("Invalid JSON body: {e}")}),
+                );
+            }
+        };
+        let Some(cmd) = body.get("command").and_then(|v| v.as_str()).map(str::to_string) else {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                &json!({"success": false, "error": "Missing string 'command' field"}),
+            );
+        };
         let res = send_jura_command(&state.app_state, cmd, None).await;
         return match res {
-            Ok(out) => write_json_response(stream, "200 OK", &json!({"success": true, "response": out})).await,
-            Err(err) => write_json_response(stream, "400 Bad Request", &json!({"success": false, "error": err})).await,
+            Ok(out) => json_response(StatusCode::OK, &json!({"success": true, "response": out})),
+            Err(err) => json_response(
+                StatusCode::BAD_REQUEST,
+                &json!({"success": false, "error": err}),
+            ),
         };
     }
 
-    write_json_response(
-        stream,
-        "501 Not Implemented",
+    json_response(
+        StatusCode::NOT_IMPLEMENTED,
         &json!({
             "success": false,
             "pure_rust": true,
-            "error": format!("Endpoint {} requires hybrid sidecar runtime (not running in --pure-rust mode)", req.path)
+            "error": format!("Endpoint {} requires hybrid sidecar runtime (not running in --pure-rust mode)", path)
         }),
     )
-    .await
 }
 
 fn build_rust_machine_catalog(
-    app_root: &Path,
+    state: &GatewayShared,
     detected_ef: &str,
     detected_art: &str,
     detected_model: &str,
 ) -> Value {
     let mut machines = Vec::new();
-    let profiles_path = app_root.join("profiles_data.json");
-    if let Ok(raw) = fs::read_to_string(profiles_path) {
-        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&raw) {
-            for (ef_code, entry) in map {
-                let model_family = entry
-                    .get("model_family")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&ef_code);
-                let matched = matches_connected_machine(
-                    &ef_code,
-                    &[],
-                    model_family,
-                    detected_ef,
-                    detected_art,
-                    detected_model,
-                );
-                let products: Vec<String> = entry
-                    .get("products")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                machines.push(json!({
-                    "id": ef_code,
-                    "ef_code": ef_code,
-                    "model_family": model_family,
-                    "series": "",
-                    "manufacturer": "Jura",
-                    "article_numbers": [],
-                    "sources": ["Built-in Profile"],
-                    "active_source": "Built-in Profile",
-                    "has_verified_spec": false,
-                    "has_local_override": false,
-                    "address_width": 4,
-                    "max_words": 512,
-                    "product_labels": products,
-                    "maintenance_labels": [],
-                    "offsets": {"products": [], "maintenance": [], "maintenance_pct": []},
-                    "is_connected_match": matched
-                }));
-            }
-        }
+    for entry in state.cached_profiles() {
+        let matched = matches_connected_machine(
+            &entry.ef_code,
+            &[],
+            &entry.model_family,
+            detected_ef,
+            detected_art,
+            detected_model,
+        );
+        machines.push(json!({
+            "id": entry.ef_code,
+            "ef_code": entry.ef_code,
+            "model_family": entry.model_family,
+            "series": "",
+            "manufacturer": "Jura",
+            "article_numbers": [],
+            "sources": ["Built-in Profile"],
+            "active_source": "Built-in Profile",
+            "has_verified_spec": false,
+            "has_local_override": false,
+            "address_width": 4,
+            "max_words": 512,
+            "product_labels": entry.products,
+            "maintenance_labels": [],
+            "offsets": {"products": [], "maintenance": [], "maintenance_pct": []},
+            "is_connected_match": matched
+        }));
     }
     machines.sort_by(|a, b| {
-        let ma = a.get("is_connected_match").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mb = b.get("is_connected_match").and_then(|v| v.as_bool()).unwrap_or(false);
+        let ma = a
+            .get("is_connected_match")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mb = b
+            .get("is_connected_match")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         mb.cmp(&ma).then_with(|| {
             let ea = a.get("ef_code").and_then(|v| v.as_str()).unwrap_or("");
             let eb = b.get("ef_code").and_then(|v| v.as_str()).unwrap_or("");
@@ -764,106 +962,158 @@ async fn wait_for_sidecar_port(rx: &mut watch::Receiver<SidecarState>) -> Result
 }
 
 async fn proxy_to_sidecar(
-    client_stream: &mut TcpStream,
-    req: &ParsedHttpRequest,
+    method: Method,
+    target: &str,
+    req_headers: &HeaderMap,
+    body_bytes: Bytes,
     state: &GatewayShared,
-) -> Result<(), String> {
+) -> Response<GatewayBody> {
     let mut rx = state.sidecar_rx.clone();
     let backend_port = match wait_for_sidecar_port(&mut rx).await {
         Ok(p) => p,
         Err(err) => {
-            return write_json_response(
-                client_stream,
-                "503 Service Unavailable",
+            return json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
                 &json!({"success": false, "error": err}),
-            )
-            .await;
+            );
         }
     };
 
-    let mut upstream = match TcpStream::connect(("127.0.0.1", backend_port)).await {
-        Ok(s) => s,
-        Err(e) => {
-            return write_json_response(
-                client_stream,
-                "502 Bad Gateway",
+    let stream = match tokio::time::timeout(
+        GATEWAY_IO_TIMEOUT,
+        TcpStream::connect(("127.0.0.1", backend_port)),
+    )
+    .await
+    {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            return json_response(
+                StatusCode::BAD_GATEWAY,
                 &json!({"success": false, "error": format!("Sidecar connect failed: {e}")}),
-            )
-            .await;
+            );
+        }
+        Err(_) => {
+            return json_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                &json!({"success": false, "error": "Sidecar connect timed out"}),
+            );
         }
     };
 
-    // Forward HTTP/1.1 request cleanly with Connection: close so upstream closes cleanly at response EOF
-    let mut raw_req = format!("{} {} HTTP/1.1\r\nHost: 127.0.0.1:{backend_port}\r\nConnection: close\r\n", req.method, req.target);
-    let mut has_len = false;
-    for (k, v) in &req.headers {
-        if k.eq_ignore_ascii_case("host") || k.eq_ignore_ascii_case("connection") {
+    let io = TokioIo::new(stream);
+    let (mut sender, conn) = match tokio::time::timeout(
+        GATEWAY_IO_TIMEOUT,
+        hyper::client::conn::http1::handshake(io),
+    )
+    .await
+    {
+        Ok(Ok(parts)) => parts,
+        Ok(Err(e)) => {
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                &json!({"success": false, "error": format!("Sidecar HTTP handshake failed: {e}")}),
+            );
+        }
+        Err(_) => {
+            return json_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                &json!({"success": false, "error": "Sidecar HTTP handshake timed out"}),
+            );
+        }
+    };
+
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let mut builder = Request::builder().method(method).uri(target);
+    for (k, v) in req_headers {
+        if k == http::header::HOST
+            || k == http::header::CONNECTION
+            || k == http::header::TRANSFER_ENCODING
+            || k == http::header::CONTENT_LENGTH
+        {
             continue;
         }
-        if k.eq_ignore_ascii_case("content-length") {
-            has_len = true;
+        builder = builder.header(k, v);
+    }
+    if let Ok(host_val) = HeaderValue::from_str(&format!("127.0.0.1:{backend_port}")) {
+        builder = builder.header(http::header::HOST, host_val);
+    }
+    builder = builder.header(http::header::CONNECTION, "close");
+
+    let upstream_req = match builder.body(Full::new(body_bytes)) {
+        Ok(r) => r,
+        Err(e) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                &json!({"success": false, "error": format!("Invalid upstream request: {e}")}),
+            );
         }
-        raw_req.push_str(&format!("{k}: {v}\r\n"));
-    }
-    if !has_len && !req.body.is_empty() {
-        raw_req.push_str(&format!("Content-Length: {}\r\n", req.body.len()));
-    }
-    raw_req.push_str("\r\n");
+    };
 
-    upstream.write_all(raw_req.as_bytes()).await.map_err(|e| e.to_string())?;
-    if !req.body.is_empty() {
-        upstream.write_all(&req.body).await.map_err(|e| e.to_string())?;
-    }
-    let _ = upstream.flush().await;
+    let upstream_resp = match tokio::time::timeout(
+        GATEWAY_IO_TIMEOUT,
+        sender.send_request(upstream_req),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                &json!({"success": false, "error": format!("Sidecar request failed: {e}")}),
+            );
+        }
+        Err(_) => {
+            return json_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                &json!({"success": false, "error": "Sidecar response headers timed out"}),
+            );
+        }
+    };
 
-    let mut raw_resp = Vec::with_capacity(8192);
-    let _ = upstream.read_to_end(&mut raw_resp).await.map_err(|e| e.to_string())?;
+    // Stream upstream response frames directly back to the caller without unbounded buffering
+    let (mut parts, body) = upstream_resp.into_parts();
+    parts.headers.remove(http::header::CONNECTION);
+    parts.headers.remove(http::header::TRANSFER_ENCODING);
+    attach_security_headers(&mut parts.headers);
+    let streamed_body: GatewayBody = UpstreamStreamBody(body).boxed();
+    Response::from_parts(parts, streamed_body)
+}
 
-    if let Some(head_end) = find_subslice(&raw_resp, b"\r\n\r\n") {
-        let head = String::from_utf8_lossy(&raw_resp[..head_end]);
-        let body = &raw_resp[head_end + 4..];
-        let mut lines = head.split("\r\n");
-        let status = lines.next().unwrap_or("HTTP/1.1 200 OK");
-        let mut rebuilt = format!("{status}\r\n");
-        let mut seen_len = false;
-        for hline in lines {
-            if let Some((hk, _)) = hline.split_once(':') {
-                let hk_t = hk.trim();
-                if hk_t.eq_ignore_ascii_case("connection") || hk_t.eq_ignore_ascii_case("transfer-encoding") {
-                    continue;
-                }
-                if hk_t.eq_ignore_ascii_case("content-length") {
-                    seen_len = true;
-                }
+struct UpstreamStreamBody(Incoming);
+
+impl hyper::body::Body for UpstreamStreamBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        match std::pin::Pin::new(&mut self.0).poll_frame(cx) {
+            std::task::Poll::Ready(Some(Ok(frame))) => std::task::Poll::Ready(Some(Ok(frame))),
+            std::task::Poll::Ready(Some(Err(_))) | std::task::Poll::Ready(None) => {
+                std::task::Poll::Ready(None)
             }
-            rebuilt.push_str(hline);
-            rebuilt.push_str("\r\n");
+            std::task::Poll::Pending => std::task::Poll::Pending,
         }
-        if !seen_len {
-            rebuilt.push_str(&format!("Content-Length: {}\r\n", body.len()));
-        }
-        rebuilt.push_str("Connection: close\r\n\r\n");
-
-        client_stream.write_all(rebuilt.as_bytes()).await.map_err(|e| e.to_string())?;
-        client_stream.write_all(body).await.map_err(|e| e.to_string())?;
-        let _ = client_stream.flush().await;
-    } else if !raw_resp.is_empty() {
-        client_stream.write_all(&raw_resp).await.map_err(|e| e.to_string())?;
-    } else {
-        return write_json_response(
-            client_stream,
-            "502 Bad Gateway",
-            &json!({"success": false, "error": "Empty response from sidecar"}),
-        )
-        .await;
     }
 
-    Ok(())
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.0.size_hint()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn make_temp_app() -> PathBuf {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -940,7 +1190,7 @@ mod tests {
                 let mut buf = [0u8; 1024];
                 let _ = s.read(&mut buf).await;
                 let _ = s
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"from\":\"sidecar\"}")
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\n\r\n{\"from\":\"sidecar\"}")
                     .await;
             }
         });
@@ -963,6 +1213,84 @@ mod tests {
         .await;
         assert!(res.starts_with("HTTP/1.1 200 OK"));
         assert!(res.contains("{\"from\":\"sidecar\"}"));
+
+        handle.shutdown();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_gateway_security_host_origin_and_bad_json() {
+        let root = make_temp_app();
+        let handle = start_gateway_server(GatewayConfig {
+            app_root: root.clone(),
+            pure_rust: true,
+            bind_port: Some(0),
+            ..Default::default()
+        })
+        .await
+        .expect("gateway starts");
+
+        let rebind = http_call(
+            handle.port,
+            "GET /api/version HTTP/1.1\r\nHost: evil.attacker.example:8080\r\n\r\n",
+        )
+        .await;
+        assert!(rebind.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let cross_site = http_call(
+            handle.port,
+            "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nSec-Fetch-Site: cross-site\r\nContent-Length: 16\r\n\r\n{\"command\":\"TY:\"}",
+        )
+        .await;
+        assert!(cross_site.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let bad_origin = http_call(
+            handle.port,
+            "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: https://evil.example\r\nContent-Length: 16\r\n\r\n{\"command\":\"TY:\"}",
+        )
+        .await;
+        assert!(bad_origin.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let null_origin_bare = http_call(
+            handle.port,
+            "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: null\r\nContent-Length: 16\r\n\r\n{\"command\":\"TY:\"}",
+        )
+        .await;
+        assert!(null_origin_bare.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let null_origin_same_site = http_call(
+            handle.port,
+            "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: null\r\nSec-Fetch-Site: same-origin\r\n\r\n",
+        )
+        .await;
+        assert!(null_origin_same_site.starts_with("HTTP/1.1 200 OK"));
+
+        let gw_port = handle.port;
+        let null_origin_loopback_ref = http_call(
+            gw_port,
+            &format!(
+                "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1:{gw_port}\r\nOrigin: null\r\nReferer: http://127.0.0.1:{gw_port}/\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(null_origin_loopback_ref.starts_with("HTTP/1.1 200 OK"));
+
+        let cross_port_origin = http_call(
+            gw_port,
+            &format!(
+                "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:{gw_port}\r\nOrigin: http://127.0.0.1:59999\r\nContent-Length: 16\r\n\r\n{{\"command\":\"TY:\"}}"
+            ),
+        )
+        .await;
+        assert!(cross_port_origin.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let bad_json = http_call(
+            handle.port,
+            "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Length: 4\r\n\r\n{bad",
+        )
+        .await;
+        assert!(bad_json.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(bad_json.contains("Invalid JSON body"));
 
         handle.shutdown();
         let _ = fs::remove_dir_all(&root);
