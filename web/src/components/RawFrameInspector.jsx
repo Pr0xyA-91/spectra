@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Cpu, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
 
@@ -10,7 +10,7 @@ import { createTranslator } from '../i18n/translations';
  * - Highlights any token that flipped since the previous poll in bright amber/cyan
  * - 1-click "Copy Frame Snapshot" copies structured telemetry JSON for protocol mapping
  */
-export default function RawFrameInspector({
+function RawFrameInspector({
   theme,
   lang = 'en',
   liveData,
@@ -18,7 +18,7 @@ export default function RawFrameInspector({
   selectedPort = '',
   liveBuild = '',
 }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [changedIndices, setChangedIndices] = useState({});
@@ -225,3 +225,5 @@ export default function RawFrameInspector({
     </div>
   );
 }
+
+export default React.memo(RawFrameInspector);

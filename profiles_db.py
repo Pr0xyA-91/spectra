@@ -10,6 +10,7 @@ import re
 import copy
 import json
 import datetime
+import tempfile
 import threading
 from typing import Optional, Dict, Any, List
 
@@ -17,6 +18,9 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "profiles_data.json")
 DOCS_MODELS_DIR = os.path.join(os.path.dirname(__file__), "docs", "models")
 EEPROM_OVERRIDES_FILE = os.path.join(os.path.expanduser("~/.config/spectra"), "eeprom_overrides.json")
 _OVERRIDES_LOCK = threading.Lock()
+_OVERRIDES_CACHE: Optional[Dict[str, Any]] = None
+_OVERRIDES_CACHE_MTIME: float = -1.0
+_OVERRIDES_CACHE_PATH: str = ""
 
 # Default fallback profile if machine model is unknown
 DEFAULT_PROFILE = {
@@ -66,11 +70,15 @@ _CACHE_LOCK = threading.RLock()
 
 def invalidate_model_specs_cache() -> None:
     """Thread-safe invalidation of model specs and profile lookup caches."""
-    global _MODEL_SPECS_CACHE
+    global _MODEL_SPECS_CACHE, _OVERRIDES_CACHE, _OVERRIDES_CACHE_MTIME, _OVERRIDES_CACHE_PATH
     with _CACHE_LOCK:
         _MODEL_SPECS_CACHE = None
         _MODEL_SPEC_LOOKUP_CACHE.clear()
         _PROFILE_LOOKUP_CACHE.clear()
+    with _OVERRIDES_LOCK:
+        _OVERRIDES_CACHE = None
+        _OVERRIDES_CACHE_MTIME = -1.0
+        _OVERRIDES_CACHE_PATH = ""
 
 
 def load_profiles() -> dict:
@@ -158,6 +166,8 @@ def get_model_spec(ef_code_or_art: str) -> Optional[dict]:
                                 best_len = len(k)
                                 spec = v
 
+        if len(_MODEL_SPEC_LOOKUP_CACHE) >= 512:
+            _MODEL_SPEC_LOOKUP_CACHE.pop(next(iter(_MODEL_SPEC_LOOKUP_CACHE)), None)
         _MODEL_SPEC_LOOKUP_CACHE[cache_key] = spec
         return copy.deepcopy(spec) if spec is not None else None
 
@@ -234,6 +244,8 @@ def find_profile(raw_model_or_ef: str) -> dict:
                 if v is not None:
                     matched_profile[k] = copy.deepcopy(v)
 
+        if len(_PROFILE_LOOKUP_CACHE) >= 512:
+            _PROFILE_LOOKUP_CACHE.pop(next(iter(_PROFILE_LOOKUP_CACHE)), None)
         _PROFILE_LOOKUP_CACHE[cache_key] = matched_profile
         return copy.deepcopy(matched_profile)
 
@@ -322,30 +334,74 @@ def _normalize_override_key(raw: Optional[str]) -> str:
 
 
 def _read_eeprom_overrides_locked() -> Dict[str, Any]:
-    if not os.path.exists(EEPROM_OVERRIDES_FILE):
+    global _OVERRIDES_CACHE, _OVERRIDES_CACHE_MTIME, _OVERRIDES_CACHE_PATH
+    path = EEPROM_OVERRIDES_FILE
+    if not os.path.exists(path):
+        _OVERRIDES_CACHE = {}
+        _OVERRIDES_CACHE_MTIME = -1.0
+        _OVERRIDES_CACHE_PATH = path
         return {}
     try:
-        with open(EEPROM_OVERRIDES_FILE, "r", encoding="utf-8") as f:
+        st = os.stat(path)
+        if _OVERRIDES_CACHE is not None and _OVERRIDES_CACHE_PATH == path and st.st_mtime == _OVERRIDES_CACHE_MTIME:
+            return _OVERRIDES_CACHE
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        parsed = data if isinstance(data, dict) else {}
+        _OVERRIDES_CACHE = parsed
+        _OVERRIDES_CACHE_MTIME = st.st_mtime
+        _OVERRIDES_CACHE_PATH = path
+        return parsed
     except Exception:
         return {}
 
 
 def _write_eeprom_overrides_locked(data: Dict[str, Any]) -> None:
-    parent = os.path.dirname(EEPROM_OVERRIDES_FILE)
+    global _OVERRIDES_CACHE, _OVERRIDES_CACHE_MTIME, _OVERRIDES_CACHE_PATH
+    parent = os.path.dirname(os.path.abspath(EEPROM_OVERRIDES_FILE))
     if parent:
         os.makedirs(parent, exist_ok=True)
-    tmp_path = EEPROM_OVERRIDES_FILE + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, EEPROM_OVERRIDES_FILE)
+        if os.name != "nt":
+            try:
+                os.chmod(parent, 0o700)
+            except OSError:
+                pass
+    with tempfile.NamedTemporaryFile(
+        "w",
+        dir=parent or ".",
+        prefix=".eeprom_overrides_",
+        suffix=".tmp",
+        delete=False,
+        encoding="utf-8",
+    ) as tf:
+        json.dump(data, tf, indent=2, ensure_ascii=False)
+        tmp_path = tf.name
+    try:
+        if os.name != "nt":
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+        os.replace(tmp_path, EEPROM_OVERRIDES_FILE)
+        _OVERRIDES_CACHE = copy.deepcopy(data)
+        _OVERRIDES_CACHE_PATH = EEPROM_OVERRIDES_FILE
+        try:
+            _OVERRIDES_CACHE_MTIME = os.stat(EEPROM_OVERRIDES_FILE).st_mtime
+        except OSError:
+            _OVERRIDES_CACHE_MTIME = -1.0
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def list_eeprom_offset_overrides() -> Dict[str, Any]:
     """Return all saved local EEPROM offset overrides keyed by normalized identifier."""
     with _OVERRIDES_LOCK:
-        return dict(_read_eeprom_overrides_locked())
+        return copy.deepcopy(_read_eeprom_overrides_locked())
 
 
 def save_eeprom_offset_override(

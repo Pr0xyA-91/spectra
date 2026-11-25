@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Compass,
   X,
@@ -33,7 +33,7 @@ export default function InteractiveGuideModal({
   onOpenConfig = () => {},
   onJumpToOffsetCalibrator = () => {},
 }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
   const [step, setStep] = useState(1);
 
   useEffect(() => {

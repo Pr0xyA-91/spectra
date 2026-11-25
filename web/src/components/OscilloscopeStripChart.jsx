@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Play, Pause, Trash2, Download, Activity } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
 
@@ -9,21 +9,28 @@ import { createTranslator } from '../i18n/translations';
  * - Handles dual-heater/dual-boiler models (TB1 + TB2) and displays a clear protocol
  *   notice on Smart Connect (@TF:-only) devices where numeric temps/flow are not exposed.
  */
-export default function OscilloscopeStripChart({
+function OscilloscopeStripChart({
   theme,
   lang = 'en',
   liveData,
   selectedPort = '',
   maxSamples = 60,
 }) {
-  const t = createTranslator(lang);
-  const [tb1Data, setTb1Data] = useState([]);
-  const [tb2Data, setTb2Data] = useState([]);
-  const [flowData, setFlowData] = useState([]);
-  const [sampleTimes, setSampleTimes] = useState([]);
+  const t = useMemo(() => createTranslator(lang), [lang]);
+  const [series, setSeries] = useState({
+    tb1: [],
+    tb2: [],
+    flow: [],
+    times: [],
+  });
   const [isPaused, setIsPaused] = useState(false);
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0, dpr: 1 });
 
   const canvasRef = useRef(null);
+  const tb1Data = series.tb1;
+  const tb2Data = series.tb2;
+  const flowData = series.flow;
+  const sampleTimes = series.times;
 
   // Extract latest readings & capabilities
   const telem = liveData?.telemetry || {};
@@ -39,45 +46,63 @@ export default function OscilloscopeStripChart({
     caps.has_flowmeter === false
   );
 
+  // Track canvas container dimensions via ResizeObserver (avoids per-tick backing store reallocation)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const updateSize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(0, rect.width);
+      const h = Math.max(0, rect.height);
+      const targetW = Math.round(w * dpr);
+      const targetH = Math.round(h * dpr);
+      if (canvas.width !== targetW) canvas.width = targetW;
+      if (canvas.height !== targetH) canvas.height = targetH;
+      setCanvasSize((prev) =>
+        prev.w === w && prev.h === h && prev.dpr === dpr ? prev : { w, h, dpr }
+      );
+    };
+
+    updateSize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(canvas);
+      window.addEventListener('resize', updateSize);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener('resize', updateSize);
+      };
+    }
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
   // Auto-clear rolling buffers whenever the user switches ports / machines
   useEffect(() => {
-    setTb1Data([]);
-    setTb2Data([]);
-    setFlowData([]);
-    setSampleTimes([]);
+    setSeries({ tb1: [], tb2: [], flow: [], times: [] });
   }, [selectedPort]);
 
-  // Append new sample on each liveData update
+  // Append new sample on each liveData update in a single batched state update
   useEffect(() => {
     if (isPaused || currentTb1 === null) return;
     const nowMs = Date.now();
-
-    setTb1Data((prev) => {
-      const next = [...prev, currentTb1];
+    const trim = (arr, item) => {
+      const next = [...arr, item];
       return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
-    });
+    };
 
-    setTb2Data((prev) => {
-      const next = [...prev, currentTb2];
-      return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
-    });
-
-    setFlowData((prev) => {
-      const next = [...prev, currentFlow];
-      return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
-    });
-
-    setSampleTimes((prev) => {
-      const next = [...prev, nowMs];
-      return next.length > maxSamples ? next.slice(next.length - maxSamples) : next;
-    });
+    setSeries((prev) => ({
+      tb1: trim(prev.tb1, currentTb1),
+      tb2: trim(prev.tb2, currentTb2),
+      flow: trim(prev.flow, currentFlow),
+      times: trim(prev.times, nowMs),
+    }));
   }, [liveData, isPaused, currentTb1, currentTb2, currentFlow, maxSamples]);
 
   const handleClear = () => {
-    setTb1Data([]);
-    setTb2Data([]);
-    setFlowData([]);
-    setSampleTimes([]);
+    setSeries({ tb1: [], tb2: [], flow: [], times: [] });
   };
 
   const handleExportCSV = () => {
@@ -103,20 +128,28 @@ export default function OscilloscopeStripChart({
     URL.revokeObjectURL(url);
   };
 
-  // High-DPI Canvas Rendering
+  // High-DPI Canvas Rendering (uses cached dimensions without reallocating canvas.width/height per tick)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
+    const dpr = canvasSize.dpr || window.devicePixelRatio || 1;
+    let w = canvasSize.w;
+    let h = canvasSize.h;
+    if (!w || !h) {
+      const rect = canvas.getBoundingClientRect();
+      w = rect.width;
+      h = rect.height;
+      const targetW = Math.round(w * dpr);
+      const targetH = Math.round(h * dpr);
+      if (canvas.width !== targetW) canvas.width = targetW;
+      if (canvas.height !== targetH) canvas.height = targetH;
+    }
+    if (!w || !h) return;
 
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     ctx.fillStyle = theme.canvasBg || '#070B10';
@@ -322,7 +355,7 @@ export default function OscilloscopeStripChart({
 
     ctx.fillStyle = '#74c7ec';
     ctx.fillText(`${t('oscFlowPrefix')} ${lastFlow != null ? lastFlow.toFixed(1) : '---'} ml/s`, padLeft + 275, 14);
-  }, [tb1Data, tb2Data, flowData, sampleTimes, theme, hasTb2, isNumericUnsupported, maxSamples, lang, t]);
+  }, [tb1Data, tb2Data, flowData, sampleTimes, canvasSize, theme, hasTb2, isNumericUnsupported, maxSamples, lang, t]);
 
   return (
     <div className={`p-3 border rounded ${theme.surfaceClass} space-y-2`}>
@@ -385,3 +418,5 @@ export default function OscilloscopeStripChart({
     </div>
   );
 }
+
+export default React.memo(OscilloscopeStripChart);

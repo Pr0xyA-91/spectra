@@ -34,12 +34,103 @@ extern "system" {
 }
 
 #[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn SetDllDirectoryW(lp_path_name: *const u16) -> i32;
+    fn SetDefaultDllDirectories(directory_flags: u32) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "bcrypt")]
+extern "system" {
+    fn BCryptGenRandom(
+        h_algorithm: *mut core::ffi::c_void,
+        pb_buffer: *mut u8,
+        cb_buffer: u32,
+        dw_flags: u32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+fn harden_windows_dll_search_path() {
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+    const LOAD_LIBRARY_SEARCH_APPLICATION_DIR: u32 = 0x0000_0200;
+    let empty: [u16; 1] = [0];
+    unsafe {
+        let _ = SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
+        let _ = SetDllDirectoryW(empty.as_ptr());
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn set_windows_app_user_model_id(app_id: &str) {
     let mut wide: Vec<u16> = app_id.encode_utf16().collect();
     wide.push(0);
     unsafe {
         let _ = SetCurrentProcessExplicitAppUserModelID(wide.as_ptr());
     }
+}
+
+/// Generates a 128-bit cryptographic hex nonce used to authenticate the spawned Python sidecar.
+fn generate_sidecar_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    let mut filled = false;
+
+    #[cfg(target_os = "windows")]
+    {
+        const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+        let status = unsafe {
+            BCryptGenRandom(
+                std::ptr::null_mut(),
+                bytes.as_mut_ptr(),
+                bytes.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        if status == 0 {
+            filled = true;
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        if let Ok(mut f) = fs::File::open("/dev/urandom") {
+            if f.read_exact(&mut bytes).is_ok() {
+                filled = true;
+            }
+        }
+    }
+
+    if !filled {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let stack_addr = bytes.as_ptr() as usize as u64;
+        let s1 = RandomState::new();
+        let mut h1 = s1.build_hasher();
+        h1.write_u32(std::process::id());
+        h1.write_u64(stack_addr);
+        let a = h1.finish().to_le_bytes();
+        let s2 = RandomState::new();
+        let mut h2 = s2.build_hasher();
+        h2.write_u64(now_nanos as u64);
+        h2.write_u64((now_nanos >> 64) as u64);
+        let b = h2.finish().to_le_bytes();
+        bytes[..8].copy_from_slice(&a);
+        bytes[8..].copy_from_slice(&b);
+    }
+
+    let mut hex = String::with_capacity(32);
+    for b in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{b:02x}");
+    }
+    hex
 }
 
 /// Decodes an uncompressed 32-bit BGRA entry from an `.ico` buffer into top-down RGBA bytes.
@@ -174,6 +265,30 @@ const SPLASH_HTML: &str = r#"<!doctype html>
 </body>
 </html>"#;
 
+fn is_allowed_loopback_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    let Some(rest) = trimmed.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let host = if let Some((h, port_str)) = authority.rsplit_once(':') {
+        if port_str.is_empty() || port_str.parse::<u16>().is_err() {
+            return false;
+        }
+        h
+    } else {
+        authority
+    };
+    host.eq_ignore_ascii_case("127.0.0.1") || host.eq_ignore_ascii_case("localhost")
+}
+
+fn is_allowed_navigation_url(url: &str) -> bool {
+    url == "about:blank" || is_allowed_loopback_url(url)
+}
+
 fn parse_cli_args<I, S>(args: I) -> Result<ShellConfig, String>
 where
     I: IntoIterator<Item = S>,
@@ -194,7 +309,13 @@ where
                 let val = iter
                     .next()
                     .ok_or_else(|| "Missing value for --url".to_string())?;
-                cfg.attach_url = Some(val.as_ref().to_string());
+                let url_str = val.as_ref().trim();
+                if !is_allowed_loopback_url(url_str) {
+                    return Err(format!(
+                        "Invalid --url '{url_str}': only http://127.0.0.1... or http://localhost... are permitted"
+                    ));
+                }
+                cfg.attach_url = Some(url_str.to_string());
             }
             "--root" => {
                 let val = iter
@@ -314,7 +435,7 @@ fn pick_free_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn spawn_python_backend(app_root: &Path, port: u16) -> Result<Child, String> {
+fn spawn_python_backend(app_root: &Path, port: u16, sidecar_nonce: &str) -> Result<Child, String> {
     let (python_bin, is_embedded) = resolve_python_executable(app_root);
     let server_script = app_root.join("web_server.py");
     if !server_script.is_file() {
@@ -330,7 +451,8 @@ fn spawn_python_backend(app_root: &Path, port: u16) -> Result<Child, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .env("SPECTRA_NATIVE_SHELL", "1");
+        .env("SPECTRA_NATIVE_SHELL", "1")
+        .env("SPECTRA_SIDECAR_NONCE", sidecar_nonce);
 
     if is_embedded {
         cmd.env("PYTHONNOUSERSITE", "1");
@@ -348,12 +470,99 @@ fn spawn_python_backend(app_root: &Path, port: u16) -> Result<Child, String> {
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         format!(
             "Failed to launch backend using {}: {e}",
             python_bin.display()
         )
-    })
+    })?;
+
+    if let Some(mut stderr_pipe) = child.stderr.take() {
+        let log_path = env::temp_dir().join("spectra_sidecar_stderr.log");
+        let _ = std::thread::Builder::new()
+            .name("spectra-sidecar-stderr-drain".to_string())
+            .spawn(move || {
+                use std::io::Read;
+                const MAX_LOG_BYTES: usize = 256 * 1024;
+                let mut file = fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&log_path)
+                    .ok();
+                let mut written: usize = 0;
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = stderr_pipe.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    if let Some(ref mut f) = file {
+                        if written < MAX_LOG_BYTES {
+                            let to_write = (MAX_LOG_BYTES - written).min(n);
+                            let _ = f.write_all(&buf[..to_write]);
+                            written += to_write;
+                        }
+                    }
+                }
+            });
+    }
+
+    Ok(child)
+}
+
+fn verify_sidecar_nonce(port: u16, expected_nonce: &str) -> Result<bool, String> {
+    use std::io::Read;
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+        Ok(s) => s,
+        Err(_) => return Ok(false),
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+
+    let req = format!(
+        "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(req.as_bytes()).is_err() || stream.flush().is_err() {
+        return Ok(false);
+    }
+
+    let mut resp = Vec::with_capacity(2048);
+    let mut chunk = [0u8; 1024];
+    while resp.len() < 8192 {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                resp.extend_from_slice(&chunk[..n]);
+                if resp.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let text = String::from_utf8_lossy(&resp);
+    let header_block = text.split("\r\n\r\n").next().unwrap_or("");
+    let mut lines = header_block.lines();
+    let status_line = lines.next().unwrap_or("");
+    if !status_line.starts_with("HTTP/1.") || !status_line.contains(" 200") {
+        return Ok(false);
+    }
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("x-spectra-nonce") {
+                if value.trim() == expected_nonce {
+                    return Ok(true);
+                }
+                return Err(format!(
+                    "Sidecar nonce mismatch on 127.0.0.1:{port} — refusing untrusted local listener"
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "Port 127.0.0.1:{port} responded without expected X-Spectra-Nonce — refusing untrusted listener"
+    ))
 }
 
 fn send_shutdown_signal(port: u16) {
@@ -396,7 +605,11 @@ fn stop_backend(child_slot: &Arc<Mutex<Option<Child>>>, port: Option<u16>) {
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = Command::new("taskkill.exe")
+            let taskkill_path = env::var_os("SystemRoot")
+                .map(|root| PathBuf::from(root).join("System32").join("taskkill.exe"))
+                .filter(|p| p.is_file())
+                .unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+            let _ = Command::new(taskkill_path)
                 .args(["/F", "/PID", &pid.to_string(), "/T"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::null())
@@ -413,11 +626,11 @@ fn stop_backend(child_slot: &Arc<Mutex<Option<Child>>>, port: Option<u16>) {
 
 fn wait_for_backend_ready(
     port: u16,
+    expected_nonce: &str,
     child_slot: &Arc<Mutex<Option<Child>>>,
     stop_flag: &Arc<AtomicBool>,
     timeout: Duration,
 ) -> Result<(), String> {
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
@@ -425,8 +638,10 @@ fn wait_for_backend_ready(
             return Err("Startup cancelled".to_string());
         }
 
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok() {
-            return Ok(());
+        match verify_sidecar_nonce(port, expected_nonce) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(err) => return Err(err),
         }
 
         if let Ok(mut guard) = child_slot.lock() {
@@ -639,7 +854,10 @@ fn capture_window_state(window: &tao::window::Window, state: &mut WindowState) {
 
 fn main() {
     #[cfg(target_os = "windows")]
-    set_windows_app_user_model_id("SPECTRA.Diagnostics.Suite");
+    {
+        harden_windows_dll_search_path();
+        set_windows_app_user_model_id("SPECTRA.Diagnostics.Suite");
+    }
 
     let cfg = match parse_cli_args(env::args().skip(1)) {
         Ok(c) => c,
@@ -740,18 +958,20 @@ fn main() {
                         if !use_pure_rust {
                             if let Ok(sidecar_port) = pick_free_port() {
                                 managed_sidecar_port = Some(sidecar_port);
+                                let sidecar_nonce = generate_sidecar_nonce();
                                 let root_bg = root.clone();
                                 let child_slot_bg = Arc::clone(&child_slot);
                                 let stop_flag_bg = Arc::clone(&stop_flag);
                                 let sidecar_tx = handle.clone_sidecar_sender();
                                 std::thread::spawn(move || {
-                                    match spawn_python_backend(&root_bg, sidecar_port) {
+                                    match spawn_python_backend(&root_bg, sidecar_port, &sidecar_nonce) {
                                         Ok(child) => {
                                             if let Ok(mut g) = child_slot_bg.lock() {
                                                 *g = Some(child);
                                             }
                                             match wait_for_backend_ready(
                                                 sidecar_port,
+                                                &sidecar_nonce,
                                                 &child_slot_bg,
                                                 &stop_flag_bg,
                                                 Duration::from_secs(20),
@@ -796,7 +1016,10 @@ fn main() {
         None
     };
 
-    let builder = WebViewBuilder::new().with_devtools(cfg!(debug_assertions));
+    let builder = WebViewBuilder::new()
+        .with_devtools(cfg!(debug_assertions))
+        .with_navigation_handler(|uri| is_allowed_navigation_url(&uri))
+        .with_new_window_req_handler(|uri| is_allowed_navigation_url(&uri));
     let builder = if let Some(ref url) = initial_url {
         builder.with_url(url)
     } else if let Some(ref err) = gateway_boot_error {
@@ -981,5 +1204,21 @@ mod tests {
         let cfg = parse_cli_args(["--root", "/opt/spectra", "--pure-rust"]).unwrap();
         assert!(cfg.pure_rust);
         assert_eq!(cfg.root_dir.as_deref(), Some(Path::new("/opt/spectra")));
+    }
+
+    #[test]
+    fn parse_cli_args_validates_loopback_url_and_navigation() {
+        assert!(parse_cli_args(["--url", "http://localhost:5173/"]).is_ok());
+        assert!(parse_cli_args(["--url", "http://127.0.0.1:8080/app"]).is_ok());
+        assert!(parse_cli_args(["--url", "file:///etc/passwd"]).is_err());
+        assert!(parse_cli_args(["--url", "javascript:alert(1)"]).is_err());
+        assert!(parse_cli_args(["--url", "https://evil.example.com/"]).is_err());
+        assert!(parse_cli_args(["--url", "http://127.0.0.1@evil.example/"]).is_err());
+
+        assert!(is_allowed_navigation_url("about:blank"));
+        assert!(is_allowed_navigation_url("http://127.0.0.1:8080/index.html"));
+        assert!(is_allowed_navigation_url("http://localhost:5173/"));
+        assert!(!is_allowed_navigation_url("https://example.com"));
+        assert!(!is_allowed_navigation_url("file:///etc/passwd"));
     }
 }

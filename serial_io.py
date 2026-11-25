@@ -44,6 +44,10 @@ except ImportError:
 from jura_protocol import MockJuraMachine
 
 
+class SerialPortLockedError(IOError):
+    """Raised when a serial port is already locked exclusively by another SPECTRA process."""
+
+
 def list_serial_ports() -> List[str]:
     """Discover available physical and virtual serial ports on Linux and Windows."""
     ports = []
@@ -127,6 +131,103 @@ def normalize_port_name(port_name: str) -> str:
     if m:
         return m.group(1)
     return stripped
+
+
+SAFE_READ_PREFIXES = (
+    "TY:", "IC:", "HZ:", "CS:", "AS:", "RT:", "RE:", "TL:",
+    "TY$:", "TL$:", "TP$:", "T1$:", "T2$:", "T3$:", "TX$:", "TZ$:",
+    "EX$:", "CS$:", "HZ$:", "RE$:", "RT$:", "DS$:", "GS$:", "SS$:",
+    "ST$:", "IC$:", "RR$:", "AS$:",
+    "@T0", "@T1", "@T2:", "@T3", "@TR:", "@TG:", "@TF:", "@TM:",
+)
+
+FORBIDDEN_COMMAND_PREFIXES = (
+    "WE:", "WT:", "DA:", "FA:", "AN:", "@TW:",
+)
+
+
+def validate_readonly_command(cmd: str) -> str:
+    """
+    Strictly validate that a hardware command is a single-line, printable ASCII
+    read-only diagnostic query. Raises PermissionError on any violation.
+    """
+    if not isinstance(cmd, str):
+        raise PermissionError("SAFETY VIOLATION: Command must be a string.")
+
+    # Strip at most one trailing CRLF / CR / LF (for internal callers), then trim outer spaces
+    stripped = cmd
+    if stripped.endswith("\r\n"):
+        stripped = stripped[:-2]
+    elif stripped.endswith("\r") or stripped.endswith("\n"):
+        stripped = stripped[:-1]
+    stripped = stripped.strip(" ")
+
+    if not stripped:
+        raise PermissionError("SAFETY VIOLATION: Empty command is not permitted.")
+    if len(stripped) > 64:
+        raise PermissionError(f"SAFETY VIOLATION: Command exceeds 64-byte limit ({len(stripped)} bytes).")
+
+    for ch in stripped:
+        code = ord(ch)
+        if code < 0x20 or code >= 0x7F:
+            raise PermissionError(
+                f"SAFETY VIOLATION: Non-printable or control byte (0x{code:02X}) forbidden in hardware command."
+            )
+
+    upper = stripped.upper()
+    # Reject explicit destructive/mutating prefixes (including bare 'FA' or 'AN')
+    if upper in ("FA", "AN") or any(upper.startswith(p) for p in FORBIDDEN_COMMAND_PREFIXES):
+        raise PermissionError(f"SAFETY VIOLATION: Destructive/mutating command '{stripped}' is strictly forbidden.")
+
+    if not any(upper.startswith(p) for p in SAFE_READ_PREFIXES):
+        raise PermissionError(
+            f"SAFETY VIOLATION: Command '{stripped}' is not in the strict read-only allowlist."
+        )
+
+    return stripped
+
+
+LAB_WRITE_CONFIRM_TOKEN = "SPECTRA_LAB_WRITE"
+
+_LAB_WRITE_PATTERNS = (
+    re.compile(r"^WE:[0-9A-F]{4},[0-9A-F]{4}$"),
+    re.compile(r"^AN:(?:0B|20|21)$"),
+    re.compile(r"^FA:(?:01|08)$"),
+)
+
+
+def validate_lab_command(cmd: str) -> str:
+    """
+    Validate an explicit bench/lab mutating command (`WE:<4HEX>,<4HEX>`,
+    `AN:0B`, `AN:20`, `AN:21`, `FA:01`, `FA:08`).
+    Still forbids bare `AN:` standby power-off, `DA:`, `WT:`, and CRLF injection.
+    """
+    if not isinstance(cmd, str):
+        raise PermissionError("SAFETY VIOLATION: Lab command must be a string.")
+
+    stripped = cmd
+    if stripped.endswith("\r\n"):
+        stripped = stripped[:-2]
+    elif stripped.endswith("\r") or stripped.endswith("\n"):
+        stripped = stripped[:-1]
+    stripped = stripped.strip(" ")
+
+    if not stripped or len(stripped) > 64:
+        raise PermissionError("SAFETY VIOLATION: Lab command length out of bounds (1..64).")
+
+    for ch in stripped:
+        code = ord(ch)
+        if code < 0x20 or code >= 0x7F:
+            raise PermissionError(
+                f"SAFETY VIOLATION: Non-printable or control byte (0x{code:02X}) forbidden in lab command."
+            )
+
+    upper = stripped.upper()
+    if not any(pat.match(upper) for pat in _LAB_WRITE_PATTERNS):
+        raise PermissionError(
+            f"SAFETY VIOLATION: Lab command '{stripped}' is not in the approved bench write allowlist."
+        )
+    return upper
 
 
 class JuraSerialConnection:
@@ -377,7 +478,7 @@ class JuraSerialConnection:
                     except (BlockingIOError, IOError):
                         time.sleep(0.05)
                 if not locked:
-                    raise IOError(f"Serial port {self.port_name} is locked by another SPECTRA process.")
+                    raise SerialPortLockedError(f"Serial port {self.port_name} is locked by another SPECTRA process.")
 
                 attrs = termios.tcgetattr(self.fd)
                 # iflag: Raw input, ignore break condition
@@ -404,6 +505,14 @@ class JuraSerialConnection:
                 termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
                 self.is_open = True
                 return
+            except SerialPortLockedError:
+                if self.fd is not None:
+                    try:
+                        os.close(self.fd)
+                    except OSError:
+                        pass
+                    self.fd = None
+                raise
             except Exception as e:
                 if self.fd is not None:
                     try:
@@ -417,16 +526,42 @@ class JuraSerialConnection:
         # Fallback to pyserial
         if HAS_PYSERIAL:
             try:
-                self.py_serial = serial.Serial(
-                    port=self.port_name,
-                    baudrate=self.baudrate,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=self.timeout
-                )
+                serial_kwargs = {
+                    "port": self.port_name,
+                    "baudrate": self.baudrate,
+                    "bytesize": serial.EIGHTBITS,
+                    "parity": serial.PARITY_NONE,
+                    "stopbits": serial.STOPBITS_ONE,
+                    "timeout": self.timeout,
+                }
+                try:
+                    import inspect
+                    if "exclusive" in inspect.signature(serial.Serial.__init__).parameters:
+                        serial_kwargs["exclusive"] = True
+                except Exception:
+                    pass
+                self.py_serial = serial.Serial(**serial_kwargs)
+                if os.name == "posix" and HAS_TERMIOS:
+                    try:
+                        py_fd = self.py_serial.fileno()
+                    except Exception:
+                        py_fd = None
+                    if isinstance(py_fd, int) and py_fd >= 0:
+                        try:
+                            fcntl.flock(py_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except (BlockingIOError, IOError):
+                            try:
+                                self.py_serial.close()
+                            except Exception:
+                                pass
+                            self.py_serial = None
+                            raise SerialPortLockedError(
+                                f"Serial port {self.port_name} is locked by another SPECTRA process."
+                            )
                 self._applied_timeout = self.timeout
                 self.is_open = True
+            except SerialPortLockedError:
+                raise
             except Exception as e:
                 raise IOError(f"Failed to open {self.port_name} via pyserial: {e}")
 
@@ -567,10 +702,9 @@ class JuraSerialConnection:
         2. Clean line separation and partial chunk buffering
         3. Inter-command microcontroller settling delay
         """
+        cmd_clean = validate_readonly_command(cmd)
         if not self.is_open:
             raise IOError("Serial port is not open.")
-
-        cmd_clean = cmd.strip()
 
         if self.is_demo:
             time.sleep(0.02)
@@ -655,6 +789,38 @@ class JuraSerialConnection:
 
         return self._query_hardware_ascii(cmd_clean, timeout=timeout)
 
+    def query_unsafe_lab_command(
+        self,
+        cmd: str,
+        *,
+        confirm_token: str = "",
+        timeout: float = 1.2,
+    ) -> Optional[str]:
+        """
+        Execute an explicitly confirmed laboratory write/actuator command
+        (e.g. `WE:<ADDR>,<VAL>`, `AN:0B`, `AN:20`, `AN:21`, `FA:08`).
+        Never exposed to HTTP routes; requires `confirm_token == LAB_WRITE_CONFIRM_TOKEN`.
+        """
+        if confirm_token != LAB_WRITE_CONFIRM_TOKEN:
+            raise PermissionError(
+                "SAFETY VIOLATION: Lab write command rejected without explicit LAB_WRITE_CONFIRM_TOKEN."
+            )
+        cmd_clean = validate_lab_command(cmd)
+        if not self.is_open:
+            raise IOError("Serial port is not open.")
+
+        if self.is_demo:
+            time.sleep(0.02)
+            if cmd_clean.startswith("WE:"):
+                addr_s, val_s = cmd_clean[3:].split(",", 1)
+                self._mock_eeprom[int(addr_s, 16)] = int(val_s, 16)
+                return "ok:"
+            if cmd_clean in ("AN:0B", "AN:20", "AN:21", "FA:01", "FA:08"):
+                return "ok:"
+            return None
+
+        return self._query_hardware_ascii(cmd_clean, timeout=timeout)
+
     def _query_raw_ascii(self, cmd_clean: str, timeout: float = 1.0) -> Optional[str]:
         """Send plain unencoded ASCII command terminated with CRLF and strip local echo."""
         self.drain_rx()
@@ -664,6 +830,7 @@ class JuraSerialConnection:
         rx = bytearray()
         start = time.time()
         sent_raw = cmd_clean
+        echo_stripped = False
 
         while time.time() - start < timeout:
             if not self.is_open:
@@ -675,22 +842,23 @@ class JuraSerialConnection:
                 rx.extend(chunk)
                 if len(rx) > 4096:
                     break
-                if b"\r\n" in rx:
-                    lines = [l.strip().decode("latin1", errors="ignore") for l in rx.split(b"\r\n")]
-                    complete_lines = lines[:-1]
-                    replies = []
-                    found_echo = False
-                    for l in complete_lines:
-                        # Echo is the exact command we transmitted
-                        if not found_echo and l == sent_raw:
-                            found_echo = True
-                            continue
-                        if l:
-                            replies.append(l)
-                    if replies:
+                if not echo_stripped:
+                    echo_idx = rx.find(tx_data)
+                    if echo_idx != -1:
+                        del rx[:echo_idx + len(tx_data)]
+                        echo_stripped = True
+                while b"\r\n" in rx:
+                    nl_idx = rx.find(b"\r\n")
+                    line_bytes = bytes(rx[:nl_idx])
+                    del rx[:nl_idx + 2]
+                    line_str = line_bytes.strip().decode("latin1", errors="ignore")
+                    if not echo_stripped and line_str == sent_raw:
+                        echo_stripped = True
+                        continue
+                    if line_str:
                         # Give machine UART 40ms to settle before next command
                         time.sleep(0.04)
-                        return replies[0]
+                        return line_str
 
         return None
 
@@ -711,6 +879,7 @@ class JuraSerialConnection:
         self._write_paced(wire_tx, inter_byte_delay=0.008)
 
         rx_wire = bytearray()
+        decoded_buf = bytearray()
         start = time.time()
         echo_stripped = False
 
@@ -732,20 +901,19 @@ class JuraSerialConnection:
                 aligned_len = (len(rx_wire) // 4) * 4
                 if aligned_len >= 4:
                     decoded, _ = jp.decode_wire(bytes(rx_wire[:aligned_len]))
-                    if b"\r\n" in decoded:
-                        lines = [l.strip().decode("latin1", errors="ignore") for l in decoded.split(b"\r\n")]
-                        complete_lines = lines[:-1]
-                        replies = []
-                        found_echo = False
-                        for l in complete_lines:
-                            if not found_echo and l == cmd_clean:
-                                found_echo = True
-                                continue
-                            if l:
-                                replies.append(l)
-                        if replies:
+                    del rx_wire[:aligned_len]
+                    decoded_buf.extend(decoded)
+                    while b"\r\n" in decoded_buf:
+                        nl_idx = decoded_buf.find(b"\r\n")
+                        line_bytes = bytes(decoded_buf[:nl_idx])
+                        del decoded_buf[:nl_idx + 2]
+                        line_str = line_bytes.strip().decode("latin1", errors="ignore")
+                        if not echo_stripped and line_str == cmd_clean:
+                            echo_stripped = True
+                            continue
+                        if line_str:
                             time.sleep(0.04)
-                            return replies[0]
+                            return line_str
 
         return None
 
@@ -885,13 +1053,13 @@ class JuraSerialConnection:
         (hardware 4:1 bridge) and return the decrypted response frame, stripping loopback
         echo and scanning '&'...CRLF frames safely.
         """
+        cmd_clean = validate_readonly_command(cmd_str)
         if not self.is_open:
             raise IOError("Serial port is not open.")
 
         import jura_protocol as jp
 
-        cmd_clean = cmd_str.strip()
-        cmd_line = cmd_clean if cmd_str.endswith("\r\n") else f"{cmd_clean}\r\n"
+        cmd_line = f"{cmd_clean}\r\n"
 
         if self.is_demo:
             wire_tx = jp.encode_wire(jp.build_encrypted_frame(cmd_line, key))
@@ -908,31 +1076,31 @@ class JuraSerialConnection:
 
         enc_mode = getattr(self, "encrypted_wire_mode", None)
         if enc_mode == "raw_frame":
-            return self._query_encrypted_raw_frame(cmd_str, key=key, timeout=timeout)
+            return self._query_encrypted_raw_frame(cmd_clean, key=key, timeout=timeout)
         if enc_mode == "wire_4to1_frame":
-            return self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=timeout)
+            return self._query_encrypted_wire_4to1(cmd_clean, key=key, timeout=timeout)
 
         # Auto-negotiate encrypted wire mode:
         # If raw_ascii was previously observed (e.g. hardware 4:1 bridge like Jura USB Service Interface),
         # try raw '&'-frame first; otherwise try 4:1 wire-encoded '&'-frame first.
         if getattr(self, "wire_mode", None) == "raw_ascii":
-            pt = self._query_encrypted_raw_frame(cmd_str, key=key, timeout=timeout)
+            pt = self._query_encrypted_raw_frame(cmd_clean, key=key, timeout=timeout)
             if pt is not None:
                 self.encrypted_wire_mode = "raw_frame"
                 self._is_smart_connect = True
                 return pt
-            pt = self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=min(timeout, 0.8))
+            pt = self._query_encrypted_wire_4to1(cmd_clean, key=key, timeout=min(timeout, 0.8))
             if pt is not None:
                 self.encrypted_wire_mode = "wire_4to1_frame"
                 self._is_smart_connect = True
                 return pt
         else:
-            pt = self._query_encrypted_wire_4to1(cmd_str, key=key, timeout=timeout)
+            pt = self._query_encrypted_wire_4to1(cmd_clean, key=key, timeout=timeout)
             if pt is not None:
                 self.encrypted_wire_mode = "wire_4to1_frame"
                 self._is_smart_connect = True
                 return pt
-            pt = self._query_encrypted_raw_frame(cmd_str, key=key, timeout=min(timeout, 0.8))
+            pt = self._query_encrypted_raw_frame(cmd_clean, key=key, timeout=min(timeout, 0.8))
             if pt is not None:
                 self.encrypted_wire_mode = "raw_frame"
                 self._is_smart_connect = True

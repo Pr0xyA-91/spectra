@@ -18,6 +18,7 @@ Design invariants:
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import urllib.error
@@ -25,8 +26,16 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 import hmi_inspector
+import github_auth
 
-AI_CONFIG_FILE = os.path.join(os.path.expanduser("~/.config/spectra"), "ai_config.json")
+_LEGACY_AI_CONFIG_FILE = os.path.join(os.path.expanduser("~/.config/spectra"), "ai_config.json")
+
+
+def _get_ai_config_file() -> str:
+    return str(github_auth.get_config_dir() / "ai_config.json")
+
+
+AI_CONFIG_FILE = _get_ai_config_file()
 
 _ai_lock = threading.Lock()
 _ai_enabled: bool = False  # Always strictly OFF on startup so 0 RAM/CPU is used unless opted in
@@ -37,10 +46,11 @@ _cancel_epoch: int = 0
 
 def _load_persisted_ai_prefs() -> None:
     global _preferred_model, _auto_unload
-    if not os.path.exists(AI_CONFIG_FILE):
+    cfg_path = AI_CONFIG_FILE if os.path.exists(AI_CONFIG_FILE) else _LEGACY_AI_CONFIG_FILE
+    if not os.path.exists(cfg_path):
         return
     try:
-        with open(AI_CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         if isinstance(cfg, dict):
             if cfg.get("preferred_model"):
@@ -52,20 +62,43 @@ def _load_persisted_ai_prefs() -> None:
 
 
 def _save_persisted_ai_prefs(preferred_model: str, auto_unload: bool) -> None:
+    tmp_path = ""
     try:
-        parent = os.path.dirname(AI_CONFIG_FILE)
+        parent = os.path.dirname(os.path.abspath(AI_CONFIG_FILE))
         if parent:
             os.makedirs(parent, exist_ok=True)
-        tmp_path = AI_CONFIG_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
+            if os.name != "nt":
+                try:
+                    os.chmod(parent, 0o700)
+                except OSError:
+                    pass
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=parent or ".",
+            prefix=".ai_config_",
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
             json.dump(
                 {"preferred_model": preferred_model, "auto_unload": bool(auto_unload)},
                 f,
                 indent=2,
             )
+            tmp_path = f.name
+        if os.name != "nt":
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
         os.replace(tmp_path, AI_CONFIG_FILE)
     except Exception:
-        pass
+        if tmp_path:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 _load_persisted_ai_prefs()
@@ -423,6 +456,8 @@ def _query_ollama_json(
     )
     t_start = time.time()
     accumulated: List[str] = []
+    accumulated_bytes = 0
+    max_response_bytes = 4 * 1024 * 1024  # 4 MiB cap
     token_count = 0
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -446,7 +481,11 @@ def _query_ollama_json(
                     return None, f"Local AI runtime error: {chunk.get('error')}"
                 piece = chunk.get("response") or ""
                 if piece:
+                    piece_len = len(piece.encode("utf-8", errors="ignore"))
+                    if accumulated_bytes + piece_len > max_response_bytes:
+                        return None, "Local AI response exceeded 4 MiB safety limit."
                     accumulated.append(piece)
+                    accumulated_bytes += piece_len
                     token_count += 1
                     if token_count == 1 or token_count % 8 == 0:
                         update_task_progress(
@@ -964,7 +1003,7 @@ def calibrate_eeprom_offsets_from_joe(
             if ai_choice:
                 ai_addr = _parse_eeprom_addr(ai_choice.get("addr"))
                 if ai_addr is not None and ai_addr in eeprom_int:
-                    if joe_cnt == 0 or eeprom_int[ai_addr] == joe_cnt:
+                    if eeprom_int[ai_addr] == joe_cnt:
                         chosen = ai_addr
                         reason = str(ai_choice.get("reason") or "AI bank-aligned match")
 
@@ -1004,7 +1043,7 @@ def calibrate_eeprom_offsets_from_joe(
             reason = "Exact J.O.E. maintenance match"
             if ai_choice:
                 ai_addr = _parse_eeprom_addr(ai_choice.get("addr"))
-                if ai_addr is not None and ai_addr in eeprom_int and (joe_cnt == 0 or eeprom_int[ai_addr] == joe_cnt):
+                if ai_addr is not None and ai_addr in eeprom_int and eeprom_int[ai_addr] == joe_cnt:
                     chosen = ai_addr
                     reason = str(ai_choice.get("reason") or "AI verified maintenance offset")
 
@@ -1316,7 +1355,7 @@ def extract_joe_from_text_with_ai(
     finally:
         if auto_unload:
             _maybe_auto_unload(active_model)
-            update_task_progress(active=False)
+        update_task_progress(active=False)
 
 
 def extract_joe_from_image_with_ai(
@@ -1402,7 +1441,7 @@ def extract_joe_from_image_with_ai(
         finally:
             if auto_unload:
                 _maybe_auto_unload(vis_model)
-                update_task_progress(active=False)
+            update_task_progress(active=False)
 
     # Optional offline Tesseract OCR fallback if installed cleanly on host
     import base64
@@ -1679,9 +1718,9 @@ def calibrate_offsets_from_upload(
     before_counters = {}
     if isinstance(current_stats, dict):
         before_counters = {
-            "total_preps": current_stats.get("total_preps"),
-            "products": current_stats.get("products", []),
-            "maintenance": current_stats.get("maintenance_counters", {}),
+            "total_preps": current_stats.get("total_preparations", current_stats.get("total_preps")),
+            "products": current_stats.get("beverages", current_stats.get("products", [])),
+            "maintenance": current_stats.get("maintenance", current_stats.get("maintenance_counters", {})),
         }
 
     # Build pure After preview directly from calibrated offsets & verified EEPROM words
@@ -1728,6 +1767,7 @@ def calibrate_offsets_from_upload(
         "model": cal.get("model"),
         "extraction_source": extraction_source,
         "detected_identity": detected_identity,
+        "joe_data": joe_data,
         "joe_summary": {
             "products_found": len(joe_data.get("products", {})),
             "maintenance_found": len(joe_data.get("maintenance", {})),
@@ -1741,5 +1781,6 @@ def calibrate_offsets_from_upload(
         "matched_products": cal.get("matched_products", 0),
         "matched_maintenance": cal.get("matched_maintenance", 0),
         "matched_pct": cal.get("matched_pct", 0),
+        "eeprom_words_scanned": len(eeprom_int),
         "notes": cal.get("notes", ""),
     }

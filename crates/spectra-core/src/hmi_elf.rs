@@ -55,7 +55,7 @@ pub fn has_arm_movw_movt_any_reg(text_bytes: &[u8], target_vma: u32) -> bool {
                 return true;
             }
         }
-        i += 1;
+        i += 4;
     }
     false
 }
@@ -104,7 +104,7 @@ pub fn repoint_arm_movw_movt_all_regs(
                 continue;
             }
         }
-        i += 1;
+        i += 4;
     }
     (output, repointed_count)
 }
@@ -122,9 +122,9 @@ pub fn find_free_zero_padding(
         return None;
     }
     let step = if align.is_power_of_two() { align } else { 1 };
-    let initial_abs = sh_offset.saturating_add(start_rel_off);
+    let initial_abs = sh_offset.checked_add(start_rel_off)?;
     let start_abs = if step > 1 {
-        (initial_abs + step - 1) & !(step - 1)
+        initial_abs.checked_add(step - 1)? & !(step - 1)
     } else {
         initial_abs
     };
@@ -140,9 +140,9 @@ pub fn find_free_zero_padding(
     while off <= end {
         let slice = &ro_bytes[off..off + min_size];
         if slice.iter().all(|&b| b == 0) {
-            return Some(sh_offset + off);
+            return sh_offset.checked_add(off);
         }
-        off += step;
+        off = off.checked_add(step)?;
     }
     None
 }
@@ -171,19 +171,26 @@ pub fn scan_rodata_orphaned_string(
         let chunk = &ro_bytes[chunk_start..chunk_end];
         if chunk.len() >= 4 {
             if let Ok(s_txt) = std::str::from_utf8(chunk) {
-                let cur_off = search_start_off + chunk_start;
-                let cur_vma = (cur_off as u32).wrapping_add(vma_minus_off);
-                if !referenced_set.contains(&cur_vma) {
-                    let has_diacritics = target_diacritics.is_empty()
-                        || s_txt.chars().any(|c| target_diacritics.contains(c));
-
-                    let s_lower = s_txt.to_lowercase();
-                    let words: Vec<&str> = s_lower.split_whitespace().collect();
-                    let matches_siblings = lower_common_words.is_empty()
-                        || lower_common_words.iter().any(|cw| words.contains(&cw.as_str()));
-
-                    if has_diacritics && matches_siblings {
-                        return Some((cur_vma, s_txt.to_string()));
+                if let Some(cur_off) = search_start_off.checked_add(chunk_start) {
+                    if let Ok(cur_off_u32) = u32::try_from(cur_off) {
+                        if let Some(cur_vma) = cur_off_u32.checked_add(vma_minus_off) {
+                            if !referenced_set.contains(&cur_vma) {
+                                let has_diacritics = target_diacritics.is_empty()
+                                    || s_txt.chars().any(|c| target_diacritics.contains(c));
+                                if has_diacritics {
+                                    let matches_siblings = if lower_common_words.is_empty() {
+                                        true
+                                    } else {
+                                        let s_lower = s_txt.to_lowercase();
+                                        let words: Vec<&str> = s_lower.split_whitespace().collect();
+                                        lower_common_words.iter().any(|cw| words.contains(&cw.as_str()))
+                                    };
+                                    if matches_siblings {
+                                        return Some((cur_vma, s_txt.to_string()));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -221,6 +228,7 @@ pub fn detect_bipartite_token_swaps(
 
     for i in 0..n {
         let tok_k1 = &key_sets[i];
+        let tok_v1 = &val_sets[i];
         for j in (i + 1)..n {
             let tok_k2 = &key_sets[j];
 
@@ -228,24 +236,47 @@ pub fn detect_bipartite_token_swaps(
                 continue;
             }
 
-            let d1: HashSet<&str> = tok_k1.difference(tok_k2).copied().collect();
-            let d2: HashSet<&str> = tok_k2.difference(tok_k1).copied().collect();
+            let tok_v2 = &val_sets[j];
+            let mut has_d1 = false;
+            let mut has_d2 = false;
+            let mut v1_has_d1 = false;
+            let mut v1_has_d2 = false;
+            let mut v2_has_d1 = false;
+            let mut v2_has_d2 = false;
 
-            if d1.is_empty() || d2.is_empty() {
+            for &t in tok_k1 {
+                if !tok_k2.contains(t) {
+                    has_d1 = true;
+                    if tok_v1.contains(t) {
+                        v1_has_d1 = true;
+                        break;
+                    }
+                    if tok_v2.contains(t) {
+                        v2_has_d1 = true;
+                    }
+                }
+            }
+            if !has_d1 || v1_has_d1 || !v2_has_d1 {
                 continue;
             }
 
-            let tok_v1 = &val_sets[i];
-            let tok_v2 = &val_sets[j];
-
-            let v1_has_d2 = tok_v1.iter().any(|t| d2.contains(t));
-            let v1_has_d1 = tok_v1.iter().any(|t| d1.contains(t));
-            let v2_has_d1 = tok_v2.iter().any(|t| d1.contains(t));
-            let v2_has_d2 = tok_v2.iter().any(|t| d2.contains(t));
-
-            if v1_has_d2 && !v1_has_d1 && v2_has_d1 && !v2_has_d2 {
-                swaps.push((i, j));
+            for &t in tok_k2 {
+                if !tok_k1.contains(t) {
+                    has_d2 = true;
+                    if tok_v2.contains(t) {
+                        v2_has_d2 = true;
+                        break;
+                    }
+                    if tok_v1.contains(t) {
+                        v1_has_d2 = true;
+                    }
+                }
             }
+            if !has_d2 || v2_has_d2 || !v1_has_d2 {
+                continue;
+            }
+
+            swaps.push((i, j));
         }
     }
 

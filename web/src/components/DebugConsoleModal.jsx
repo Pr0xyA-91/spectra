@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Terminal,
   Bug,
@@ -20,9 +20,10 @@ import {
   Info,
 } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
+import { copyTextSafe } from '../utils/fetchSafe';
 
 export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
   const [diagnostics, setDiagnostics] = useState(null);
   const [logs, setLogs] = useState([]);
   const [errorCount, setErrorCount] = useState(0);
@@ -37,10 +38,17 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
   const [stoppingAi, setStoppingAi] = useState(false);
   const logContainerRef = useRef(null);
 
-  const fetchStatus = async () => {
+  const statusAbortRef = useRef(null);
+
+  const fetchStatus = useCallback(async () => {
+    if (statusAbortRef.current) {
+      try { statusAbortRef.current.abort(); } catch {}
+    }
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
     try {
       setIsRefreshing(true);
-      const res = await fetch('/api/debug/status');
+      const res = await fetch('/api/debug/status', { signal: controller.signal });
       const data = await res.json();
       if (data && data.success) {
         setDiagnostics(data.diagnostics);
@@ -49,24 +57,44 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
         setWarnCount(data.warn_count || 0);
       }
     } catch (e) {
+      if (e?.name === 'AbortError') return;
       // Silently fail during teardown or network disconnect
     } finally {
-      setIsRefreshing(false);
+      if (statusAbortRef.current === controller) {
+        setIsRefreshing(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
-    fetchStatus();
+    if (document.visibilityState !== 'hidden') {
+      fetchStatus();
+    }
 
     let interval = null;
     if (autoRefresh) {
-      interval = setInterval(fetchStatus, 1500);
+      interval = setInterval(() => {
+        if (document.visibilityState === 'hidden') return;
+        fetchStatus();
+      }, 1500);
     }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (statusAbortRef.current) {
+        try { statusAbortRef.current.abort(); } catch {}
+        statusAbortRef.current = null;
+      }
     };
-  }, [isOpen, autoRefresh]);
+  }, [isOpen, autoRefresh, fetchStatus]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -101,7 +129,7 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
     }
   };
 
-  const handleCopyReport = () => {
+  const handleCopyReport = async () => {
     const report = {
       timestamp: new Date().toISOString(),
       diagnostics,
@@ -113,9 +141,11 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
         recent: logs.slice(-25),
       },
     };
-    navigator.clipboard.writeText(JSON.stringify(report, null, 2));
-    setCopiedNotice(true);
-    setTimeout(() => setCopiedNotice(false), 2000);
+    const ok = await copyTextSafe(JSON.stringify(report, null, 2));
+    if (ok) {
+      setCopiedNotice(true);
+      setTimeout(() => setCopiedNotice(false), 2000);
+    }
   };
 
   const filteredLogs = useMemo(() => {
@@ -141,6 +171,8 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
   if (!isOpen) return null;
 
   const proc = diagnostics?.process || {};
+  const offsetDb = diagnostics?.offset_db || {};
+  const offsetDbVersion = offsetDb.offset_db_version || proc.offset_db_version || '';
   const serial = diagnostics?.serial || {};
   const ollama = diagnostics?.ollama || {};
   const threads = diagnostics?.threads || [];
@@ -156,13 +188,18 @@ export default function DebugConsoleModal({ isOpen, onClose, lang = 'en' }) {
               <Bug className="w-4 h-4" />
             </div>
             <div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap">
                 <span className="font-mono font-black text-sm tracking-wide text-zinc-100 uppercase">
                   {t('dbgTitle')}
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
                   PID {proc.pid || '-'}
                 </span>
+                {offsetDbVersion && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/60 text-purple-300 border border-purple-700/70">
+                    OFFSET DB {offsetDbVersion}
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-zinc-400 font-mono flex items-center space-x-3 mt-0.5">
                 <span>{t('dbgUptime')} <strong className="text-zinc-200">{proc.uptime_sec || 0}s</strong></span>

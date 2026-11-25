@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { txVal } from '../i18n/translations';
 
 /**
@@ -6,7 +6,7 @@ import { txVal } from '../i18n/translations';
  * Dynamically adapts topology, nodes, hydraulic paths, and hardware specs based on
  * backend `liveData.capabilities` (Jura Single / Dual / Smart Connect, Nivona, Kalerm, Jetinno).
  */
-export default function DigitalTwinSchematic({
+function DigitalTwinSchematic({
   theme,
   lang = 'en',
   liveData,
@@ -24,21 +24,33 @@ export default function DigitalTwinSchematic({
     caps.has_live_frame !== undefined ? Boolean(caps.has_live_frame) : hasTelem;
 
   // Determine active device topology
-  const inferredTopology = (() => {
-    if (caps.topology) return caps.topology;
-    if (protocol.toLowerCase().includes('smart connect')) return 'jura_smart_connect';
-    if (protocol.toLowerCase().includes('jetinno')) return 'jetinno_vending';
-    if (protocol.toLowerCase().includes('kalerm') || protocol.toLowerCase().includes('modbus')) return 'kalerm_dual';
-    if (protocol.toLowerCase().includes('eugster')) return 'nivona_single';
-    if (telem.is_dual_heater) return 'jura_dual';
-    return 'jura_single';
-  })();
+  const topologyConfig = useMemo(() => {
+    let topology = 'jura_single';
+    if (caps.topology) topology = caps.topology;
+    else if (protocol.toLowerCase().includes('smart connect')) topology = 'jura_smart_connect';
+    else if (protocol.toLowerCase().includes('jetinno')) topology = 'jetinno_vending';
+    else if (protocol.toLowerCase().includes('kalerm') || protocol.toLowerCase().includes('modbus')) topology = 'kalerm_dual';
+    else if (protocol.toLowerCase().includes('eugster')) topology = 'nivona_single';
+    else if (telem.is_dual_heater) topology = 'jura_dual';
 
-  const isDual = inferredTopology === 'jura_dual' || inferredTopology === 'kalerm_dual' || inferredTopology === 'jetinno_vending';
-  const isSmartConnect = inferredTopology === 'jura_smart_connect';
-  const isJetinno = inferredTopology === 'jetinno_vending';
-  const isKalerm = inferredTopology === 'kalerm_dual';
-  const isNivona = inferredTopology === 'nivona_single';
+    return {
+      inferredTopology: topology,
+      isDual: topology === 'jura_dual' || topology === 'kalerm_dual' || topology === 'jetinno_vending',
+      isSmartConnect: topology === 'jura_smart_connect',
+      isJetinno: topology === 'jetinno_vending',
+      isKalerm: topology === 'kalerm_dual',
+      isNivona: topology === 'nivona_single',
+    };
+  }, [caps.topology, protocol, telem.is_dual_heater]);
+
+  const {
+    inferredTopology,
+    isDual,
+    isSmartConnect,
+    isJetinno,
+    isKalerm,
+    isNivona,
+  } = topologyConfig;
 
   const findSw = (id) => (hasTelem ? switches.find((s) => s.id === id) : null);
   const tankSw = findSw('water_inlet') || findSw('water_tank');
@@ -49,6 +61,53 @@ export default function DigitalTwinSchematic({
   const doorSw = findSw('door_switch') || findSw('cabinet_door');
   const cupSw = findSw('cup_detector');
   const readySw = findSw('machine_ready');
+
+  const tankHas = Boolean(tankSw);
+  const tankOk = tankSw ? tankSw.ok !== false : true;
+  const tankStatus = tankSw?.status ?? '';
+  const tankBadge = tankSw?.badge ?? '';
+  const tankDetails = tankSw?.details ?? '';
+
+  const trayHas = Boolean(traySw);
+  const trayOk = traySw ? traySw.ok !== false : true;
+  const trayStatus = traySw?.status ?? '';
+  const trayBadge = traySw?.badge ?? '';
+
+  const beansHas = Boolean(beansSw);
+  const beansOkSw = beansSw ? beansSw.ok !== false : null;
+  const beansStatus = beansSw?.status ?? '';
+  const beansBadge = beansSw?.badge ?? '';
+  const beansDetails = beansSw?.details ?? '';
+
+  const groundsHas = Boolean(groundsSw);
+  const groundsOk = groundsSw ? groundsSw.ok !== false : true;
+  const groundsStatus = groundsSw?.status ?? '';
+  const groundsBadge = groundsSw?.badge ?? '';
+  const groundsDetails = groundsSw?.details ?? '';
+
+  const brewGroupHas = Boolean(brewGroupSw);
+  const brewGroupOk = brewGroupSw ? brewGroupSw.ok !== false : true;
+  const brewGroupStatus = brewGroupSw?.status ?? '';
+  const brewGroupBadge = brewGroupSw?.badge ?? '';
+  const brewGroupDetails = brewGroupSw?.details ?? '';
+
+  const doorHas = Boolean(doorSw);
+  const doorOk = doorSw ? doorSw.ok !== false : true;
+  const doorStatus = doorSw?.status ?? '';
+  const doorBadge = doorSw?.badge ?? '';
+  const doorDetails = doorSw?.details ?? '';
+
+  const cupHas = Boolean(cupSw);
+  const cupOk = cupSw ? cupSw.ok !== false : true;
+  const cupStatus = cupSw?.status ?? '';
+  const cupBadge = cupSw?.badge ?? '';
+  const cupDetails = cupSw?.details ?? '';
+
+  const readyHas = Boolean(readySw);
+  const readyOk = readySw ? readySw.ok !== false : true;
+  const readyStatus = readySw?.status ?? '';
+  const readyBadge = readySw?.badge ?? '';
+  const readyDetails = readySw?.details ?? '';
 
   const tb1Temp = hasTelem && telem.heater_coffee_c != null ? Number(telem.heater_coffee_c) : null;
   const tb2Temp = hasTelem && telem.heater_steam_c != null ? Number(telem.heater_steam_c) : null;
@@ -71,54 +130,53 @@ export default function DigitalTwinSchematic({
   const naBadge = isSmartConnect ? 'N/A (@-PROTO)' : (isCs ? 'NEPODPOR.' : 'N/A');
   const noFrameBadge = isCs ? 'BEZ RÁMCE' : 'NO FRAME';
 
-  const makeSwitchNode = (id, label, icon, x, y, sw, hardware, fallbackDesc) => {
-    const hasData = Boolean(sw);
-    return {
-      id,
-      label,
-      icon,
-      supported: true,
-      status: hasData ? txVal(lang, sw.status) : (isCs ? 'POHOTOVOST' : 'STANDBY'),
-      primary: hasData ? txVal(lang, sw.badge) : '---',
-      details: sw?.details ? txVal(lang, sw.details) : fallbackDesc,
-      hardware,
-      badge: hasData ? txVal(lang, sw.badge) : (isCs ? 'POHOT.' : 'STANDBY'),
-      ok: hasData ? sw.ok !== false : true,
-      x,
-      y,
+  const NODES = useMemo(() => {
+    const makeSwitchNode = (id, label, icon, x, y, hasData, okVal, statusVal, badgeVal, detailsVal, hardware, fallbackDesc) => {
+      return {
+        id,
+        label,
+        icon,
+        supported: true,
+        status: hasData ? txVal(lang, statusVal) : (isCs ? 'POHOTOVOST' : 'STANDBY'),
+        primary: hasData ? txVal(lang, badgeVal) : '---',
+        details: detailsVal ? txVal(lang, detailsVal) : fallbackDesc,
+        hardware,
+        badge: hasData ? txVal(lang, badgeVal) : (isCs ? 'POHOT.' : 'STANDBY'),
+        ok: hasData ? okVal : true,
+        x,
+        y,
+      };
     };
-  };
 
-  // Base nodes common across hydraulic topologies
-  const NODES = {};
+    const nodes = {};
 
-  NODES.tank = {
+  nodes.tank = {
     id: 'tank',
     label: isJetinno ? (isCs ? 'PŘÍVOD VODY' : 'MAINS INLET') : (isCs ? 'NÁDRŽKA VODY' : 'WATER TANK'),
     icon: '💧',
     supported: true,
-    status: tankSw
-      ? (tankSw.ok ? (isCs ? 'V NORMĚ' : 'NOMINAL') : txVal(lang, tankSw.status))
+    status: tankHas
+      ? (tankOk ? (isCs ? 'V NORMĚ' : 'NOMINAL') : txVal(lang, tankStatus))
       : (isCs ? 'POHOTOVOST' : 'STANDBY'),
-    primary: tankSw
-      ? (tankSw.ok ? (isJetinno ? (isCs ? 'Tlak OK' : 'Pressure OK') : (isCs ? 'Voda OK' : 'Water OK')) : txVal(lang, tankSw.badge))
+    primary: tankHas
+      ? (tankOk ? (isJetinno ? (isCs ? 'Tlak OK' : 'Pressure OK') : (isCs ? 'Voda OK' : 'Water OK')) : txVal(lang, tankBadge))
       : '---',
-    details: tankSw?.details
-      ? txVal(lang, tankSw.details)
+    details: tankDetails
+      ? txVal(lang, tankDetails)
       : (isJetinno
           ? (isCs ? 'Tlakový snímač přívodu vody z řadu.' : 'Mains water inlet pressure switch / transducer.')
           : (isCs ? 'Jazýčkový senzor spínaný magnetickým plovákem v nádržce.' : 'Chassis reed sensor actuated by magnetic float in water tank.')),
     hardware: isJetinno
       ? (isCs ? 'Přívod vody z řadu | Tlakový spínač vstupu' : 'Direct mains water line | Inlet pressure safety interlock')
       : (isCs ? 'Jazýčkový kontakt: NO | Blokace: Úroveň 1' : 'Reed switch contact: NO | Safety Lockout: Level 1'),
-    badge: tankSw ? txVal(lang, tankSw.badge) : (isCs ? 'POHOT.' : 'STANDBY'),
-    ok: tankSw ? tankSw.ok !== false : true,
+    badge: tankHas ? txVal(lang, tankBadge) : (isCs ? 'POHOT.' : 'STANDBY'),
+    ok: tankHas ? tankOk : true,
     x: 60,
     y: 70,
   };
 
   if (!isJetinno) {
-    NODES.flowmeter = {
+    nodes.flowmeter = {
       id: 'flowmeter',
       label: isCs ? 'PRŮTOKOMĚR' : 'FLOWMETER',
       icon: '🌊',
@@ -156,7 +214,7 @@ export default function DigitalTwinSchematic({
     };
   }
 
-  NODES.pump = {
+  nodes.pump = {
     id: 'pump',
     label: isJetinno ? (isCs ? 'ČERPADLO / TLAK' : 'BREW PUMP') : (isCs ? 'ČERPADLO' : 'PUMP'),
     icon: '⚡',
@@ -199,7 +257,7 @@ export default function DigitalTwinSchematic({
     y: 70,
   };
 
-  NODES.tb1 = {
+  nodes.tb1 = {
     id: 'tb1',
     label: isJetinno ? (isCs ? 'ESPRESSO BOJLER' : 'ESPRESSO BOILER') : (isCs ? 'TOPNÝ BLOK TB1' : 'COFFEE HEATER TB1'),
     icon: '☕',
@@ -243,7 +301,7 @@ export default function DigitalTwinSchematic({
   };
 
   if (isDual) {
-    NODES.tb2 = {
+    nodes.tb2 = {
       id: 'tb2',
       label: isJetinno ? (isCs ? 'INSTANT BOJLER' : 'INSTANT BOILER') : (isCs ? 'PARNÍ BLOK TB2' : 'STEAM HEATER TB2'),
       icon: '♨️',
@@ -273,7 +331,7 @@ export default function DigitalTwinSchematic({
     };
   } else if (!isNivona) {
     // Single-heater Jura / Smart Connect shows Multiway Valve on top-right
-    NODES.valve = {
+    nodes.valve = {
       id: 'valve',
       label: isCs ? 'VENTIL' : 'MULTIWAY VALVE',
       icon: '🔀',
@@ -311,161 +369,213 @@ export default function DigitalTwinSchematic({
 
   // Bottom Row Nodes — adapted per device topology
   if (isJetinno) {
-    NODES.door = makeSwitchNode(
+    nodes.door = makeSwitchNode(
       'door',
       isCs ? 'DVEŘE SKŘÍNĚ' : 'CABINET DOOR',
       '🚪',
       60,
       195,
-      doorSw,
+      doorHas,
+      doorOk,
+      doorStatus,
+      doorBadge,
+      doorDetails,
       isCs ? 'Bezpečnostní mikrospínač dveří (STUM IO)' : 'Chassis safety interlock switch (STUM IO)',
       isCs ? 'Snímač zavření servisních dveří automatu.' : 'Service cabinet door interlock monitor.'
     );
-    NODES.cup = makeSwitchNode(
+    nodes.cup = makeSwitchNode(
       'cup',
       isCs ? 'SENZOR KELÍMKU' : 'CUP SENSOR',
       '🥤',
       185,
       195,
-      cupSw,
+      cupHas,
+      cupOk,
+      cupStatus,
+      cupBadge,
+      cupDetails,
       isCs ? 'Optická závora výdejní zóny' : 'Optical IR beam in dispense bay',
       isCs ? 'Detekce přítomnosti kelímku ve výdejním prostoru.' : 'Infrared cup presence detection in dispense area.'
     );
-    NODES.grounds = makeSwitchNode(
+    nodes.grounds = makeSwitchNode(
       'grounds',
       isCs ? 'ODPAD KÁVY' : 'PUCK BIN',
       '🗑️',
       320,
       195,
-      groundsSw,
+      groundsHas,
+      groundsOk,
+      groundsStatus,
+      groundsBadge,
+      groundsDetails,
       isCs ? 'Počitadlo + optická kontrola odpadního koše' : 'Grounds capacity counter & optical switch',
       isCs ? 'Kontrola zaplnění zásobníku na kávovou sedlinu.' : 'Spent coffee puck bin level monitor.'
     );
-    NODES.tray = makeSwitchNode(
+    nodes.tray = makeSwitchNode(
       'tray',
       isCs ? 'ODPADNÍ MISKA' : 'WASTE TRAY',
       '📥',
       455,
       195,
-      traySw,
+      trayHas,
+      trayOk,
+      trayStatus,
+      trayBadge,
+      '',
       isCs ? 'Hladinová elektroda odpadní vody' : 'Liquid level electrode probe',
       isCs ? 'Kontrola hladiny odpadní vody v odkapní misce.' : 'Wastewater tray overflow probe.'
     );
-    NODES.state = makeSwitchNode(
+    nodes.state = makeSwitchNode(
       'state',
       isCs ? 'STAV STROJE' : 'MACHINE STATE',
       '✅',
       585,
       195,
-      readySw,
+      readyHas,
+      readyOk,
+      readyStatus,
+      readyBadge,
+      readyDetails,
       isCs ? 'Celkové vyhodnocení IO kontroléru Jetinno' : 'Jetinno IO controller readiness synthesis',
       isCs ? 'Souhrnný provozní stav automatu.' : 'Overall vending controller readiness.'
     );
   } else if (isKalerm) {
-    NODES.door = makeSwitchNode(
+    nodes.door = makeSwitchNode(
       'door',
       isCs ? 'SERVISNÍ DVEŘE' : 'SERVICE DOOR',
       '🚪',
       60,
       195,
-      doorSw,
+      doorHas,
+      doorOk,
+      doorStatus,
+      doorBadge,
+      doorDetails,
       isCs ? 'Přední bezpečnostní mikrospínač (Modbus bit 7)' : 'Front chassis interlock (Modbus bit 7)',
       isCs ? 'Snímač zavření předních servisních dveří.' : 'Maintenance door interlock switch.'
     );
-    NODES.beans = makeSwitchNode(
+    nodes.beans = makeSwitchNode(
       'beans',
       isCs ? 'ZÁSOBNÍK ZRN' : 'BEAN HOPPER',
       '🫘',
       185,
       195,
-      beansSw,
+      beansHas,
+      beansOkSw !== false,
+      beansStatus,
+      beansBadge,
+      beansDetails,
       isCs ? 'Optický IR senzor v násypce (Modbus bit 5)' : 'Infrared optical beam in bean hopper (Modbus bit 5)',
       isCs ? 'Detekce přítomnosti kávových zrn.' : 'Optical bean hopper level detection.'
     );
-    NODES.bu = makeSwitchNode(
+    nodes.bu = makeSwitchNode(
       'bu',
       isCs ? 'SPAŘ. JEDN.' : 'BREW GROUP',
       '⚙️',
       310,
       195,
-      brewGroupSw,
+      brewGroupHas,
+      brewGroupOk,
+      brewGroupStatus,
+      brewGroupBadge,
+      brewGroupDetails,
       isCs ? 'Optický enkodér + vačkový mikrospínač (Modbus bit 3)' : 'Optical encoder + cam home switch (Modbus bit 3)',
       isCs ? 'Poloha spařovací jednotky Kalerm.' : 'Kalerm brew group home/active position.'
     );
-    NODES.grounds = makeSwitchNode(
+    nodes.grounds = makeSwitchNode(
       'grounds',
       isCs ? 'ODPAD KÁVY' : 'GROUNDS BOX',
       '🗑️',
       435,
       195,
-      groundsSw,
+      groundsHas,
+      groundsOk,
+      groundsStatus,
+      groundsBadge,
+      groundsDetails,
       isCs ? 'Mikrospínač zásobníku sedliny (Modbus bit 2)' : 'Used puck container microswitch (Modbus bit 2)',
       isCs ? 'Kontrola vložení a naplnění zásobníku sedliny.' : 'Grounds box presence & fill state.'
     );
-    NODES.tray = makeSwitchNode(
+    nodes.tray = makeSwitchNode(
       'tray',
       isCs ? 'ODKAPNÍ MISKA' : 'DRIP TRAY',
       '📥',
       565,
       195,
-      traySw,
+      trayHas,
+      trayOk,
+      trayStatus,
+      trayBadge,
+      '',
       isCs ? 'Kontaktní spínač odkapní misky (Modbus bit 1)' : 'Waste basin contact switch (Modbus bit 1)',
       isCs ? 'Kontrola zasunutí odkapní misky.' : 'Drip tray insertion switch.'
     );
   } else if (isNivona) {
-    NODES.bu = makeSwitchNode(
+    nodes.bu = makeSwitchNode(
       'bu',
       isCs ? 'SPAŘ. JEDN.' : 'BREW GROUP',
       '⚙️',
       185,
       195,
-      brewGroupSw,
+      brewGroupHas,
+      brewGroupOk,
+      brewGroupStatus,
+      brewGroupBadge,
+      brewGroupDetails,
       isCs ? 'Mikrospínač vyjímatelné spařovací jednotky' : 'Removable brew unit presence interlock',
       isCs ? 'Kontrola usazení a zamčení spařovací jednotky.' : 'Removable brew group lock switch.'
     );
-    NODES.grounds = makeSwitchNode(
+    nodes.grounds = makeSwitchNode(
       'grounds',
       isCs ? 'ODPAD KÁVY' : 'GROUNDS DRAWER',
       '🗑️',
       310,
       195,
-      groundsSw,
+      groundsHas,
+      groundsOk,
+      groundsStatus,
+      groundsBadge,
+      groundsDetails,
       isCs ? 'Mikrospínač nádobky na sedlinu' : 'Used puck drawer microswitch',
       isCs ? 'Kontrola vložení nádobky na kávovou sedlinu.' : 'Coffee grounds drawer switch.'
     );
-    NODES.tray = makeSwitchNode(
+    nodes.tray = makeSwitchNode(
       'tray',
       isCs ? 'ODKAPNÍ MISKA' : 'DRIP TRAY',
       '📥',
       435,
       195,
-      traySw,
+      trayHas,
+      trayOk,
+      trayStatus,
+      trayBadge,
+      '',
       isCs ? 'Vodivostní kontakty misky' : 'Conductive drip tray contacts',
       isCs ? 'Kontrola přítomnosti odkapní misky.' : 'Drip tray contact sensor.'
     );
   } else {
     // Jura Single, Jura Dual, and Jura Smart Connect
-    NODES.beans = {
+    nodes.beans = {
       id: 'beans',
       label: isCs ? 'ZÁSOBNÍK ZRN' : 'BEAN HOPPER',
       icon: '🫘',
       supported: true,
       status: isLocalBeanDisplay
         ? (isCs ? 'Hlídáno lokálně displejem (EF518D)' : 'Monitored Locally by Display MCU (EF518D)')
-        : beansSw?.status
-        ? txVal(lang, beansSw.status)
+        : beansStatus
+        ? txVal(lang, beansStatus)
         : beansOk != null
         ? (beansOk ? (isCs ? 'ZRNA OK' : 'BEANS OK') : (isCs ? 'DOPLNIT ZRNA' : 'FILL BEANS'))
         : (isCs ? 'POHOTOVOST' : 'STANDBY'),
       primary: isLocalBeanDisplay
         ? (isCs ? 'LOKÁLNĚ' : 'LOCAL (EF518D)')
-        : beansSw?.badge
-        ? txVal(lang, beansSw.badge)
+        : beansBadge
+        ? txVal(lang, beansBadge)
         : beansOk != null
         ? (beansOk ? (isCs ? 'PLNÝ' : 'CHARGED') : (isCs ? 'PRÁZDNÝ' : 'EMPTY'))
         : '---',
-      details: beansSw?.details
-        ? txVal(lang, beansSw.details)
+      details: beansDetails
+        ? txVal(lang, beansDetails)
         : (isCs ? 'Stav zrn dle telemetrie kávovaru nebo lokálního displeje.' : 'Bean presence via telemetry status, puck thickness fallback, or local display MCU.'),
       hardware: isLocalBeanDisplay
         ? (isCs ? 'Čelní displej (EF518D / Renesas R8C) — lokální fototranzistor' : 'Front Display MCU (EF518D / Renesas R8C) Local Phototransistor')
@@ -474,17 +584,17 @@ export default function DigitalTwinSchematic({
         : (isCs ? 'Detektor zrn / kontrola tloušťky puku (HZ[8])' : 'Bean charge status / puck compression check (HZ[8])'),
       badge: isLocalBeanDisplay
         ? (isCs ? 'LOKÁLNĚ' : 'LOCAL')
-        : beansSw?.badge
-        ? txVal(lang, beansSw.badge)
+        : beansBadge
+        ? txVal(lang, beansBadge)
         : beansOk != null
         ? (beansOk ? (isCs ? 'PLNÝ' : 'CHARGED') : (isCs ? 'PRÁZDNÝ' : 'EMPTY'))
         : (isCs ? 'POHOT.' : 'STANDBY'),
-      ok: beansSw ? beansSw.ok !== false : (beansOk !== false),
+      ok: beansHas ? beansOkSw : (beansOk !== false),
       x: 185,
       y: 195,
     };
 
-    NODES.bu = {
+    nodes.bu = {
       id: 'bu',
       label: isCs ? 'SPAŘ. JEDN.' : 'BREW UNIT',
       icon: '⚙️',
@@ -519,28 +629,32 @@ export default function DigitalTwinSchematic({
       y: 195,
     };
 
-    NODES.tray = {
+    nodes.tray = {
       id: 'tray',
       label: isCs ? 'ODKAPNÍ MISKA' : 'DRIP TRAY',
       icon: '📥',
       supported: true,
-      status: traySw ? txVal(lang, traySw.status) : (isCs ? 'POHOTOVOST' : 'STANDBY'),
-      primary: traySw ? (traySw.ok ? (isCs ? 'Vložena' : 'Present') : (isCs ? 'Chybí' : 'Missing')) : '---',
+      status: trayHas ? txVal(lang, trayStatus) : (isCs ? 'POHOTOVOST' : 'STANDBY'),
+      primary: trayHas ? (trayOk ? (isCs ? 'Vložena' : 'Present') : (isCs ? 'Chybí' : 'Missing')) : '---',
       details: isCs ? 'Kontaktní pružinky snímající zasunutí odkapní misky / zásobníku sedliny.' : 'Rear chassis leaf contacts detecting drip tray & grounds drawer insertion.',
       hardware: isCs ? 'Mechanický mikrospínač | Bezpečnostní blokace pohonu' : 'Mechanical leaf contacts | Safety Interlock: immediate drive inhibit',
-      badge: traySw ? txVal(lang, traySw.badge) : (isCs ? 'POHOT.' : 'STANDBY'),
-      ok: traySw ? traySw.ok !== false : true,
+      badge: trayHas ? txVal(lang, trayBadge) : (isCs ? 'POHOT.' : 'STANDBY'),
+      ok: trayHas ? trayOk : true,
       x: 435,
       y: 195,
     };
 
-    NODES.state = makeSwitchNode(
+    nodes.state = makeSwitchNode(
       'state',
       isCs ? 'STAV STROJE' : 'MACHINE STATE',
       '☕',
       565,
       195,
-      readySw,
+      readyHas,
+      readyOk,
+      readyStatus,
+      readyBadge,
+      readyDetails,
       isSmartConnect
         ? (isCs ? 'Vyhodnocení z aktivních výstrah @TF:' : 'Synthesized from Smart Connect @TF: active alerts')
         : (isCs ? 'Vyhodnocení z 5 fyzických vstupů HZ:' : 'Synthesized from 5 live physical HZ: inputs'),
@@ -548,12 +662,88 @@ export default function DigitalTwinSchematic({
     );
   }
 
+    return nodes;
+  }, [
+    lang,
+    isCs,
+    isJetinno,
+    isKalerm,
+    isNivona,
+    isDual,
+    isSmartConnect,
+    hasTelem,
+    hasLiveFrame,
+    tankHas,
+    tankOk,
+    tankStatus,
+    tankBadge,
+    tankDetails,
+    trayHas,
+    trayOk,
+    trayStatus,
+    trayBadge,
+    beansHas,
+    beansOkSw,
+    beansStatus,
+    beansBadge,
+    beansDetails,
+    groundsHas,
+    groundsOk,
+    groundsStatus,
+    groundsBadge,
+    groundsDetails,
+    brewGroupHas,
+    brewGroupOk,
+    brewGroupStatus,
+    brewGroupBadge,
+    brewGroupDetails,
+    doorHas,
+    doorOk,
+    doorStatus,
+    doorBadge,
+    doorDetails,
+    cupHas,
+    cupOk,
+    cupStatus,
+    cupBadge,
+    cupDetails,
+    readyHas,
+    readyOk,
+    readyStatus,
+    readyBadge,
+    readyDetails,
+    flowRate,
+    flowVolume,
+    flowPulses,
+    pressureBar,
+    tb1Temp,
+    tb2Temp,
+    buPos,
+    buUpper,
+    buZone,
+    beansOk,
+    isLocalBeanDisplay,
+    supportsFlow,
+    supportsSteamTemp,
+    supportsValve,
+    supportsBuEncoder,
+    naBadge,
+    noFrameBadge,
+    telem.heater_ntc_raw,
+    telem.heater_steam_raw,
+    telem.mv_busy,
+    telem.mv_init_ok,
+    telem.bu_stroke_pct,
+    telem.bu_mill_target,
+    telem.bu_init_ok,
+  ]);
+
   // Keep selectedNodeId valid when switching between different machine topologies
   useEffect(() => {
     if (!NODES[selectedNodeId]) {
       setSelectedNodeId(NODES.tb1 ? 'tb1' : Object.keys(NODES)[0]);
     }
-  }, [inferredTopology, selectedNodeId]);
+  }, [inferredTopology, selectedNodeId, NODES]);
 
   const selectedNode = NODES[selectedNodeId] || NODES.tb1 || Object.values(NODES)[0];
 
@@ -862,3 +1052,5 @@ export default function DigitalTwinSchematic({
     </div>
   );
 }
+
+export default React.memo(DigitalTwinSchematic);

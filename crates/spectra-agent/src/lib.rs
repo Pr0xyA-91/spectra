@@ -59,7 +59,10 @@ impl AppState {
 
 /// Enumerates physical serial port nodes available on the host machine.
 pub async fn list_serial_ports() -> Result<Vec<String>, String> {
-    SerialTransport::list_ports().map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(SerialTransport::list_ports)
+        .await
+        .map_err(|e| format!("Serial port enumeration task failed: {e}"))?
+        .map_err(|e| e.to_string())
 }
 
 /// Connects to a physical RS232 / USB-UART serial adapter.
@@ -76,7 +79,10 @@ pub async fn connect_serial(
         inter_byte_delay: Some(Duration::from_millis(8)),
     };
 
-    let transport = SerialTransport::open(config).map_err(|e| e.to_string())?;
+    let transport = tokio::task::spawn_blocking(move || SerialTransport::open(config))
+        .await
+        .map_err(|e| format!("Serial open task failed: {e}"))?
+        .map_err(|e| e.to_string())?;
     let boxed: Box<dyn Transport> = Box::new(transport);
     let client = JuraClient::new(boxed)
         .with_inter_byte_delay(Duration::from_millis(8))

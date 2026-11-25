@@ -1085,11 +1085,15 @@ def generate_service_report_html(
     fw = html.escape(str(summary.get("firmware_string", "N/A")))
     timestamp = html.escape(str(summary.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))))
 
-    health_color = "#22c55e" if health_score >= 80 else ("#eab308" if health_score >= 50 else "#ef4444")
+    try:
+        health_score_num = int(health_score)
+    except (TypeError, ValueError):
+        health_score_num = 0
+    health_color = "#22c55e" if health_score_num >= 80 else ("#eab308" if health_score_num >= 50 else "#ef4444")
     if is_cs:
-        health_label = "VÝBORNÝ" if health_score >= 85 else ("DOBRÝ" if health_score >= 70 else "NUTNÝ SERVIS")
+        health_label = "VÝBORNÝ" if health_score_num >= 85 else ("DOBRÝ" if health_score_num >= 70 else "NUTNÝ SERVIS")
     else:
-        health_label = "EXCELLENT" if health_score >= 85 else ("GOOD" if health_score >= 70 else "NEEDS SERVICE")
+        health_label = "EXCELLENT" if health_score_num >= 85 else ("GOOD" if health_score_num >= 70 else "NEEDS SERVICE")
 
     bev_cs_map = {
         "Hot Water": "Horká voda",
@@ -1137,7 +1141,7 @@ def generate_service_report_html(
     # Maintenance rows
     maint_rows = ""
     for m in summary.get("maintenance", []):
-        pct_str = f"{m.get('percentage')}%" if m.get("percentage") is not None else "N/A"
+        pct_str = html.escape(f"{m.get('percentage')}%" if m.get("percentage") is not None else "N/A")
         raw_lbl = str(m.get('label', 'Cycle'))
         disp_lbl = maint_cs_map.get(raw_lbl, raw_lbl) if is_cs else raw_lbl
         safe_label = html.escape(disp_lbl)
@@ -1336,7 +1340,7 @@ def generate_service_report_html(
             <div class="brand-sub">{brand_sub}</div>
         </div>
         <div class="health-badge">
-            <div class="health-score">{health_score}%</div>
+            <div class="health-score">{html.escape(str(health_score))}%</div>
             <div class="health-status">{health_label}</div>
         </div>
     </div>

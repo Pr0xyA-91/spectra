@@ -1,19 +1,24 @@
 {
-  "build": "20261120.1248",
-  "main_build": "20261120.1248",
-  "windows_build": "20261120.1248",
-  "published_at": "2026-11-20T13:02:40Z",
-  "release_notes": "- Fixed critical Windows \"Invalid serial port\" regression where descriptive COM port labels (COM3 (USB-SERIAL CH340 (COM3))) returned by /api/ports were rejected by port validation\n- Added canonical Windows COM port normalization across serial connections and all REST API endpoints while maintaining strict injection filtering\n- Added community-verified Jura WE6 (EA) (EF532M V02.03, Article 15417) EEPROM beverage, maintenance & cockpit % calibration (spectra-captures#4)\n- Prioritized article-number matching before base EF fallback so sibling EF532M models (15417 WE6 vs 15082 E60) never collide",
+  "build": "20261125.1535",
+  "main_build": "20261125.1535",
+  "windows_build": "20261125.1535",
+  "published_at": "2026-11-25T20:34:32Z",
+  "release_notes": "- test(guide): avoid literal private repo/path strings in test_user_guide.py for public sync\n- Merge pull request #6 from Pr0xyA-91/main_unstable\n- feat(ui): Build 20261125.1535 \u2014 add top-left Obsidian Prism logo to WorkspaceHeader\n- security(stack): Build 20261125.1030 \u2014 full-stack security hardening (SEC-01..09) & runtime/UI/SQLite optimizations (OPT-02..05)\n- feat(offsets_db): Build 20261124.1015 \u2014 pure-stdlib RFC 8032 Ed25519 signed Offset DB sync, 3-layer precedence, 1-click Sync UI & offset_db_version metadata\n- fix(offsets): sweep full 512-word EEPROM in Overview calibration and replace/add newly discovered beverages",
   "assets": {
     "spectra_update.exe": {
-      "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "475d099e07764df90a3c14f2ed70375ca35fb2934c90be4f1c6f68041cea3841",
-      "size": 30029824
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261125.1535/spectra_update.exe",
+      "sha256": "e9ce114346dee191a61a1ddadedd89fb2c436ec7dc8fd2f6f5dd2e89292e9073",
+      "size": 7846912
     },
     "spectra_setup.exe": {
-      "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "67ee53971ed543519aabaa79915118985506a1b220c7f1164af0312bb64c3e9a",
-      "size": 52106752
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261125.1535/spectra_setup.exe",
+      "sha256": "ef3a563589b691469e3a37abe09fe7a411ad537b9611026be52b9ed175d74075",
+      "size": 18777600
+    },
+    "spectra_linux.tar.gz": {
+      "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20261125.1535/spectra_linux.tar.gz",
+      "sha256": "fe976995e6624d48777b69345f443e5e6f6f41eee6e3cda0ffe12fa41230251f",
+      "size": 9266900
     }
   }
 }

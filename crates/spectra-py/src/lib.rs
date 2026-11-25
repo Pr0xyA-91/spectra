@@ -1,8 +1,11 @@
 //! PyO3 Hardware Diagnostics and Interactive Session Bridge for SPECTRA
+#![allow(clippy::useless_conversion)]
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use pyo3::prelude::*;
@@ -14,14 +17,33 @@ use spectra_core::{
 #[cfg(unix)]
 use spectra_hal::AdbStream;
 use spectra_hal::{
-    AdbBridgeConfig, AdbSerialBridge, AdbSocketEndpoint, HalError, Transport,
+    jura_codec, AdbBridgeConfig, AdbSerialBridge, AdbSocketEndpoint, HalError, Transport,
 };
 
 #[cfg(feature = "serial")]
 use spectra_hal::{SerialConfig, SerialTransport};
 
+const MAX_TELEMETRY_LOG_ENTRIES: usize = 500;
+const MAX_FRAME_BYTES: usize = 16384;
+
+static SHARED_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+
+fn shared_runtime() -> PyResult<&'static tokio::runtime::Runtime> {
+    let res = SHARED_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Runtime error: {e}"))
+    });
+    match res {
+        Ok(rt) => Ok(rt),
+        Err(msg) => Err(pyo3::exceptions::PyIOError::new_err(msg.clone())),
+    }
+}
+
 /// Real-time metric telemetry frame decoded from Jura `HZ:` responses.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHzTelemetry {
     #[pyo3(get)]
@@ -71,7 +93,7 @@ impl PyHzTelemetry {
 
     /// Converts telemetry attributes into a standard Python dictionary.
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("coffee_temp_c", self.coffee_temp_c)?;
         dict.set_item("steam_temp_c", self.steam_temp_c)?;
         dict.set_item("flowmeter_pulses", self.flowmeter_pulses)?;
@@ -125,6 +147,8 @@ fn read_ascii_response(
 ) -> PyResult<String> {
     let start = std::time::Instant::now();
     let mut raw_buf = Vec::with_capacity(256);
+    let mut decoded_bytes = Vec::with_capacity(64);
+    let mut decoded_groups: usize = 0;
 
     loop {
         if start.elapsed() >= timeout {
@@ -146,19 +170,42 @@ fn read_ascii_response(
         if n == 0 {
             break;
         }
+        if raw_buf.len().saturating_add(n) > MAX_FRAME_BYTES {
+            return Err(pyo3::exceptions::PyIOError::new_err(format!(
+                "Response frame exceeded {MAX_FRAME_BYTES} byte limit"
+            )));
+        }
         raw_buf.extend_from_slice(&chunk[..n]);
 
         if obfuscate_4byte {
-            if raw_buf.len() >= 4 && raw_buf.len() % 4 == 0 {
-                if let Ok(decoded) = JuraProtocol::decode_wire_frame(&raw_buf) {
-                    if decoded.ends_with("\r\n") || decoded.ends_with('\n') || decoded.ends_with('\r') {
-                        return Ok(decoded.trim().to_string());
-                    }
-                }
+            let total_groups = raw_buf.len() / 4;
+            while decoded_groups < total_groups {
+                let base = decoded_groups * 4;
+                let quad = [
+                    raw_buf[base],
+                    raw_buf[base + 1],
+                    raw_buf[base + 2],
+                    raw_buf[base + 3],
+                ];
+                let byte = jura_codec::decode_quad(&quad).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to decode wire frame: {e}"
+                    ))
+                })?;
+                decoded_bytes.push(byte);
+                decoded_groups += 1;
             }
-        } else if let Ok(s) = std::str::from_utf8(&raw_buf) {
-            if s.ends_with("\r\n") || s.ends_with('\n') || s.ends_with('\r') {
-                return Ok(s.trim().to_string());
+            if decoded_bytes.ends_with(b"\r\n")
+                || decoded_bytes.ends_with(b"\n")
+                || decoded_bytes.ends_with(b"\r")
+            {
+                return Ok(String::from_utf8_lossy(&decoded_bytes).trim().to_string());
+            }
+        } else if raw_buf.contains(&b'\n') || raw_buf.contains(&b'\r') {
+            if let Ok(s) = std::str::from_utf8(&raw_buf) {
+                if s.ends_with("\r\n") || s.ends_with('\n') || s.ends_with('\r') {
+                    return Ok(s.trim().to_string());
+                }
             }
         }
     }
@@ -170,10 +217,13 @@ fn read_ascii_response(
     }
 
     if obfuscate_4byte {
-        let s = JuraProtocol::decode_wire_frame(&raw_buf).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to decode wire frame: {e}"))
-        })?;
-        Ok(s.trim().to_string())
+        if raw_buf.len() % 4 != 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode wire frame: incomplete 4-byte group ({} bytes)",
+                raw_buf.len()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&decoded_bytes).trim().to_string())
     } else {
         Ok(String::from_utf8_lossy(&raw_buf).trim().to_string())
     }
@@ -198,12 +248,13 @@ fn read_hex_response(
 
     if n > 0 {
         raw_buf.extend_from_slice(&chunk[..n]);
-        // Drain subsequent buffered bytes if arriving in rapid succession
-        loop {
+        // Short 5ms adaptive quiet poll to coalesce back-to-back bytes without blocking for 25ms
+        while raw_buf.len() < MAX_FRAME_BYTES {
             let mut more = [0u8; 64];
-            match rt.block_on(transport.read_raw(&mut more, Duration::from_millis(25))) {
+            match rt.block_on(transport.read_raw(&mut more, Duration::from_millis(5))) {
                 Ok(count) if count > 0 => {
-                    raw_buf.extend_from_slice(&more[..count]);
+                    let take = count.min(MAX_FRAME_BYTES - raw_buf.len());
+                    raw_buf.extend_from_slice(&more[..take]);
                 }
                 _ => break,
             }
@@ -212,20 +263,20 @@ fn read_hex_response(
 
     let hex_resp = raw_buf
         .iter()
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ");
     Ok(hex_resp)
 }
 
 /// Interactive diagnostics and telemetry session for Jura machines.
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct JuraSession {
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
     transport: Box<dyn Transport>,
     inter_byte_delay: Duration,
     timeout: Duration,
-    telemetry_log: Vec<String>,
+    telemetry_log: VecDeque<String>,
 }
 
 impl JuraSession {
@@ -234,232 +285,103 @@ impl JuraSession {
         transport: Box<dyn Transport>,
         inter_byte_delay: Duration,
         timeout: Duration,
-    ) -> Result<Self, PyErr> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Runtime error: {e}")))?;
-
+    ) -> PyResult<Self> {
+        let rt = shared_runtime()?;
         Ok(Self {
             runtime: rt,
             transport,
             inter_byte_delay,
             timeout,
-            telemetry_log: Vec::new(),
-        })
-    }
-}
-
-#[pymethods]
-impl JuraSession {
-    /// Opens a native physical UART connection (e.g. `"/dev/ttyUSB0"`).
-    #[staticmethod]
-    #[pyo3(signature = (port, baud_rate = None, inter_byte_delay_ms = None, timeout_ms = None))]
-    pub fn open_uart(
-        port: &str,
-        baud_rate: Option<u32>,
-        inter_byte_delay_ms: Option<u64>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Runtime error: {e}")))?;
-
-        let baud = baud_rate.unwrap_or(9600);
-        let delay = Duration::from_millis(inter_byte_delay_ms.unwrap_or(8));
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(1000));
-
-        #[cfg(feature = "serial")]
-        {
-            let config = SerialConfig {
-                port_path: port.to_string(),
-                baud_rate: baud,
-                timeout,
-                inter_byte_delay: Some(delay),
-            };
-            let transport = SerialTransport::open(config)
-                .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))?;
-            Ok(Self {
-                runtime: rt,
-                transport: Box::new(transport),
-                inter_byte_delay: delay,
-                timeout,
-                telemetry_log: Vec::new(),
-            })
-        }
-        #[cfg(not(feature = "serial"))]
-        {
-            let _ = (baud, delay, timeout, port);
-            Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Serial feature not compiled into spectra-hal",
-            ))
-        }
-    }
-
-    /// Opens an ADB TCP bridge connecting to an Android SBC UART.
-    #[staticmethod]
-    #[pyo3(signature = (addr, tty_path, baud_rate = None, device_serial = None, remote_spec = None, timeout_ms = None))]
-    pub fn open_adb_tcp(
-        addr: &str,
-        tty_path: &str,
-        baud_rate: Option<u32>,
-        device_serial: Option<String>,
-        remote_spec: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Runtime error: {e}")))?;
-
-        let socket_addr: SocketAddr = addr.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid TCP socket address '{addr}': {e}"))
-        })?;
-
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(3000));
-        let config = AdbBridgeConfig {
-            device_serial,
-            tty_path: tty_path.to_string(),
-            baud_rate: baud_rate.unwrap_or(115200),
-            endpoint: AdbSocketEndpoint::Tcp(socket_addr),
-            remote_forward_spec: remote_spec.unwrap_or_else(|| "localabstract:spectra_uart".into()),
-            connect_timeout: timeout,
-        };
-
-        let bridge = rt
-            .block_on(AdbSerialBridge::connect(config))
-            .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))?;
-
-        Ok(Self {
-            runtime: rt,
-            transport: Box::new(bridge),
-            inter_byte_delay: Duration::from_millis(8),
-            timeout,
-            telemetry_log: Vec::new(),
+            telemetry_log: VecDeque::with_capacity(MAX_TELEMETRY_LOG_ENTRIES),
         })
     }
 
-    /// Opens an ADB Unix socket bridge connecting to an Android SBC UART.
-    #[staticmethod]
-    #[pyo3(signature = (socket_path, tty_path, baud_rate = None, device_serial = None, remote_spec = None, timeout_ms = None))]
-    pub fn open_adb_unix(
-        socket_path: &str,
-        tty_path: &str,
-        baud_rate: Option<u32>,
-        device_serial: Option<String>,
-        remote_spec: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
-        #[cfg(not(unix))]
-        {
-            let _ = (socket_path, tty_path, baud_rate, device_serial, remote_spec, timeout_ms);
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "Unix domain sockets are only supported on Unix hosts",
-            ));
+    fn push_log(&mut self, entry: String) {
+        if self.telemetry_log.len() >= MAX_TELEMETRY_LOG_ENTRIES {
+            self.telemetry_log.pop_front();
         }
-        #[cfg(unix)]
-        {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Runtime error: {e}")))?;
-
-            let timeout = Duration::from_millis(timeout_ms.unwrap_or(3000));
-            let config = AdbBridgeConfig {
-                device_serial,
-                tty_path: tty_path.to_string(),
-                baud_rate: baud_rate.unwrap_or(115200),
-                endpoint: AdbSocketEndpoint::Unix(PathBuf::from(socket_path)),
-                remote_forward_spec: remote_spec.unwrap_or_else(|| "localabstract:spectra_uart".into()),
-                connect_timeout: timeout,
-            };
-
-            let bridge = rt
-                .block_on(AdbSerialBridge::connect(config))
-                .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))?;
-
-            Ok(Self {
-                runtime: rt,
-                transport: Box::new(bridge),
-                inter_byte_delay: Duration::from_millis(8),
-                timeout,
-                telemetry_log: Vec::new(),
-            })
-        }
+        self.telemetry_log.push_back(entry);
     }
 
-    /// Connects directly to an already-bound local Unix socket via `AdbSerialBridge::from_stream`
-    /// without running `adb` CLI (ideal for mock servers, unit tests, and local emulation).
-    #[staticmethod]
-    #[pyo3(signature = (socket_path, tty_path = None, inter_byte_delay_ms = None, timeout_ms = None))]
-    pub fn open_unix_raw(
-        socket_path: &str,
-        tty_path: Option<&str>,
-        inter_byte_delay_ms: Option<u64>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<Self> {
-        #[cfg(not(unix))]
-        {
-            let _ = (socket_path, tty_path, inter_byte_delay_ms, timeout_ms);
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "Unix domain sockets are only supported on Unix hosts",
+    const LAB_WRITE_CONFIRM_TOKEN: &'static str = "SPECTRA_LAB_WRITE";
+
+    fn check_lab_override(
+        enforce_safety: Option<bool>,
+        lab_confirm_token: Option<&str>,
+    ) -> PyResult<bool> {
+        let enforce = enforce_safety.unwrap_or(true);
+        if !enforce && lab_confirm_token != Some(Self::LAB_WRITE_CONFIRM_TOKEN) {
+            return Err(pyo3::exceptions::PyPermissionError::new_err(
+                "Disabling hardware safety requires explicit lab_confirm_token='SPECTRA_LAB_WRITE'",
             ));
         }
-        #[cfg(unix)]
-        {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Runtime error: {e}")))?;
-
-            let stream = rt
-                .block_on(async { tokio::net::UnixStream::connect(socket_path).await })
-                .map_err(|e| {
-                    pyo3::exceptions::PyConnectionError::new_err(format!(
-                        "Failed to connect to unix socket {socket_path}: {e}"
-                    ))
-                })?;
-
-            let timeout = Duration::from_millis(timeout_ms.unwrap_or(1000));
-            let delay = Duration::from_millis(inter_byte_delay_ms.unwrap_or(8));
-            let tty = tty_path.unwrap_or("/dev/ttyS1");
-
-            let config = AdbBridgeConfig {
-                device_serial: None,
-                tty_path: tty.to_string(),
-                baud_rate: 115200,
-                endpoint: AdbSocketEndpoint::Unix(PathBuf::from(socket_path)),
-                remote_forward_spec: "localabstract:spectra_uart".to_string(),
-                connect_timeout: timeout,
-            };
-
-            let bridge = AdbSerialBridge::from_stream(config, AdbStream::Unix(stream))
-                .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))?;
-
-            Ok(Self {
-                runtime: rt,
-                transport: Box::new(bridge),
-                inter_byte_delay: delay,
-                timeout,
-                telemetry_log: Vec::new(),
-            })
-        }
+        Ok(enforce)
     }
 
-    /// Sends an ASCII command to the coffee machine, optionally encoding as 4:1 Jura wire bytes.
-    #[pyo3(signature = (cmd, obfuscate_4byte = None, enforce_safety = None))]
-    pub fn send_ascii(
+    fn validate_raw_hex_readonly(raw_bytes: &[u8]) -> PyResult<()> {
+        if raw_bytes.is_empty() || raw_bytes.len() > 256 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Raw hex payload length {} outside allowed range (1..=256 bytes)",
+                raw_bytes.len()
+            )));
+        }
+
+        // Case 1: Plain ASCII Jura command bytes
+        if let Ok(as_str) = std::str::from_utf8(raw_bytes) {
+            if JuraProtocol::validate_safety(as_str).is_ok() {
+                return Ok(());
+            }
+        }
+
+        // Case 2: 4:1 wire-encoded Jura carrier frame
+        if raw_bytes.len().is_multiple_of(4) {
+            if let Ok(decoded) = JuraProtocol::decode_wire_frame(raw_bytes) {
+                if JuraProtocol::validate_safety(&decoded).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+
+        // Case 3: Verified read-only Modbus RTU query (FC 0x01..=0x04 with valid CRC-16)
+        if raw_bytes.len() >= 4
+            && matches!(raw_bytes[1], 0x01..=0x04)
+            && spectra_core::KalermProtocol::verify_crc(raw_bytes)
+        {
+            return Ok(());
+        }
+
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "Safety invariant violation: raw hex payload is not a verified read-only frame; pass enforce_safety=False with lab_confirm_token='SPECTRA_LAB_WRITE' for explicit lab overrides",
+        ))
+    }
+
+    fn send_ascii_inner(
         &mut self,
         cmd: &str,
         obfuscate_4byte: Option<bool>,
         enforce_safety: Option<bool>,
+        lab_confirm_token: Option<&str>,
     ) -> PyResult<String> {
-        let enforce = enforce_safety.unwrap_or(true);
+        let enforce = Self::check_lab_override(enforce_safety, lab_confirm_token)?;
         if enforce {
             JuraProtocol::validate_safety(cmd).map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Safety invariant violation: {e}"))
             })?;
+        } else {
+            // Even in explicit lab override mode, forbid embedded CRLF injection / NUL bytes
+            let stripped = cmd
+                .strip_suffix("\r\n")
+                .or_else(|| cmd.strip_suffix('\r'))
+                .or_else(|| cmd.strip_suffix('\n'))
+                .unwrap_or(cmd);
+            if stripped.is_empty()
+                || stripped.len() > 64
+                || stripped.bytes().any(|b| !(0x20..0x7F).contains(&b))
+            {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Lab command must be a single-line printable ASCII string (1..=64 bytes)",
+                ));
+            }
         }
 
         let full_cmd = if cmd.ends_with("\r\n") {
@@ -483,38 +405,54 @@ impl JuraSession {
                 pyo3::exceptions::PyIOError::new_err(format!("Transport write failure: {e}"))
             })?;
 
-        let rx = read_ascii_response(&self.runtime, &mut self.transport, self.timeout, obfuscate)?;
-        self.telemetry_log
-            .push(format!("TX: {} -> RX: {}", full_cmd.trim(), rx));
+        let rx = read_ascii_response(self.runtime, &mut self.transport, self.timeout, obfuscate)?;
+        self.push_log(format!("TX: {} -> RX: {}", full_cmd.trim(), rx));
         Ok(rx)
     }
 
-    /// Sends raw hex bytes to the machine and returns the response as uppercase hex string.
-    #[pyo3(signature = (hex_payload, inter_byte_delay_ms = None))]
-    pub fn send_hex(
+    fn send_hex_inner(
         &mut self,
         hex_payload: &str,
         inter_byte_delay_ms: Option<u64>,
+        enforce_safety: Option<bool>,
+        lab_confirm_token: Option<&str>,
     ) -> PyResult<String> {
+        let enforce = Self::check_lab_override(enforce_safety, lab_confirm_token)?;
+
         let clean_hex: String = hex_payload
             .chars()
             .filter(|c| !c.is_whitespace() && *c != ':')
             .collect();
 
-        if clean_hex.len() % 2 != 0 {
+        if !clean_hex.is_ascii() || !clean_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Hex payload must contain strictly ASCII hexadecimal digits (0-9, A-F)",
+            ));
+        }
+
+        if clean_hex.is_empty() || !clean_hex.len().is_multiple_of(2) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Hex string has odd length: {}",
+                "Hex string must be non-empty and even-length (got {} chars)",
                 clean_hex.len()
             )));
         }
 
-        let raw_bytes: Vec<u8> = (0..clean_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&clean_hex[i..i + 2], 16))
-            .collect::<Result<Vec<u8>, _>>()
-            .map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid hex byte in payload: {e}"))
-            })?;
+        let (hex_pairs, _) = clean_hex.as_bytes().as_chunks::<2>();
+        let raw_bytes: Vec<u8> = hex_pairs
+            .iter()
+            .map(|pair| {
+                let s = std::str::from_utf8(pair).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid UTF-8 in hex pair: {e}"))
+                })?;
+                u8::from_str_radix(s, 16).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid hex byte in payload: {e}"))
+                })
+            })
+            .collect::<PyResult<Vec<u8>>>()?;
+
+        if enforce {
+            Self::validate_raw_hex_readonly(&raw_bytes)?;
+        }
 
         let delay = inter_byte_delay_ms
             .map(Duration::from_millis)
@@ -526,20 +464,17 @@ impl JuraSession {
                 pyo3::exceptions::PyIOError::new_err(format!("Transport write failure: {e}"))
             })?;
 
-        let hex_resp = read_hex_response(&self.runtime, &mut self.transport, self.timeout)?;
-        self.telemetry_log
-            .push(format!("TX_HEX: {clean_hex} -> RX_HEX: {hex_resp}"));
+        let hex_resp = read_hex_response(self.runtime, &mut self.transport, self.timeout)?;
+        self.push_log(format!("TX_HEX: {clean_hex} -> RX_HEX: {hex_resp}"));
         Ok(hex_resp)
     }
 
-    /// Polls live machine telemetry via `HZ:` and decodes all metric sensors.
-    #[pyo3(signature = (delta_t_sec = None, obfuscate_4byte = None))]
-    pub fn poll_telemetry(
+    fn poll_telemetry_inner(
         &mut self,
         delta_t_sec: Option<f32>,
         obfuscate_4byte: Option<bool>,
     ) -> PyResult<PyHzTelemetry> {
-        let rx = self.send_ascii("HZ:", obfuscate_4byte, Some(false))?;
+        let rx = self.send_ascii_inner("HZ:", obfuscate_4byte, Some(true), None)?;
         let frame = JuraProtocol::parse_hz_response(&rx, delta_t_sec.unwrap_or(1.0))
             .map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Failed to parse HZ telemetry: {e}"))
@@ -547,9 +482,7 @@ impl JuraSession {
         Ok(PyHzTelemetry::from(frame))
     }
 
-    /// Reads a 16-word EEPROM block via `RT:` command.
-    #[pyo3(signature = (block_index, two_digit = None, obfuscate_4byte = None))]
-    pub fn read_eeprom_block(
+    fn read_eeprom_block_inner(
         &mut self,
         block_index: u16,
         two_digit: Option<bool>,
@@ -563,16 +496,14 @@ impl JuraSession {
         let cmd = JuraCommand::ReadEEPROMBlock { block_index, mode };
         let cmd_str = JuraProtocol::format_command(&cmd)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let rx = self.send_ascii(&cmd_str, obfuscate_4byte, Some(false))?;
+        let rx = self.send_ascii_inner(&cmd_str, obfuscate_4byte, Some(true), None)?;
         let words = JuraProtocol::parse_rt_response(&rx).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Failed to parse RT block: {e}"))
         })?;
         Ok(words)
     }
 
-    /// Reads a single 16-bit word from EEPROM via `RE:` command.
-    #[pyo3(signature = (addr, two_digit = None, obfuscate_4byte = None))]
-    pub fn read_eeprom_word(
+    fn read_eeprom_word_inner(
         &mut self,
         addr: u16,
         two_digit: Option<bool>,
@@ -586,16 +517,279 @@ impl JuraSession {
         let cmd = JuraCommand::ReadEEPROMWord { addr, mode };
         let cmd_str = JuraProtocol::format_command(&cmd)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let rx = self.send_ascii(&cmd_str, obfuscate_4byte, Some(false))?;
+        let rx = self.send_ascii_inner(&cmd_str, obfuscate_4byte, Some(true), None)?;
         let word = JuraProtocol::parse_re_response(&rx).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Failed to parse RE word: {e}"))
         })?;
         Ok(word)
     }
+}
+
+#[pymethods]
+impl JuraSession {
+    /// Opens a native physical UART connection (e.g. `"/dev/ttyUSB0"`).
+    #[staticmethod]
+    #[pyo3(signature = (port, baud_rate = None, inter_byte_delay_ms = None, timeout_ms = None))]
+    pub fn open_uart(
+        py: Python<'_>,
+        port: &str,
+        baud_rate: Option<u32>,
+        inter_byte_delay_ms: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        let rt = shared_runtime()?;
+        let baud = baud_rate.unwrap_or(9600);
+        let delay = Duration::from_millis(inter_byte_delay_ms.unwrap_or(8));
+        let timeout = Duration::from_millis(timeout_ms.unwrap_or(1000));
+
+        #[cfg(feature = "serial")]
+        {
+            let config = SerialConfig {
+                port_path: port.to_string(),
+                baud_rate: baud,
+                timeout,
+                inter_byte_delay: Some(delay),
+            };
+            let transport = py.detach(|| {
+                let _guard = rt.enter();
+                SerialTransport::open(config)
+                    .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))
+            })?;
+            Ok(Self {
+                runtime: rt,
+                transport: Box::new(transport),
+                inter_byte_delay: delay,
+                timeout,
+                telemetry_log: VecDeque::with_capacity(MAX_TELEMETRY_LOG_ENTRIES),
+            })
+        }
+        #[cfg(not(feature = "serial"))]
+        {
+            let _ = (py, rt, baud, delay, timeout, port);
+            Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Serial feature not compiled into spectra-hal",
+            ))
+        }
+    }
+
+    /// Opens an ADB TCP bridge connecting to an Android SBC UART.
+    #[staticmethod]
+    #[pyo3(signature = (addr, tty_path, baud_rate = None, device_serial = None, remote_spec = None, timeout_ms = None))]
+    pub fn open_adb_tcp(
+        py: Python<'_>,
+        addr: &str,
+        tty_path: &str,
+        baud_rate: Option<u32>,
+        device_serial: Option<String>,
+        remote_spec: Option<String>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        let rt = shared_runtime()?;
+        let socket_addr: SocketAddr = addr.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid TCP socket address '{addr}': {e}"))
+        })?;
+
+        let timeout = Duration::from_millis(timeout_ms.unwrap_or(3000));
+        let config = AdbBridgeConfig {
+            device_serial,
+            tty_path: tty_path.to_string(),
+            baud_rate: baud_rate.unwrap_or(115200),
+            endpoint: AdbSocketEndpoint::Tcp(socket_addr),
+            remote_forward_spec: remote_spec.unwrap_or_else(|| "localabstract:spectra_uart".into()),
+            connect_timeout: timeout,
+        };
+
+        let bridge = py.detach(|| {
+            rt.block_on(AdbSerialBridge::connect(config))
+                .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))
+        })?;
+
+        Ok(Self {
+            runtime: rt,
+            transport: Box::new(bridge),
+            inter_byte_delay: Duration::from_millis(8),
+            timeout,
+            telemetry_log: VecDeque::with_capacity(MAX_TELEMETRY_LOG_ENTRIES),
+        })
+    }
+
+    /// Opens an ADB Unix socket bridge connecting to an Android SBC UART.
+    #[staticmethod]
+    #[pyo3(signature = (socket_path, tty_path, baud_rate = None, device_serial = None, remote_spec = None, timeout_ms = None))]
+    pub fn open_adb_unix(
+        py: Python<'_>,
+        socket_path: &str,
+        tty_path: &str,
+        baud_rate: Option<u32>,
+        device_serial: Option<String>,
+        remote_spec: Option<String>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        #[cfg(not(unix))]
+        {
+            let _ = (py, socket_path, tty_path, baud_rate, device_serial, remote_spec, timeout_ms);
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Unix domain sockets are only supported on Unix hosts",
+            ))
+        }
+        #[cfg(unix)]
+        {
+            let rt = shared_runtime()?;
+            let timeout = Duration::from_millis(timeout_ms.unwrap_or(3000));
+            let config = AdbBridgeConfig {
+                device_serial,
+                tty_path: tty_path.to_string(),
+                baud_rate: baud_rate.unwrap_or(115200),
+                endpoint: AdbSocketEndpoint::Unix(PathBuf::from(socket_path)),
+                remote_forward_spec: remote_spec.unwrap_or_else(|| "localabstract:spectra_uart".into()),
+                connect_timeout: timeout,
+            };
+
+            let bridge = py.detach(|| {
+                rt.block_on(AdbSerialBridge::connect(config))
+                    .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))
+            })?;
+
+            Ok(Self {
+                runtime: rt,
+                transport: Box::new(bridge),
+                inter_byte_delay: Duration::from_millis(8),
+                timeout,
+                telemetry_log: VecDeque::with_capacity(MAX_TELEMETRY_LOG_ENTRIES),
+            })
+        }
+    }
+
+    /// Connects directly to an already-bound local Unix socket via `AdbSerialBridge::from_stream`
+    /// without running `adb` CLI (ideal for mock servers, unit tests, and local emulation).
+    #[staticmethod]
+    #[pyo3(signature = (socket_path, tty_path = None, inter_byte_delay_ms = None, timeout_ms = None))]
+    pub fn open_unix_raw(
+        py: Python<'_>,
+        socket_path: &str,
+        tty_path: Option<&str>,
+        inter_byte_delay_ms: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        #[cfg(not(unix))]
+        {
+            let _ = (py, socket_path, tty_path, inter_byte_delay_ms, timeout_ms);
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Unix domain sockets are only supported on Unix hosts",
+            ))
+        }
+        #[cfg(unix)]
+        {
+            let rt = shared_runtime()?;
+            let timeout = Duration::from_millis(timeout_ms.unwrap_or(1000));
+            let delay = Duration::from_millis(inter_byte_delay_ms.unwrap_or(8));
+            let tty = tty_path.unwrap_or("/dev/ttyS1");
+
+            let bridge = py.detach(|| {
+                let stream = rt
+                    .block_on(async { tokio::net::UnixStream::connect(socket_path).await })
+                    .map_err(|e| {
+                        pyo3::exceptions::PyConnectionError::new_err(format!(
+                            "Failed to connect to unix socket {socket_path}: {e}"
+                        ))
+                    })?;
+
+                let config = AdbBridgeConfig {
+                    device_serial: None,
+                    tty_path: tty.to_string(),
+                    baud_rate: 115200,
+                    endpoint: AdbSocketEndpoint::Unix(PathBuf::from(socket_path)),
+                    remote_forward_spec: "localabstract:spectra_uart".to_string(),
+                    connect_timeout: timeout,
+                };
+
+                AdbSerialBridge::from_stream(config, AdbStream::Unix(stream))
+                    .map_err(|e| pyo3::exceptions::PyConnectionError::new_err(e.to_string()))
+            })?;
+
+            Ok(Self {
+                runtime: rt,
+                transport: Box::new(bridge),
+                inter_byte_delay: delay,
+                timeout,
+                telemetry_log: VecDeque::with_capacity(MAX_TELEMETRY_LOG_ENTRIES),
+            })
+        }
+    }
+
+    /// Sends an ASCII command to the coffee machine, optionally encoding as 4:1 Jura wire bytes.
+    #[pyo3(signature = (cmd, obfuscate_4byte = None, enforce_safety = None, lab_confirm_token = None))]
+    pub fn send_ascii(
+        &mut self,
+        py: Python<'_>,
+        cmd: &str,
+        obfuscate_4byte: Option<bool>,
+        enforce_safety: Option<bool>,
+        lab_confirm_token: Option<&str>,
+    ) -> PyResult<String> {
+        py.detach(|| {
+            self.send_ascii_inner(cmd, obfuscate_4byte, enforce_safety, lab_confirm_token)
+        })
+    }
+
+    /// Sends raw hex bytes to the machine and returns the response as uppercase hex string.
+    #[pyo3(signature = (hex_payload, inter_byte_delay_ms = None, enforce_safety = None, lab_confirm_token = None))]
+    pub fn send_hex(
+        &mut self,
+        py: Python<'_>,
+        hex_payload: &str,
+        inter_byte_delay_ms: Option<u64>,
+        enforce_safety: Option<bool>,
+        lab_confirm_token: Option<&str>,
+    ) -> PyResult<String> {
+        py.detach(|| {
+            self.send_hex_inner(
+                hex_payload,
+                inter_byte_delay_ms,
+                enforce_safety,
+                lab_confirm_token,
+            )
+        })
+    }
+
+    /// Polls live machine telemetry via `HZ:` and decodes all metric sensors.
+    #[pyo3(signature = (delta_t_sec = None, obfuscate_4byte = None))]
+    pub fn poll_telemetry(
+        &mut self,
+        py: Python<'_>,
+        delta_t_sec: Option<f32>,
+        obfuscate_4byte: Option<bool>,
+    ) -> PyResult<PyHzTelemetry> {
+        py.detach(|| self.poll_telemetry_inner(delta_t_sec, obfuscate_4byte))
+    }
+
+    /// Reads a 16-word EEPROM block via `RT:` command.
+    #[pyo3(signature = (block_index, two_digit = None, obfuscate_4byte = None))]
+    pub fn read_eeprom_block(
+        &mut self,
+        py: Python<'_>,
+        block_index: u16,
+        two_digit: Option<bool>,
+        obfuscate_4byte: Option<bool>,
+    ) -> PyResult<Vec<u16>> {
+        py.detach(|| self.read_eeprom_block_inner(block_index, two_digit, obfuscate_4byte))
+    }
+
+    /// Reads a single 16-bit word from EEPROM via `RE:` command.
+    #[pyo3(signature = (addr, two_digit = None, obfuscate_4byte = None))]
+    pub fn read_eeprom_word(
+        &mut self,
+        py: Python<'_>,
+        addr: u16,
+        two_digit: Option<bool>,
+        obfuscate_4byte: Option<bool>,
+    ) -> PyResult<u16> {
+        py.detach(|| self.read_eeprom_word_inner(addr, two_digit, obfuscate_4byte))
+    }
 
     /// Retrieves history of sent commands and received responses for diagnostics.
     pub fn get_logs(&self) -> Vec<String> {
-        self.telemetry_log.clone()
+        self.telemetry_log.iter().cloned().collect()
     }
 
     /// Clears the recorded telemetry and command history log.
@@ -607,8 +801,9 @@ impl JuraSession {
 /// Encodes an ASCII command into Jura 4:1 wire carrier bytes.
 #[pyfunction]
 #[pyo3(signature = (cmd))]
-pub fn encode_jura_ascii(cmd: &str) -> Vec<u8> {
-    JuraProtocol::encode_wire_frame(cmd)
+pub fn encode_jura_ascii(py: Python<'_>, cmd: &str) -> Py<PyBytes> {
+    let out = JuraProtocol::encode_wire_frame(cmd);
+    PyBytes::new(py, &out).unbind()
 }
 
 /// Decodes 4:1 wire carrier bytes back into an ASCII string.
@@ -645,7 +840,7 @@ pub fn parse_re_word(raw: &str) -> PyResult<u16> {
 }
 
 /// Differential EEPROM word delta representation for Python.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyEepromWordDiff {
     #[pyo3(get)]
@@ -668,7 +863,7 @@ impl PyEepromWordDiff {
     }
 
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("addr", self.addr)?;
         dict.set_item("baseline", self.baseline)?;
         dict.set_item("current", self.current)?;
@@ -699,14 +894,17 @@ pub fn diff_eeprom_blocks(
 
 /// Lists physical serial ports available on the host machine.
 #[pyfunction]
-pub fn list_serial_ports() -> PyResult<Vec<String>> {
+pub fn list_serial_ports(py: Python<'_>) -> PyResult<Vec<String>> {
     #[cfg(feature = "serial")]
     {
-        spectra_hal::SerialTransport::list_ports()
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        py.detach(|| {
+            spectra_hal::SerialTransport::list_ports()
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        })
     }
     #[cfg(not(feature = "serial"))]
     {
+        let _ = py;
         Ok(Vec::new())
     }
 }
@@ -714,15 +912,16 @@ pub fn list_serial_ports() -> PyResult<Vec<String>> {
 /// Performs Jura Smart Connect '@'-protocol nibble substitution encryption/decryption (involution).
 #[pyfunction]
 #[pyo3(signature = (data, key))]
-pub fn smart_connect_crypt(data: &[u8], key: u8) -> Vec<u8> {
-    SmartConnectCipher::crypt(data, key)
+pub fn smart_connect_crypt(py: Python<'_>, data: &[u8], key: u8) -> Py<PyBytes> {
+    let out = SmartConnectCipher::crypt(data, key);
+    PyBytes::new(py, &out).unbind()
 }
 
 /// Scans text section bytes for ARMv7 movw+movt instruction pairs loading target_vma into any register.
 #[pyfunction]
 #[pyo3(signature = (text_bytes, target_vma))]
-pub fn has_arm_movw_movt_any_reg(text_bytes: &[u8], target_vma: u32) -> bool {
-    spectra_core::has_arm_movw_movt_any_reg(text_bytes, target_vma)
+pub fn has_arm_movw_movt_any_reg(py: Python<'_>, text_bytes: &[u8], target_vma: u32) -> bool {
+    py.detach(|| spectra_core::has_arm_movw_movt_any_reg(text_bytes, target_vma))
 }
 
 /// Repoints all ARMv7 movw+movt instruction pairs targeting orig_vma to new_vma across any register.
@@ -735,27 +934,32 @@ pub fn repoint_arm_movw_movt_all_regs(
     orig_vma: u32,
     new_vma: u32,
 ) -> (Py<PyBytes>, usize) {
-    let (patched, count) = spectra_core::repoint_arm_movw_movt_all_regs(text_bytes, orig_vma, new_vma);
-    (PyBytes::new_bound(py, &patched).unbind(), count)
+    let (patched, count) =
+        py.detach(|| spectra_core::repoint_arm_movw_movt_all_regs(text_bytes, orig_vma, new_vma));
+    (PyBytes::new(py, &patched).unbind(), count)
 }
 
 /// Finds `min_size` consecutive zero padding bytes in `ro_bytes` starting at `start_rel_off` with `align` alignment.
 #[pyfunction]
 #[pyo3(signature = (ro_bytes, sh_offset, min_size, align = 4, start_rel_off = 0))]
 pub fn find_free_zero_padding_fast(
+    py: Python<'_>,
     ro_bytes: &[u8],
     sh_offset: usize,
     min_size: usize,
     align: usize,
     start_rel_off: usize,
 ) -> Option<usize> {
-    spectra_core::find_free_zero_padding(ro_bytes, sh_offset, min_size, align, start_rel_off)
+    py.detach(|| {
+        spectra_core::find_free_zero_padding(ro_bytes, sh_offset, min_size, align, start_rel_off)
+    })
 }
 
 /// Scans rodata for unreferenced orphaned strings matching common words and diacritics.
 #[pyfunction]
 #[pyo3(signature = (ro_bytes, search_start_off, vma_minus_off, referenced_vmas, common_words, target_diacritics = ""))]
 pub fn scan_rodata_orphaned_string_fast(
+    py: Python<'_>,
     ro_bytes: &[u8],
     search_start_off: usize,
     vma_minus_off: u32,
@@ -763,25 +967,28 @@ pub fn scan_rodata_orphaned_string_fast(
     common_words: Vec<String>,
     target_diacritics: &str,
 ) -> Option<(u32, String)> {
-    spectra_core::scan_rodata_orphaned_string(
-        ro_bytes,
-        search_start_off,
-        vma_minus_off,
-        &referenced_vmas,
-        &common_words,
-        target_diacritics,
-    )
+    py.detach(|| {
+        spectra_core::scan_rodata_orphaned_string(
+            ro_bytes,
+            search_start_off,
+            vma_minus_off,
+            &referenced_vmas,
+            &common_words,
+            target_diacritics,
+        )
+    })
 }
 
 /// Pure Rust high-speed cross-key bipartite token swap detector.
 #[pyfunction]
 #[pyo3(signature = (keys, key_tokens, val_tokens))]
 pub fn detect_bipartite_token_swaps_fast(
+    py: Python<'_>,
     keys: Vec<String>,
     key_tokens: Vec<Vec<String>>,
     val_tokens: Vec<Vec<String>>,
 ) -> Vec<(usize, usize)> {
-    spectra_core::detect_bipartite_token_swaps(keys, key_tokens, val_tokens)
+    py.detach(|| spectra_core::detect_bipartite_token_swaps(keys, key_tokens, val_tokens))
 }
 
 /// Computes Modbus RTU 16-bit CRC for Kalerm packets. Returns (crc_low, crc_high).
@@ -804,7 +1011,7 @@ pub fn kalerm_verify_crc(packet: &[u8]) -> bool {
 #[pyo3(signature = (data))]
 pub fn encode_jura_wire_bytes(py: Python<'_>, data: &[u8]) -> Py<PyBytes> {
     let encoded = JuraProtocol::encode_wire_bytes(data);
-    PyBytes::new_bound(py, &encoded).unbind()
+    PyBytes::new(py, &encoded).unbind()
 }
 
 /// Decodes Jura 4:1 carrier bytes into `(decoded_bytes, remaining_raw_bytes)`.
@@ -813,8 +1020,8 @@ pub fn encode_jura_wire_bytes(py: Python<'_>, data: &[u8]) -> Py<PyBytes> {
 pub fn decode_jura_wire_bytes(py: Python<'_>, raw: &[u8]) -> (Py<PyBytes>, Py<PyBytes>) {
     let (decoded, remainder) = JuraProtocol::decode_wire_bytes(raw);
     (
-        PyBytes::new_bound(py, &decoded).unbind(),
-        PyBytes::new_bound(py, &remainder).unbind(),
+        PyBytes::new(py, &decoded).unbind(),
+        PyBytes::new(py, &remainder).unbind(),
     )
 }
 
@@ -836,14 +1043,17 @@ pub fn decode_jura_date_word(val: u16) -> Option<(u16, u8, u8)> {
 #[pyfunction]
 #[pyo3(signature = (eeprom, target_value, category))]
 pub fn correlate_with_joe_ranked(
+    py: Python<'_>,
     eeprom: std::collections::HashMap<u16, u16>,
     target_value: u32,
     category: &str,
 ) -> Vec<String> {
-    spectra_core::correlate_value_addresses_ranked(&eeprom, target_value, category)
-        .into_iter()
-        .map(|addr| format!("0x{addr:04X}"))
-        .collect()
+    py.detach(|| {
+        spectra_core::correlate_value_addresses_ranked(&eeprom, target_value, category)
+            .into_iter()
+            .map(|addr| format!("0x{addr:04X}"))
+            .collect()
+    })
 }
 
 /// Matches a machine catalog entry against connected EF code, article number, and model name.
@@ -903,18 +1113,22 @@ mod tests {
 
     #[test]
     fn test_codec_and_cipher_roundtrips() {
-        let original = "TY:\r\n";
-        let wire = encode_jura_ascii(original);
-        assert_eq!(wire.len(), original.len() * 4);
-        let decoded = decode_jura_wire(&wire).expect("decode failed");
-        assert_eq!(decoded, original);
+        pyo3::Python::initialize();
+        Python::attach(|py| {
+            let original = "TY:\r\n";
+            let wire = encode_jura_ascii(py, original);
+            let wire_bytes = wire.as_bytes(py);
+            assert_eq!(wire_bytes.len(), original.len() * 4);
+            let decoded = decode_jura_wire(wire_bytes).expect("decode failed");
+            assert_eq!(decoded, original);
 
-        // Test Smart Connect involution cipher
-        let msg = b"SPECTRA_DIAGNOSTICS_PAYLOAD";
-        let key = 0x5A;
-        let encrypted = smart_connect_crypt(msg, key);
-        let decrypted = smart_connect_crypt(&encrypted, key);
-        assert_eq!(&decrypted, msg);
+            // Test Smart Connect involution cipher
+            let msg = b"SPECTRA_DIAGNOSTICS_PAYLOAD";
+            let key = 0x5A;
+            let encrypted = smart_connect_crypt(py, msg, key);
+            let decrypted = smart_connect_crypt(py, encrypted.as_bytes(py), key);
+            assert_eq!(decrypted.as_bytes(py), msg);
+        });
     }
 
     #[test]
@@ -936,6 +1150,7 @@ mod tests {
 
     #[test]
     fn test_diff_eeprom_and_list_ports() {
+        pyo3::Python::initialize();
         let base = vec![0x1000, 0x2000, 0x3000];
         let curr = vec![0x1000, 0x2005, 0x3000];
         let diffs = diff_eeprom_blocks(base, curr, Some(0x0040));
@@ -945,23 +1160,22 @@ mod tests {
         assert_eq!(diffs[0].current, 0x2005);
         assert_eq!(diffs[0].flipped_bits, 0x0005);
 
-        let ports = list_serial_ports();
-        assert!(ports.is_ok());
+        Python::attach(|py| {
+            let ports = list_serial_ports(py);
+            assert!(ports.is_ok());
+        });
     }
 
     #[cfg(unix)]
     #[test]
     fn test_mock_unix_socket_jura_session_roundtrip() {
-        pyo3::prepare_freethreaded_python();
+        pyo3::Python::initialize();
 
         let (client, mut server) =
             std::os::unix::net::UnixStream::pair().expect("unix stream pair");
         client.set_nonblocking(true).expect("nonblocking");
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime build");
+        let rt = shared_runtime().expect("shared runtime");
 
         let _guard = rt.enter();
         let tokio_client = tokio::net::UnixStream::from_std(client).expect("from_std");
@@ -979,13 +1193,12 @@ mod tests {
         let bridge = AdbSerialBridge::from_stream(config, AdbStream::Unix(tokio_client))
             .expect("bridge construction");
 
-        let mut session = JuraSession {
-            runtime: rt,
-            transport: Box::new(bridge),
-            inter_byte_delay: Duration::from_millis(1),
-            timeout: Duration::from_millis(500),
-            telemetry_log: Vec::new(),
-        };
+        let mut session = JuraSession::from_transport(
+            Box::new(bridge),
+            Duration::from_millis(1),
+            Duration::from_millis(500),
+        )
+        .expect("session");
 
         let server_thread = std::thread::spawn(move || {
             use std::io::{Read, Write};
@@ -1015,22 +1228,52 @@ mod tests {
             server.write_all(&hz_resp).expect("write HZ resp");
         });
 
-        // Test send_ascii
-        let ty_out = session
-            .send_ascii("TY:", Some(true), Some(true))
-            .expect("send_ascii TY");
-        assert_eq!(ty_out, "ty:EF509_V01");
+        Python::attach(|py| {
+            // Test send_ascii
+            let ty_out = session
+                .send_ascii(py, "TY:", Some(true), Some(true), None)
+                .expect("send_ascii TY");
+            assert_eq!(ty_out, "ty:EF509_V01");
 
-        // Test send_hex
-        let hex_out = session.send_hex("AA BB CC", None).expect("send_hex");
-        assert_eq!(hex_out, "11 22 33");
+            // Unlisted actuator command must be blocked by strict allowlist
+            assert!(session
+                .send_ascii(py, "FN:01", Some(true), Some(true), None)
+                .is_err());
 
-        // Test poll_telemetry
-        let telem = session
-            .poll_telemetry(Some(1.0), Some(true))
-            .expect("poll_telemetry");
-        assert_eq!(telem.coffee_temp_c, 99.0);
-        assert!(telem.mcu_heartbeat_tick);
+            // Disabling safety without explicit confirmation token must be blocked
+            assert!(session
+                .send_ascii(py, "WE:0030,FFFF", Some(true), Some(false), None)
+                .is_err());
+
+            // Multi-byte UTF-8 payload ("€a", 4 bytes) must return Err without panicking
+            assert!(session.send_hex(py, "€a", None, None, None).is_err());
+
+            // Unvalidated raw hex must be blocked by default
+            assert!(session.send_hex(py, "AA BB CC", None, None, None).is_err());
+
+            // 4:1-encoded destructive command must be blocked by default
+            let we_wire = JuraProtocol::encode_wire_frame("WE:0030,FFFF\r\n");
+            let we_hex: String = we_wire.iter().map(|b| format!("{b:02X}")).collect();
+            assert!(session.send_hex(py, &we_hex, None, None, None).is_err());
+
+            // Disabling safety without lab_confirm_token must fail
+            assert!(session
+                .send_hex(py, "AA BB CC", None, Some(false), None)
+                .is_err());
+
+            // Explicit lab override token allows raw hex for bench testing
+            let hex_out = session
+                .send_hex(py, "AA BB CC", None, Some(false), Some("SPECTRA_LAB_WRITE"))
+                .expect("send_hex explicit lab override");
+            assert_eq!(hex_out, "11 22 33");
+
+            // Test poll_telemetry
+            let telem = session
+                .poll_telemetry(py, Some(1.0), Some(true))
+                .expect("poll_telemetry");
+            assert_eq!(telem.coffee_temp_c, 99.0);
+            assert!(telem.mcu_heartbeat_tick);
+        });
 
         // Test get_logs
         let logs = session.get_logs();
@@ -1047,46 +1290,44 @@ mod tests {
 
     #[test]
     fn test_spectra_py_hmi_and_crc_wrappers() {
+        pyo3::Python::initialize();
         let vma = 0x03567890;
         let mut buf = vec![0u8; 32];
         let enc = spectra_core::encode_arm_movw_movt(3, vma);
         buf[8..16].copy_from_slice(&enc);
 
-        assert!(has_arm_movw_movt_any_reg(&buf, vma));
-        assert!(!has_arm_movw_movt_any_reg(&buf, 0x12345678));
-
         let new_vma = 0x03569999;
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
+            assert!(has_arm_movw_movt_any_reg(py, &buf, vma));
+            assert!(!has_arm_movw_movt_any_reg(py, &buf, 0x12345678));
+
             let (repointed, count) = repoint_arm_movw_movt_all_regs(py, &buf, vma, new_vma);
             assert_eq!(count, 1);
-            assert!(has_arm_movw_movt_any_reg(repointed.as_bytes(py), new_vma));
-        });
+            assert!(has_arm_movw_movt_any_reg(py, repointed.as_bytes(py), new_vma));
 
-        let ro_bytes = vec![0xFF; 64];
-        let mut ro_pad = ro_bytes.clone();
-        ro_pad[16..32].fill(0);
-        let pad = find_free_zero_padding_fast(&ro_pad, 0x1000, 16, 4, 0);
-        assert_eq!(pad, Some(0x1010));
+            let ro_bytes = vec![0xFF; 64];
+            let mut ro_pad = ro_bytes.clone();
+            ro_pad[16..32].fill(0);
+            let pad = find_free_zero_padding_fast(py, &ro_pad, 0x1000, 16, 4, 0);
+            assert_eq!(pad, Some(0x1010));
 
-        let (crc_lo, crc_hi) = kalerm_compute_crc(&[0x01, 0x03, 0x00, 0x00, 0x00, 0x0A]);
-        assert!(kalerm_verify_crc(&[0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, crc_lo, crc_hi]));
-
-        Python::with_gil(|py| {
             let wire = encode_jura_wire_bytes(py, b"TY:\r\n");
             let (dec, rem) = decode_jura_wire_bytes(py, wire.as_bytes(py));
             assert_eq!(dec.as_bytes(py), b"TY:\r\n");
             assert!(rem.as_bytes(py).is_empty());
+
+            let mut eeprom = std::collections::HashMap::new();
+            eeprom.insert(0x0002, 77);
+            eeprom.insert(0x0180, 77);
+            let ranked = correlate_with_joe_ranked(py, eeprom, 77, "product");
+            assert_eq!(ranked, vec!["0x0180", "0x0002"]);
         });
+
+        let (crc_lo, crc_hi) = kalerm_compute_crc(&[0x01, 0x03, 0x00, 0x00, 0x00, 0x0A]);
+        assert!(kalerm_verify_crc(&[0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, crc_lo, crc_hi]));
 
         assert_eq!(decode_jura_temperature_word(0x03C4), Some(96.4));
         assert_eq!(decode_jura_date_word(((2024 - 1990) << 9) | (3 << 5) | 15), Some((2024, 3, 15)));
-
-        let mut eeprom = std::collections::HashMap::new();
-        eeprom.insert(0x0002, 77);
-        eeprom.insert(0x0180, 77);
-        let ranked = correlate_with_joe_ranked(eeprom, 77, "product");
-        assert_eq!(ranked, vec!["0x0180", "0x0002"]);
 
         assert!(machine_matches_connected(
             "EF535M",

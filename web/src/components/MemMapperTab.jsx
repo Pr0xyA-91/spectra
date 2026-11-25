@@ -1,37 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Cpu, X, Info } from 'lucide-react';
 import {
-  Cpu,
-  Zap,
-  RefreshCw,
-  Search,
-  Filter,
-  CheckCircle2,
-  AlertTriangle,
-  Play,
-  Pause,
-  Sliders,
-  Check,
-  X,
-  Copy,
-  Layers,
-  Terminal,
-  Database,
-  SlidersHorizontal,
-  Flame,
-  Gauge,
-  Droplet,
-  Shield,
-  Eye,
-  Trash2,
-  Info,
-  Sparkles,
-  Power
-} from 'lucide-react';
+  DEFAULT_SUMMARY,
+  VALID_AI_CATEGORIES,
+  buildFallbackRegister,
+  buildFallbackSensorField,
+  filterRegisters
+} from './mem_mapper/mapperHelpers';
+import EepromMatrixView from './mem_mapper/EepromMatrixView';
+import RegisterInspectorPanel from './mem_mapper/RegisterInspectorPanel';
+import RawSensorTelemetryView from './mem_mapper/RawSensorTelemetryView';
+import { copyTextSafe } from '../utils/fetchSafe';
 
-export default function MemMapperTab({
+function MemMapperTab({
   theme,
   selectedPort,
-  liveData,
+  liveData = null,
+  liveDataRef = null,
+  machineModel = '',
   aiEnabled = false,
   aiModel = '',
   onToggleAi = null,
@@ -46,15 +32,7 @@ export default function MemMapperTab({
   const [mapperInfo, setMapperInfo] = useState(null);
   const [registers, setRegisters] = useState([]);
   const [selectedAddr, setSelectedAddr] = useState(0x0040); // Default to BU Upper Limit
-  const [summary, setSummary] = useState({
-    total_words: 512,
-    mapped: 0,
-    theoretical: 0,
-    unknown: 0,
-    blank: 0,
-    changed: 0,
-    coverage_pct: 0
-  });
+  const [summary, setSummary] = useState(DEFAULT_SUMMARY);
 
   // Loading & Action states
   const [isSweeping, setIsSweeping] = useState(false);
@@ -109,7 +87,9 @@ export default function MemMapperTab({
   const pendingAiApplyRef = useRef(null);
   const sweepSeqRef = useRef(0);
   const diffInFlightRef = useRef(false);
+  const diffAbortRef = useRef(null);
   const rawSensorsInFlightRef = useRef(false);
+  const rawSensorsAbortRef = useRef(null);
   const activePortRef = useRef(selectedPort);
   const sweepAbortRef = useRef(null);
 
@@ -195,10 +175,12 @@ export default function MemMapperTab({
         setSweepProgress({ current: bIdx + 1, total: totalBlocks });
         setStatusMessage(`Reading EEPROM Block ${bIdx + 1}/${totalBlocks} (0x${(bIdx * 16).toString(16).toUpperCase().padStart(info.address_width || 4, '0')})...`);
 
-        const res = await fetch(
-          `/api/mapper/sweep?port=${encodeURIComponent(port)}&block=${bIdx}`,
-          { signal: controller.signal }
-        );
+        const res = await fetch('/api/mapper/sweep', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ port, block: bIdx }),
+          signal: controller.signal,
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (sweepSeqRef.current !== mySeq || port !== activePortRef.current) return;
@@ -291,10 +273,14 @@ export default function MemMapperTab({
   // --------------------------------------------------------------------------
   const pollDiff = useCallback(async () => {
     const port = selectedPort;
-    if (!port || !isLiveDiff || isSweeping || diffInFlightRef.current) return;
+    if (!port || !isLiveDiff || isSweeping || diffInFlightRef.current || document.visibilityState === 'hidden') return;
     diffInFlightRef.current = true;
+    const controller = new AbortController();
+    diffAbortRef.current = controller;
     try {
-      const res = await fetch(`/api/mapper/diff?port=${encodeURIComponent(port)}`);
+      const res = await fetch(`/api/mapper/diff?port=${encodeURIComponent(port)}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (port !== activePortRef.current) return;
@@ -326,9 +312,12 @@ export default function MemMapperTab({
         }
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.warn('Diff poll failed:', err);
     } finally {
-      diffInFlightRef.current = false;
+      if (diffAbortRef.current === controller) {
+        diffInFlightRef.current = false;
+      }
     }
   }, [selectedPort, isLiveDiff, isSweeping, isDiffPaused]);
 
@@ -336,9 +325,24 @@ export default function MemMapperTab({
   useEffect(() => {
     if (!isLiveDiff || isSweeping) return;
     onSweepStateChange?.(true);
-    const interval = setInterval(pollDiff, 1500);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      pollDiff();
+    }, 1500);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        pollDiff();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (diffAbortRef.current) {
+        try { diffAbortRef.current.abort(); } catch {}
+        diffAbortRef.current = null;
+      }
+      diffInFlightRef.current = false;
       onSweepStateChange?.(false);
     };
   }, [isLiveDiff, isSweeping, pollDiff, onSweepStateChange]);
@@ -346,26 +350,8 @@ export default function MemMapperTab({
   // --------------------------------------------------------------------------
   // 5. Register Selection & Form Population
   // --------------------------------------------------------------------------
-  const selectedRegister = registers.find((r) => r.addr === selectedAddr) || {
-    addr: selectedAddr,
-    hex_addr: selectedAddr.toString(16).toUpperCase().padStart(4, '0'),
-    val: 0,
-    val_hex: '0x0000',
-    val_dec: 0,
-    status: 'blank',
-    name: `Reg_0x${selectedAddr.toString(16).toUpperCase().padStart(4, '0')}`,
-    desc: 'Unmapped register',
-    category: 'settings',
-    unit: '',
-    baseline_val: 0,
-    baseline_hex: '0x0000',
-    delta: 0,
-    bits_flipped: [],
-    high_byte: 0,
-    low_byte: 0,
-    signed_val: 0,
-    ascii_repr: '..'
-  };
+  const selectedRegister =
+    registers.find((r) => r.addr === selectedAddr) || buildFallbackRegister(selectedAddr);
 
   useEffect(() => {
     const pending = pendingAiApplyRef.current;
@@ -427,13 +413,14 @@ export default function MemMapperTab({
           category: r.category
         }));
 
+      const currentLive = liveDataRef?.current ?? liveData;
       const res = await fetch('/api/mapper/ai_suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           candidates,
           context_registers: contextRegisters,
-          machine_model: liveData?.machine_model || 'Kalerm/Jura UART Machine',
+          machine_model: machineModel || currentLive?.machine_model || 'Kalerm/Jura UART Machine',
           model: aiModel || ''
         })
       });
@@ -455,8 +442,7 @@ export default function MemMapperTab({
 
   const handleApplyAiSuggestion = (sug) => {
     const targetAddr = Number(sug.addr);
-    const validCategories = ['counters', 'maintenance', 'calibration', 'settings', 'faults', 'hardware', 'recipe', 'spdl', 'custom'];
-    const normalizedCategory = validCategories.includes(sug.category) ? sug.category : 'custom';
+    const normalizedCategory = VALID_AI_CATEGORIES.includes(sug.category) ? sug.category : 'custom';
     const normalizedSug = { ...sug, category: normalizedCategory };
     pendingAiApplyRef.current = normalizedSug;
     setSelectedAddr(targetAddr);
@@ -517,10 +503,14 @@ export default function MemMapperTab({
   // --------------------------------------------------------------------------
   const queryRawSensors = useCallback(async () => {
     const port = selectedPort;
-    if (!port || isSweeping || rawSensorsInFlightRef.current) return;
+    if (!port || isSweeping || rawSensorsInFlightRef.current || document.visibilityState === 'hidden') return;
     rawSensorsInFlightRef.current = true;
+    const controller = new AbortController();
+    rawSensorsAbortRef.current = controller;
     try {
-      const res = await fetch(`/api/mapper/raw_sensors?port=${encodeURIComponent(port)}`);
+      const res = await fetch(`/api/mapper/raw_sensors?port=${encodeURIComponent(port)}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (port !== activePortRef.current) return;
@@ -528,41 +518,48 @@ export default function MemMapperTab({
         setRawSensorData(data);
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.warn('Raw sensors query failed:', err);
     } finally {
-      rawSensorsInFlightRef.current = false;
+      if (rawSensorsAbortRef.current === controller) {
+        rawSensorsInFlightRef.current = false;
+      }
     }
   }, [selectedPort, isSweeping]);
 
   useEffect(() => {
     if (subTab === 'raw_sensors' && isRawPolling && !isSweeping) {
       onSweepStateChange?.(true);
-      queryRawSensors();
-      const interval = setInterval(queryRawSensors, 1200);
+      if (document.visibilityState !== 'hidden') {
+        queryRawSensors();
+      }
+      const interval = setInterval(() => {
+        if (document.visibilityState === 'hidden') return;
+        queryRawSensors();
+      }, 1200);
+      const handleVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          queryRawSensors();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibility);
       return () => {
         clearInterval(interval);
+        document.removeEventListener('visibilitychange', handleVisibility);
+        if (rawSensorsAbortRef.current) {
+          try { rawSensorsAbortRef.current.abort(); } catch {}
+          rawSensorsAbortRef.current = null;
+        }
+        rawSensorsInFlightRef.current = false;
         onSweepStateChange?.(false);
       };
     }
   }, [subTab, isRawPolling, isSweeping, queryRawSensors, onSweepStateChange]);
 
   // Populate Sensor Form when selected field changes
-  const selectedSensorField = rawSensorData.fields?.find((f) => f.key === selectedFieldKey) || {
-    key: selectedFieldKey,
-    frame: 'HZ',
-    index: 4,
-    raw_hex: '03CA',
-    raw_dec: 970,
-    raw_bin: '0000 0011 1100 1010',
-    name: 'Coffee Thermoblock NTC',
-    category: 'Thermal',
-    unit: '°C',
-    scale: 0.1,
-    scaled_val: 97.0,
-    formatted: '97.0 °C',
-    desc: 'Coffee Thermoblock temperature (0.1 °C resolution)',
-    notes: 'Thermoblock nominal operating band (90-95°C)'
-  };
+  const selectedSensorField =
+    rawSensorData.fields?.find((f) => f.key === selectedFieldKey) ||
+    buildFallbackSensorField(selectedFieldKey);
 
   useEffect(() => {
     if (selectedSensorField) {
@@ -643,30 +640,18 @@ export default function MemMapperTab({
   }, [selectedPort]);
 
   // Copy helper
-  const handleCopyText = (txt, label) => {
-    navigator.clipboard.writeText(txt);
-    setCopiedFrame(label);
-    setTimeout(() => setCopiedFrame(null), 1200);
-  };
-
-  // Filtered registers
-  const filteredRegisters = registers.filter((r) => {
-    if (filterType === 'mapped' && r.status !== 'mapped') return false;
-    if (filterType === 'theoretical' && r.status !== 'theoretical') return false;
-    if (filterType === 'unknown' && r.status !== 'unknown') return false;
-    if (filterType === 'blank' && r.status !== 'blank') return false;
-    if (filterType === 'changed' && !r.is_changed) return false;
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchHex = r.hex_addr?.toLowerCase().includes(q);
-      const matchName = r.name?.toLowerCase().includes(q);
-      const matchDesc = r.desc?.toLowerCase().includes(q);
-      const matchCat = r.category?.toLowerCase().includes(q);
-      if (!matchHex && !matchName && !matchDesc && !matchCat) return false;
+  const handleCopyText = useCallback(async (txt, label) => {
+    const ok = await copyTextSafe(txt);
+    if (ok) {
+      setCopiedFrame(label);
+      setTimeout(() => setCopiedFrame(null), 1200);
     }
-    return true;
-  });
+  }, []);
+
+  const filteredRegisters = useMemo(
+    () => filterRegisters(registers, filterType, searchQuery),
+    [registers, filterType, searchQuery]
+  );
 
   return (
     <div className="space-y-4">
@@ -739,826 +724,73 @@ export default function MemMapperTab({
       {/* SUB-VIEW 1: EEPROM REGISTER MATRIX & LOGIC SCOPE */}
       {/* ==================================================================== */}
       {subTab === 'eeprom' && (
-        <div className="space-y-4">
-          {/* Quick Metrics Bar & Actions Toolbar */}
-          <div className={`p-3 border ${theme.border} ${theme.panelBg} ${theme.clipClass} flex flex-wrap items-center justify-between gap-3 text-xs font-mono`}>
-            {/* Metric Status Badges */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2 py-0.5 bg-emerald-950/80 text-emerald-400 border border-emerald-500/60 font-bold rounded">
-                🟢 {summary.mapped} Mapped
-              </span>
-              <span className="px-2 py-0.5 bg-amber-950/80 text-amber-400 border border-amber-500/60 font-bold rounded">
-                🟠 {summary.theoretical} Theor.
-              </span>
-              <span className="px-2 py-0.5 bg-red-950/80 text-red-400 border border-red-500/60 font-bold rounded">
-                🔴 {summary.unknown} Unknown
-              </span>
-              <span className="px-2 py-0.5 bg-zinc-900 text-zinc-400 border border-zinc-700 font-bold rounded">
-                ⚪ {summary.blank} Blank
-              </span>
-              <span className="px-2 py-0.5 bg-cyan-950/80 text-cyan-400 border border-cyan-500/60 font-bold rounded">
-                ⚡ {summary.changed} Changed
-              </span>
-              <span className="px-2 py-0.5 bg-purple-950/80 text-purple-300 border border-purple-500/60 font-bold rounded">
-                Coverage: {summary.coverage_pct}%
-              </span>
-            </div>
-
-            {/* Sweep & Diff Action Buttons */}
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => handleFullSweep()}
-                disabled={isSweeping}
-                className={`flex items-center space-x-1.5 px-3 py-1 font-bold rounded transition-all ${
-                  isSweeping
-                    ? 'bg-yellow-600/40 text-yellow-300 border border-yellow-500 animate-pulse'
-                    : 'bg-[#FCEE09] hover:bg-yellow-400 text-black font-extrabold shadow-[0_0_10px_rgba(252,238,9,0.4)]'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{isSweeping ? `SWEEPING (${sweepProgress.current}/${sweepProgress.total})...` : '⚡ FULL SWEEP'}</span>
-              </button>
-
-              <button
-                onClick={handleCaptureBaseline}
-                className="flex items-center space-x-1 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600 rounded font-bold"
-                title="Capture snapshot as baseline reference for delta tracking"
-              >
-                <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                <span>📸 BASELINE</span>
-              </button>
-
-              <button
-                onClick={() => setIsLiveDiff(!isLiveDiff)}
-                className={`flex items-center space-x-1 px-2.5 py-1 font-bold rounded ${
-                  isLiveDiff
-                    ? 'bg-cyan-950 text-cyan-400 border border-cyan-500 animate-pulse'
-                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700'
-                }`}
-                title="Continuous differential comparison against captured baseline"
-              >
-                {isLiveDiff ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{isLiveDiff ? 'DIFF ACTIVE' : '⏱️ LIVE DIFF'}</span>
-              </button>
-            </div>
-          </div>
-
-          {isSweeping && (
-            <div className="w-full bg-zinc-900/90 border border-yellow-500/40 rounded overflow-hidden">
-              <div
-                className="h-1.5 bg-[#FCEE09] transition-all duration-150"
-                style={{
-                  width: `${Math.min(100, Math.round((sweepProgress.current / Math.max(1, sweepProgress.total)) * 100))}%`
-                }}
-              />
-            </div>
-          )}
-
-          {/* Filter & Search Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-zinc-500 uppercase tracking-wider flex items-center space-x-1 mr-1">
-                <Filter className="w-3.5 h-3.5" />
-                <span>Filter:</span>
-              </span>
-              {[
-                { id: 'all', label: `All (${registers.length || 512})` },
-                { id: 'mapped', label: '🟢 Mapped' },
-                { id: 'theoretical', label: '🟠 Theor.' },
-                { id: 'unknown', label: '🔴 Unknown' },
-                { id: 'blank', label: '⚪ Blank' },
-                { id: 'changed', label: '⚡ Changed' }
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFilterType(f.id)}
-                  className={`px-2.5 py-0.5 rounded border transition-all ${
-                    filterType === f.id
-                      ? 'bg-zinc-200 text-black border-white font-bold'
-                      : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:border-zinc-600'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Search Box */}
-            <div className="flex items-center space-x-1 bg-black/60 px-2 py-1 rounded border border-zinc-800 min-w-[220px]">
-              <Search className="w-3.5 h-3.5 text-zinc-400" />
-              <input
-                type="text"
-                placeholder="Search Hex (e.g. 0040) or Name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent text-zinc-200 text-xs font-mono outline-none w-full"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-zinc-500 hover:text-white">
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Main Paned Layout: Left Register Table | Right Bitfield Inspector & Mapping Editor */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Left Column: 512-Word Register Matrix Table */}
-            <div className="lg:col-span-7 space-y-2">
-              <div className={`border ${theme.border} ${theme.panelBg} ${theme.clipClass} overflow-hidden shadow-inner`}>
-                <div className="max-h-[580px] overflow-y-auto font-mono text-xs">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-[#121218] border-b border-zinc-800 text-zinc-400 text-[11px] uppercase tracking-wider select-none z-10">
-                      <tr>
-                        <th className="py-2 px-2 text-left w-20">Status</th>
-                        <th className="py-2 px-2 text-left w-16">Addr</th>
-                        <th className="py-2 px-2 text-left w-16">Hex</th>
-                        <th className="py-2 px-2 text-left w-16">Dec</th>
-                        <th className="py-2 px-2 text-left w-20">Base/Delta</th>
-                        <th className="py-2 px-2 text-left">Register Name</th>
-                        <th className="py-2 px-2 text-left w-20">Category</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {filteredRegisters.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-8 text-center text-zinc-500">
-                            {isSweeping ? 'Reading EEPROM words over serial port...' : 'No registers match current filter.'}
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredRegisters.map((r) => {
-                          const isSelected = r.addr === selectedAddr;
-                          return (
-                            <tr
-                              key={r.addr}
-                              onClick={() => setSelectedAddr(r.addr)}
-                              className={`cursor-pointer transition-colors ${
-                                isSelected
-                                  ? 'bg-[#FCEE09]/15 text-white font-bold border-l-4 border-l-[#FCEE09]'
-                                  : r.is_changed
-                                  ? 'bg-amber-950/30 text-amber-300 hover:bg-zinc-800/80'
-                                  : 'hover:bg-zinc-800/50 text-zinc-300'
-                              }`}
-                            >
-                              <td className="py-1.5 px-2">
-                                {r.status === 'mapped' && (
-                                  <span className="text-emerald-400 font-bold">🟢 Mapped</span>
-                                )}
-                                {r.status === 'theoretical' && (
-                                  <span className="text-amber-400 font-bold">🟠 Theor.</span>
-                                )}
-                                {r.status === 'unknown' && (
-                                  <span className="text-red-400 font-bold">🔴 Unknown</span>
-                                )}
-                                {r.status === 'blank' && (
-                                  <span className="text-zinc-500">⚪ Blank</span>
-                                )}
-                              </td>
-                              <td className="py-1.5 px-2 text-cyan-400 font-mono font-bold">
-                                0x{r.hex_addr}
-                              </td>
-                              <td className="py-1.5 px-2 font-mono text-[#FCEE09]">
-                                {r.val_hex}
-                              </td>
-                              <td className="py-1.5 px-2 font-mono text-zinc-200">
-                                {r.val}
-                              </td>
-                              <td className="py-1.5 px-2 font-mono">
-                                {r.is_changed ? (
-                                  <span className="text-amber-400 font-bold animate-pulse">
-                                    Δ {r.delta > 0 ? `+${r.delta}` : r.delta}
-                                  </span>
-                                ) : (
-                                  <span className="text-zinc-500">{r.baseline_hex}</span>
-                                )}
-                              </td>
-                              <td className="py-1.5 px-2 truncate max-w-[180px]" title={r.desc}>
-                                <span className={isSelected ? 'text-[#FCEE09]' : 'text-zinc-200'}>
-                                  {r.name}
-                                </span>
-                              </td>
-                              <td className="py-1.5 px-2 text-[10px] text-zinc-400 uppercase">
-                                {r.category}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Bitfield Inspector, Mapping Form, Diff Event Log */}
-            <div className="lg:col-span-5 space-y-4">
-              {/* Card 1: 16-Bit Register Bitfield Breakdown */}
-              <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <SlidersHorizontal className="w-4 h-4 text-cyan-400" />
-                    <span className="font-bold text-xs text-white uppercase tracking-wider">
-                      16-BIT REGISTER INSPECTOR: 0x{selectedRegister.hex_addr}
-                    </span>
-                  </div>
-                  <span className="text-[11px] px-2 py-0.5 bg-black/60 border border-zinc-700 text-[#FCEE09] font-bold rounded">
-                    {selectedRegister.val_hex} ({selectedRegister.val})
-                  </span>
-                </div>
-
-                {/* 16-Bit Binary Matrix Grid (b15 down to b0) */}
-                <div>
-                  <div className="grid grid-cols-8 gap-1.5 text-center">
-                    {Array.from({ length: 16 }, (_, i) => 15 - i).map((b) => {
-                      const bitVal = (selectedRegister.val >> b) & 1;
-                      const isFlipped = selectedRegister.bits_flipped?.includes(b);
-                      return (
-                        <div
-                          key={b}
-                          className={`p-1 rounded border text-[11px] font-mono transition-all ${
-                            isFlipped
-                              ? 'bg-amber-950 border-amber-400 text-amber-200 font-extrabold shadow-[0_0_8px_rgba(251,191,36,0.6)] animate-pulse'
-                              : bitVal === 1
-                              ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 font-bold shadow-[0_0_6px_rgba(16,185,129,0.3)]'
-                              : 'bg-black/50 border-zinc-800 text-zinc-500'
-                          }`}
-                        >
-                          <div className="text-[9px] text-zinc-400">b{b}</div>
-                          <div className="text-sm font-bold">{bitVal}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Data Format Breakdown */}
-                <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-zinc-800/80">
-                  <div className="bg-black/40 p-2 rounded border border-zinc-800">
-                    <span className="text-zinc-500 text-[10px] uppercase block">Bytes (High / Low):</span>
-                    <span className="text-cyan-300 font-bold">
-                      0x{selectedRegister.high_byte.toString(16).toUpperCase().padStart(2, '0')} ({selectedRegister.high_byte}) / 0x{selectedRegister.low_byte.toString(16).toUpperCase().padStart(2, '0')} ({selectedRegister.low_byte})
-                    </span>
-                  </div>
-                  <div className="bg-black/40 p-2 rounded border border-zinc-800">
-                    <span className="text-zinc-500 text-[10px] uppercase block">Signed Dec / ASCII:</span>
-                    <span className="text-zinc-200 font-bold">
-                      {selectedRegister.signed_val} | '{selectedRegister.ascii_repr}'
-                    </span>
-                  </div>
-                </div>
-
-                <div className="text-xs text-zinc-400 italic">
-                  {selectedRegister.desc || 'No description entered for this register.'}
-                </div>
-              </div>
-
-              {/* Card 2: Inline Register Mapping Form */}
-              <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <Database className="w-4 h-4 text-[#FCEE09]" />
-                    <span className="font-bold text-xs text-white uppercase tracking-wider">
-                      MAP REGISTER SPECIFICATION [0x{selectedRegister.hex_addr}]
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-zinc-500">
-                    Persists to docs/models/
-                  </span>
-                </div>
-
-                <form onSubmit={handleSaveRegisterMapping} className="space-y-2.5 text-xs">
-                  <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">REGISTER NAME:</label>
-                    <input
-                      type="text"
-                      value={mapForm.name}
-                      onChange={(e) => setMapForm({ ...mapForm, name: e.target.value })}
-                      placeholder="e.g. BU_Upper_Limit"
-                      className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#FCEE09]"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">CATEGORY:</label>
-                      <select
-                        value={mapForm.category}
-                        onChange={(e) => setMapForm({ ...mapForm, category: e.target.value })}
-                        className="w-full bg-black/60 border border-zinc-700 px-2 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#FCEE09]"
-                      >
-                        <option value="counters">counters</option>
-                        <option value="maintenance">maintenance</option>
-                        <option value="calibration">calibration</option>
-                        <option value="settings">settings</option>
-                        <option value="faults">faults</option>
-                        <option value="hardware">hardware</option>
-                        <option value="recipe">recipe</option>
-                        <option value="spdl">spdl</option>
-                        <option value="custom">custom</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">UNIT:</label>
-                      <input
-                        type="text"
-                        value={mapForm.unit}
-                        onChange={(e) => setMapForm({ ...mapForm, unit: e.target.value })}
-                        placeholder="e.g. ticks, cups, °C"
-                        className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#FCEE09]"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">DESCRIPTION / FUNCTION:</label>
-                    <textarea
-                      rows={2}
-                      value={mapForm.desc}
-                      onChange={(e) => setMapForm({ ...mapForm, desc: e.target.value })}
-                      placeholder="Functional purpose and decoding logic..."
-                      className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#FCEE09] resize-none"
-                    />
-                  </div>
-
-                  <div className="pt-1 flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <label className="text-[11px] text-zinc-400">STATUS:</label>
-                      <select
-                        value={mapForm.status}
-                        onChange={(e) => setMapForm({ ...mapForm, status: e.target.value })}
-                        className="bg-black/60 border border-zinc-700 px-2 py-1 rounded text-zinc-200 text-xs font-mono outline-none"
-                      >
-                        <option value="mapped">🟢 Mapped</option>
-                        <option value="theoretical">🟠 Theoretical</option>
-                        <option value="unknown">🔴 Unknown</option>
-                      </select>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isSavingReg || !mapForm.name.trim()}
-                      className="px-3 py-1.5 bg-[#FCEE09] hover:bg-yellow-400 text-black font-extrabold rounded font-mono text-xs flex items-center space-x-1 shadow-[0_0_10px_rgba(252,238,9,0.4)] disabled:opacity-50"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>{isSavingReg ? 'SAVING...' : '💾 SAVE TO MODEL'}</span>
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* Card 3: Differential Logic Scope Event Stream */}
-              <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-2 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2 text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Terminal className="w-4 h-4 text-amber-400" />
-                    <span className="font-bold text-white uppercase tracking-wider">
-                      DIFFERENTIAL LOGIC SCOPE STREAM
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setIsDiffPaused(!isDiffPaused)}
-                      className="text-zinc-400 hover:text-white"
-                      title={isDiffPaused ? 'Resume Scope' : 'Pause Scope'}
-                    >
-                      {isDiffPaused ? <Play className="w-3.5 h-3.5 text-emerald-400" /> : <Pause className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      onClick={() => setDiffEvents([])}
-                      className="text-zinc-400 hover:text-white"
-                      title="Clear Events"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="h-32 overflow-y-auto bg-black/60 p-2 rounded border border-zinc-800 text-[11px] text-zinc-300 space-y-1">
-                  {diffEvents.length === 0 ? (
-                    <div className="text-zinc-500 italic py-6 text-center">
-                      No differential memory bit-flips recorded. Baseline active.
-                    </div>
-                  ) : (
-                    diffEvents.map((ev, i) => (
-                      <div key={i} className="flex items-center space-x-2 font-mono">
-                        <span className="text-zinc-500">[{ev.timestamp}]</span>
-                        <span className="text-cyan-400 font-bold">0x{ev.addrHex}</span>
-                        <span className="text-zinc-400">({ev.name}):</span>
-                        <span className="text-zinc-500 line-through">{ev.oldVal}</span>
-                        <span className="text-amber-400 font-bold">→ {ev.newVal}</span>
-                        <span className="text-zinc-500 text-[10px]">
-                          bits: [{ev.flips?.join(', ')}]
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Card 4: Local Ollama Register Labeling (Opt-in, Default OFF) */}
-              <div className={`p-4 border ${aiEnabled ? 'border-cyan-800/80' : theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2 text-xs">
-                  <div className="flex items-center space-x-2">
-                    <Sparkles className={`w-4 h-4 ${aiEnabled ? 'text-cyan-400' : 'text-zinc-500'}`} />
-                    <span className="font-bold text-white uppercase tracking-wider">
-                      LOCAL AI REGISTER LABELING
-                    </span>
-                  </div>
-                  {onToggleAi && (
-                    <button
-                      type="button"
-                      onClick={() => onToggleAi(!aiEnabled)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center space-x-1 border ${
-                        aiEnabled
-                          ? 'bg-red-950/60 hover:bg-red-900/70 text-red-300 border-red-700'
-                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
-                      }`}
-                    >
-                      <Power className="w-3 h-3" />
-                      <span>{aiEnabled ? 'TURN AI OFF' : 'ENABLE AI (OFF)'}</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 text-[11px]">
-                  <span className="text-zinc-400">
-                    {aiEnabled
-                      ? `Local AI ready${aiModel ? ` (${aiModel})` : ''}. Infers purpose from deltas & neighbors.`
-                      : 'AI is OFF by default so your device keeps zero RAM/CPU overhead.'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleSuggestAiRegisters}
-                    disabled={!aiEnabled || isSuggestingAi || registers.length === 0}
-                    className="shrink-0 px-2.5 py-1.5 bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-500/70 text-cyan-300 font-bold rounded text-[11px] disabled:opacity-40"
-                  >
-                    {isSuggestingAi ? 'ANALYZING...' : '🧠 SUGGEST UNKNOWN / CHANGED'}
-                  </button>
-                </div>
-
-                {aiSuggestError && (
-                  <div className="p-2 bg-red-950/40 border border-red-800 rounded text-[11px] text-red-300">
-                    {aiSuggestError}
-                  </div>
-                )}
-
-                {aiSuggestions.length > 0 && (
-                  <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
-                    {aiSuggestions.map((sug, idx) => (
-                      <div
-                        key={`${sug.addr}-${idx}`}
-                        className="p-2.5 bg-black/50 border border-zinc-800 rounded space-y-1 text-[11px]"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center space-x-2 min-w-0">
-                            <span className="text-cyan-400 font-bold">
-                              0x{sug.addr_hex || Number(sug.addr).toString(16).toUpperCase().padStart(4, '0')}
-                            </span>
-                            <span className="text-[#FCEE09] font-bold truncate">{sug.suggested_name}</span>
-                            <span className="px-1.5 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-[9px] text-zinc-400 uppercase">
-                              {sug.category || 'custom'}
-                            </span>
-                            {sug.unit && (
-                              <span className="text-[10px] text-emerald-400">[{sug.unit}]</span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleApplyAiSuggestion(sug)}
-                            className="shrink-0 px-2 py-0.5 bg-[#FCEE09] hover:bg-yellow-400 text-black font-bold rounded text-[10px]"
-                          >
-                            Apply to Editor
-                          </button>
-                        </div>
-                        {sug.reasoning && (
-                          <p className="text-zinc-400 text-[10px] leading-snug">{sug.reasoning}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <EepromMatrixView
+          theme={theme}
+          summary={summary}
+          registers={registers}
+          filteredRegisters={filteredRegisters}
+          selectedAddr={selectedAddr}
+          setSelectedAddr={setSelectedAddr}
+          isSweeping={isSweeping}
+          sweepProgress={sweepProgress}
+          isLiveDiff={isLiveDiff}
+          setIsLiveDiff={setIsLiveDiff}
+          filterType={filterType}
+          setFilterType={setFilterType}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          onFullSweep={handleFullSweep}
+          onCaptureBaseline={handleCaptureBaseline}
+          inspectorPanel={
+            <RegisterInspectorPanel
+              theme={theme}
+              selectedRegister={selectedRegister}
+              mapForm={mapForm}
+              setMapForm={setMapForm}
+              isSavingReg={isSavingReg}
+              onSaveRegisterMapping={handleSaveRegisterMapping}
+              diffEvents={diffEvents}
+              setDiffEvents={setDiffEvents}
+              isDiffPaused={isDiffPaused}
+              setIsDiffPaused={setIsDiffPaused}
+              aiEnabled={aiEnabled}
+              aiModel={aiModel}
+              onToggleAi={onToggleAi}
+              registersCount={registers.length}
+              isSuggestingAi={isSuggestingAi}
+              aiSuggestError={aiSuggestError}
+              aiSuggestions={aiSuggestions}
+              onSuggestAiRegisters={handleSuggestAiRegisters}
+              onApplyAiSuggestion={handleApplyAiSuggestion}
+            />
+          }
+        />
       )}
 
       {/* ==================================================================== */}
       {/* SUB-VIEW 2: RAW SENSOR WIRE TELEMETRY & VALUE MAPPER */}
       {/* ==================================================================== */}
       {subTab === 'raw_sensors' && (
-        <div className="space-y-4">
-          {/* Wire Frames Terminal Box */}
-          <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-              <div className="flex items-center space-x-2">
-                <Terminal className="w-4 h-4 text-cyan-400" />
-                <span className="font-bold text-xs text-white uppercase tracking-wider">
-                  RAW UART WIRE FRAMES [DIRECT MICROCONTROLLER BUS RESPONSES]
-                </span>
-              </div>
-              <div className="flex items-center space-x-2 text-xs">
-                <button
-                  onClick={() => setIsRawPolling(!isRawPolling)}
-                  className={`flex items-center space-x-1 px-2.5 py-0.5 rounded font-bold ${
-                    isRawPolling
-                      ? 'bg-emerald-950 text-emerald-400 border border-emerald-500'
-                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                  }`}
-                >
-                  {isRawPolling ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                  <span>{isRawPolling ? 'AUTO POLL (1.2s)' : 'PAUSED'}</span>
-                </button>
-                <button
-                  onClick={queryRawSensors}
-                  className="p-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded"
-                  title="Manual Wire Interrogation"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Wire Raw Frame Strings with Copy Buttons */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-              {[
-                { label: 'HZ: (Operational State)', val: rawSensorData.frames?.HZ || '---' },
-                { label: 'AS: (Coffee Heater NTC Diagnostic)', val: rawSensorData.frames?.AS || '---' },
-                { label: 'CS: (Component Triacs)', val: rawSensorData.frames?.CS || '---' },
-                { label: 'RE:0028 (Fault Latch)', val: rawSensorData.frames?.RE_0028 || '---' },
-              ].map((f) => (
-                <div key={f.label} className="bg-black/60 p-2 rounded border border-zinc-800 flex items-center justify-between gap-2">
-                  <div className="truncate">
-                    <span className="text-[10px] text-zinc-400 uppercase block">{f.label}</span>
-                    <span className="text-cyan-300 font-mono font-bold">{f.val}</span>
-                  </div>
-                  <button
-                    onClick={() => handleCopyText(f.val, f.label)}
-                    className="p-1 text-zinc-400 hover:text-white"
-                    title="Copy Raw Wire String"
-                  >
-                    {copiedFrame === f.label ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Raw Sensor Field Breakdown Table & Value Mapper Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Left: Decoded Sensor Fields Table */}
-            <div className="lg:col-span-7 space-y-2">
-              <div className={`border ${theme.border} ${theme.panelBg} ${theme.clipClass} overflow-hidden shadow-inner`}>
-                <div className="p-2 bg-[#121218] border-b border-zinc-800 flex items-center justify-between text-xs font-mono">
-                  <span className="font-bold text-white uppercase tracking-wider">
-                    FIELD-BY-FIELD TELEMETRY TRANSLATION
-                  </span>
-                  <span className="text-[11px] text-zinc-400">
-                    Click field to map engineering unit & formula
-                  </span>
-                </div>
-
-                <div className="max-h-[560px] overflow-y-auto font-mono text-xs">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-[#121218] border-b border-zinc-800 text-zinc-400 text-[11px] uppercase tracking-wider select-none z-10">
-                      <tr>
-                        <th className="py-2 px-2 text-left w-16">Key</th>
-                        <th className="py-2 px-2 text-left">Parameter Name</th>
-                        <th className="py-2 px-2 text-left w-16">Raw Hex</th>
-                        <th className="py-2 px-2 text-left w-16">Decimal</th>
-                        <th className="py-2 px-2 text-left w-24">Scaled Value</th>
-                        <th className="py-2 px-2 text-left w-16">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60">
-                      {rawSensorData.fields?.map((f) => {
-                        const isSelected = f.key === selectedFieldKey;
-                        return (
-                          <tr
-                            key={f.key}
-                            onClick={() => setSelectedFieldKey(f.key)}
-                            className={`cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-cyan-950/40 text-white font-bold border-l-4 border-l-[#00F0FF]'
-                                : 'hover:bg-zinc-800/50 text-zinc-300'
-                            }`}
-                          >
-                            <td className="py-2 px-2 font-mono font-bold text-cyan-400">
-                              {f.key}
-                            </td>
-                            <td className="py-2 px-2 truncate max-w-[170px]" title={f.notes}>
-                              <span className={isSelected ? 'text-[#00F0FF]' : 'text-zinc-200'}>
-                                {f.name}
-                              </span>
-                            </td>
-                            <td className="py-2 px-2 font-mono text-[#FCEE09]">
-                              0x{f.raw_hex}
-                            </td>
-                            <td className="py-2 px-2 font-mono text-zinc-200">
-                              {f.raw_dec ?? '---'}
-                            </td>
-                            <td className="py-2 px-2 font-mono text-emerald-400 font-bold">
-                              {f.formatted || `${f.scaled_val ?? '---'} ${f.unit}`}
-                            </td>
-                            <td className="py-2 px-2">
-                              {f.is_custom ? (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-cyan-950 text-cyan-300 border border-cyan-500 rounded font-bold">
-                                  CUSTOM
-                                </span>
-                              ) : (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 rounded">
-                                  DEFAULT
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Field Inspector & Value Mapper Form */}
-            <div className="lg:col-span-5 space-y-4">
-              {/* Field Deep Inspector */}
-              <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <Sliders className="w-4 h-4 text-cyan-400" />
-                    <span className="font-bold text-xs text-white uppercase tracking-wider">
-                      SENSOR FIELD TRANSLATION: {selectedSensorField.key}
-                    </span>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 bg-black/60 border border-zinc-700 text-cyan-300 font-bold rounded">
-                    {selectedSensorField.category}
-                  </span>
-                </div>
-
-                {/* 4 Translation Metric Cards */}
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-black/50 p-2.5 rounded border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 uppercase block">RAW HEX VALUE:</span>
-                    <span className="text-lg font-mono font-bold text-[#FCEE09]">
-                      0x{selectedSensorField.raw_hex}
-                    </span>
-                  </div>
-                  <div className="bg-black/50 p-2.5 rounded border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 uppercase block">DECIMAL VALUE:</span>
-                    <span className="text-lg font-mono font-bold text-zinc-200">
-                      {selectedSensorField.raw_dec ?? '---'}
-                    </span>
-                  </div>
-                  <div className="bg-black/50 p-2.5 rounded border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 uppercase block">ENGINEERING SCALED:</span>
-                    <span className="text-base font-mono font-bold text-emerald-400">
-                      {selectedSensorField.formatted}
-                    </span>
-                  </div>
-                  <div className="bg-black/50 p-2.5 rounded border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 uppercase block">SCALE FORMULA:</span>
-                    <span className="text-xs font-mono font-bold text-cyan-300">
-                      {selectedSensorField.scale === 1.0 ? 'x 1.0' : `x ${selectedSensorField.scale}`} ({selectedSensorField.unit || 'raw'})
-                    </span>
-                  </div>
-                </div>
-
-                {/* Binary Bitfield string */}
-                {selectedSensorField.raw_bin && (
-                  <div className="bg-black/40 p-2 rounded border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 uppercase block mb-1">BINARY REPRESENTATION:</span>
-                    <span className="text-xs font-mono text-cyan-400 font-bold tracking-widest break-all">
-                      {selectedSensorField.raw_bin}
-                    </span>
-                  </div>
-                )}
-
-                {/* Live Interpretation / Notes */}
-                <div className="p-2.5 bg-zinc-900/80 rounded border border-zinc-800 text-xs text-zinc-300">
-                  <span className="text-[10px] text-zinc-500 uppercase block font-bold mb-0.5">
-                    FIRMWARE & PHYSICAL INTERPRETATION:
-                  </span>
-                  <span>{selectedSensorField.notes || selectedSensorField.desc}</span>
-                </div>
-              </div>
-
-              {/* Sensor Value Mapping Form */}
-              <div className={`p-4 border ${theme.border} ${theme.panelBg} ${theme.clipClass} space-y-3 font-mono shadow-md`}>
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <div className="flex items-center space-x-2">
-                    <Database className="w-4 h-4 text-[#00F0FF]" />
-                    <span className="font-bold text-xs text-white uppercase tracking-wider">
-                      MAP SENSOR VALUE [{selectedSensorField.key}]
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-zinc-500">
-                    custom_sensor_mappings.json
-                  </span>
-                </div>
-
-                <form onSubmit={handleSaveSensorMapping} className="space-y-2.5 text-xs">
-                  <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">FIELD LABEL / NAME:</label>
-                    <input
-                      type="text"
-                      value={sensorMapForm.name}
-                      onChange={(e) => setSensorMapForm({ ...sensorMapForm, name: e.target.value })}
-                      placeholder="e.g. Coffee Thermoblock NTC"
-                      className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#00F0FF]"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">CATEGORY:</label>
-                      <select
-                        value={sensorMapForm.category}
-                        onChange={(e) => setSensorMapForm({ ...sensorMapForm, category: e.target.value })}
-                        className="w-full bg-black/60 border border-zinc-700 px-2 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#00F0FF]"
-                      >
-                        <option value="Thermal">Thermal</option>
-                        <option value="Hydraulics">Hydraulics</option>
-                        <option value="Brew Unit">Brew Unit</option>
-                        <option value="Optical Hopper">Optical Hopper</option>
-                        <option value="Status">Status</option>
-                        <option value="Safety">Safety</option>
-                        <option value="Actuators">Actuators</option>
-                        <option value="User Interface">User Interface</option>
-                        <option value="Chassis">Chassis</option>
-                        <option value="General">General</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">ENGINEERING UNIT:</label>
-                      <input
-                        type="text"
-                        value={sensorMapForm.unit}
-                        onChange={(e) => setSensorMapForm({ ...sensorMapForm, unit: e.target.value })}
-                        placeholder="e.g. °C, ticks, pulses"
-                        className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#00F0FF]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">SCALE MULTIPLIER:</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={sensorMapForm.scale}
-                        onChange={(e) => setSensorMapForm({ ...sensorMapForm, scale: parseFloat(e.target.value) || 1.0 })}
-                        placeholder="e.g. 0.1 for 10x ADC"
-                        className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#00F0FF]"
-                      />
-                    </div>
-
-                    <div className="flex items-end">
-                      <span className="text-[10px] text-zinc-500 pb-2">
-                        Formula: <code>val * scale {sensorMapForm.unit}</code>
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">FIELD DOCUMENTATION / NOTES:</label>
-                    <textarea
-                      rows={2}
-                      value={sensorMapForm.desc}
-                      onChange={(e) => setSensorMapForm({ ...sensorMapForm, desc: e.target.value })}
-                      placeholder="Calibration details or physical sensor notes..."
-                      className="w-full bg-black/60 border border-zinc-700 px-2.5 py-1.5 rounded text-zinc-200 font-mono outline-none focus:border-[#00F0FF] resize-none"
-                    />
-                  </div>
-
-                  <div className="pt-2 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={handleResetSensorMappings}
-                      className="text-[11px] text-zinc-400 hover:text-red-400 underline font-mono"
-                    >
-                      Reset Defaults
-                    </button>
-
-                    <button
-                      type="submit"
-                      disabled={isSavingSensorMap || !sensorMapForm.name.trim()}
-                      className="px-3 py-1.5 bg-[#00F0FF] hover:bg-cyan-300 text-black font-extrabold rounded font-mono text-xs flex items-center space-x-1 shadow-[0_0_10px_rgba(0,240,255,0.4)] disabled:opacity-50"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>{isSavingSensorMap ? 'SAVING...' : '💾 SAVE SENSOR MAPPING'}</span>
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RawSensorTelemetryView
+          theme={theme}
+          rawSensorData={rawSensorData}
+          selectedFieldKey={selectedFieldKey}
+          setSelectedFieldKey={setSelectedFieldKey}
+          selectedSensorField={selectedSensorField}
+          isRawPolling={isRawPolling}
+          setIsRawPolling={setIsRawPolling}
+          onQueryRawSensors={queryRawSensors}
+          copiedFrame={copiedFrame}
+          onCopyText={handleCopyText}
+          sensorMapForm={sensorMapForm}
+          setSensorMapForm={setSensorMapForm}
+          isSavingSensorMap={isSavingSensorMap}
+          onSaveSensorMapping={handleSaveSensorMapping}
+          onResetSensorMappings={handleResetSensorMappings}
+        />
       )}
     </div>
   );
 }
+
+export default React.memo(MemMapperTab);

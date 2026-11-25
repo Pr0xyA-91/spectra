@@ -35,3 +35,7 @@ target/
 # Reverse engineering archives
 reveng/
 
+# Generated documentation exports (produced from CHANGELOG_CS.md during release CI)
+CHANGELOG_CS.pdf
+
+

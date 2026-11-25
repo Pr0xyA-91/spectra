@@ -7,10 +7,11 @@ description = "Hardware Abstraction Layer and physical wire codecs for SPECTRA d
 [dependencies]
 tokio = { workspace = true }
 tokio-serial = { workspace = true, optional = true }
-rusb = { workspace = true, optional = true }
 thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["serial"]
 serial = ["dep:tokio-serial"]
-usb = ["dep:rusb"]

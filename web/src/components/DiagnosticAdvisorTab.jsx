@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -20,6 +20,9 @@ import {
   X,
 } from 'lucide-react';
 import { createTranslator, txAdvisorCard, txBeverageName, txVal } from '../i18n/translations';
+import { safeExternalUrl } from '../utils/urlSafety';
+
+const MAX_REF_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB client-side upload guard
 
 /**
  * Overview Tab: AI Diagnostic Health Advisor & Beverage Recipe Analytics
@@ -31,11 +34,13 @@ import { createTranslator, txAdvisorCard, txBeverageName, txVal } from '../i18n/
  * - 1-Click Customer Service Report & Multi-format Export triggers
  * - Inline Local AI Bench Triage, Customer Summary & CSV/Screenshot Offset Calibrator
  */
-export default function DiagnosticAdvisorTab({
+function DiagnosticAdvisorTab({
   theme,
   lang = 'en',
   statsData,
-  liveData,
+  liveData = null,
+  liveDataRef = null,
+  machineModel = '',
   selectedPort,
   onOpenServiceReport,
   onOpenExport,
@@ -51,7 +56,7 @@ export default function DiagnosticAdvisorTab({
   onStatsUpdated = null,
   onOpenConfig = null,
 }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
   const [checklist, setChecklist] = useState({
     chk1: true, // Visual inspection of silicone pressure lines & brass fittings
     chk2: true, // Safety thermal cutoff continuity (TB1: 0.1Ω, TB2: 0.1Ω)
@@ -86,11 +91,17 @@ export default function DiagnosticAdvisorTab({
     setAiError('');
     if (beginAiWork) beginAiWork();
     try {
+      const currentLive = liveDataRef?.current ?? liveData;
+      const telemetryPayload = currentLive
+        ? currentLive
+        : machineModel
+        ? { machine_model: machineModel }
+        : {};
       const res = await fetch('/api/advisor/ai_triage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          telemetry: liveData || {},
+          telemetry: telemetryPayload,
           stats: statsData || {},
           model: aiModel || undefined,
           lang,
@@ -151,6 +162,22 @@ export default function DiagnosticAdvisorTab({
     setCalResult(null);
     setCalNotice({ msg: '', error: false, url: '' });
     setAppliedLocal(false);
+
+    if (file.size > MAX_REF_FILE_BYTES) {
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      setRefFileName('');
+      setRefCsvText('');
+      setRefImageB64('');
+      setRefIsImage(false);
+      setCalNotice({
+        msg: `File "${file.name}" (${mb} MiB) exceeds the 10 MiB client upload limit.`,
+        error: true,
+        url: '',
+      });
+      e.target.value = '';
+      return;
+    }
+
     setRefFileName(file.name);
 
     const lower = file.name.toLowerCase();
@@ -762,11 +789,11 @@ export default function DiagnosticAdvisorTab({
                     }`}
                   >
                     <span>{calNotice.msg}</span>
-                    {calNotice.url && (
+                    {safeExternalUrl(calNotice.url) && (
                       <a
-                        href={calNotice.url}
+                        href={safeExternalUrl(calNotice.url)}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="underline text-cyan-300 font-bold"
                       >
                         {t('viewSubmission')}
@@ -791,14 +818,14 @@ export default function DiagnosticAdvisorTab({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto text-[10px]">
-                      {(calResult.override.products || []).slice(0, 8).map((p, idx) => (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-48 overflow-y-auto text-[10px]">
+                      {(calResult.override.products || []).map((p, idx) => (
                         <div key={`p-${idx}`} className="flex justify-between px-2 py-1 bg-zinc-950 border border-zinc-800 rounded">
                           <span className="text-zinc-300 truncate">{p.name}</span>
                           <span className="text-cyan-300">{p.addr_hex} ({p.joe_count})</span>
                         </div>
                       ))}
-                      {(calResult.override.maintenance || []).slice(0, 6).map((m, idx) => (
+                      {(calResult.override.maintenance || []).map((m, idx) => (
                         <div key={`m-${idx}`} className="flex justify-between px-2 py-1 bg-zinc-950 border border-zinc-800 rounded">
                           <span className="text-amber-200 truncate">{m.name}</span>
                           <span className="text-amber-400">{m.addr_hex} ({m.joe_count})</span>
@@ -960,11 +987,11 @@ export default function DiagnosticAdvisorTab({
                   }`}
                 >
                   <div>{calNotice.msg}</div>
-                  {calNotice.url && (
+                  {safeExternalUrl(calNotice.url) && (
                     <a
-                      href={calNotice.url}
+                      href={safeExternalUrl(calNotice.url)}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="inline-block mt-1 underline text-cyan-300 font-bold"
                     >
                       {t('viewSubmission')}
@@ -1005,3 +1032,5 @@ export default function DiagnosticAdvisorTab({
     </div>
   );
 }
+
+export default React.memo(DiagnosticAdvisorTab);

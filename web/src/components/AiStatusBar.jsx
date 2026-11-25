@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Cpu, Power, AlertTriangle } from 'lucide-react';
 import { createTranslator } from '../i18n/translations';
 
@@ -14,7 +14,7 @@ export default function AiStatusBar({
   aiDownload,
   onTurnAiOff,
 }) {
-  const t = createTranslator(lang);
+  const t = useMemo(() => createTranslator(lang), [lang]);
   const isTaskActive = Boolean(aiTask?.active);
   const isDlActive = Boolean(aiDownload?.active);
 

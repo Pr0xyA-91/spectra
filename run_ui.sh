@@ -70,4 +70,4 @@ fi
 
 echo "[*] Launching SPECTRA Interactive Dev Workspace at http://127.0.0.1:5173 ..."
 (sleep 0.8 && (xdg-open "http://127.0.0.1:5173" 2>/dev/null || sensible-browser "http://127.0.0.1:5173" 2>/dev/null || true)) &
-exec npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev -- --host 127.0.0.1 --port 5173

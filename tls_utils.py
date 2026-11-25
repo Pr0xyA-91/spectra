@@ -12,7 +12,8 @@ Python distributions (which lack a default OpenSSL cert bundle) by combining:
 import os
 import ssl
 import subprocess
-from typing import Callable, Optional
+from typing import Callable, Optional, Set
+from urllib.parse import urlparse
 
 
 def get_ssl_context() -> ssl.SSLContext:
@@ -69,10 +70,12 @@ def windows_schannel_download(
     cancel_check: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
     timeout_sec: float = 1800.0,
+    allowed_hosts: Optional[Set[str]] = None,
 ) -> None:
     """
     Download a file using Windows built-in SChannel-backed `curl.exe` when Python's
-    OpenSSL store is blocked or incomplete. Still enforces strict TLS verification.
+    OpenSSL store is blocked or incomplete. Still enforces strict TLS verification
+    and effective redirect host allowlist validation.
     """
     import time
     curl_exe = os.path.expandvars(r"%SystemRoot%\System32\curl.exe")
@@ -82,16 +85,25 @@ def windows_schannel_download(
     cmd = [
         curl_exe,
         "-fSL",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--max-redirs",
+        "5",
         "--connect-timeout",
         "25",
         "--retry",
         "2",
+        "-w",
+        "%{url_effective}",
         "-o",
         dest_path,
+        "--",
         url,
     ]
     spawn_kw = {
-        "stdout": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
     }
     if os.name == "nt":
@@ -120,9 +132,30 @@ def windows_schannel_download(
             except Exception:
                 pass
             raise RuntimeError(err_txt or f"Windows curl.exe exited with code {proc.returncode}")
+
+        effective_url = ""
+        try:
+            if proc.stdout is not None:
+                effective_url = (proc.stdout.read() or b"").decode("utf-8", errors="replace").strip()
+        except Exception:
+            effective_url = ""
+
+        if allowed_hosts is not None:
+            check_url = effective_url or url
+            parsed = urlparse(check_url)
+            eff_host = (parsed.hostname or "").lower()
+            allowed_norm = {str(h).lower() for h in allowed_hosts}
+            if parsed.scheme != "https" or eff_host not in allowed_norm:
+                try:
+                    if os.path.exists(dest_path):
+                        os.remove(dest_path)
+                except OSError:
+                    pass
+                raise RuntimeError(f"Untrusted redirect target rejected: {check_url}")
     finally:
-        if proc.stderr:
-            try:
-                proc.stderr.close()
-            except Exception:
-                pass
+        for stream in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            if stream:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
