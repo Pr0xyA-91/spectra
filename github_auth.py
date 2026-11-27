@@ -331,6 +331,25 @@ def clear_stored_token() -> None:
             pass
 
 
+def _find_gh_binary() -> Optional[str]:
+    """Locate GitHub CLI (`gh`) across PATH and standard user-space shims (e.g. mise, ~/.local/bin)."""
+    found = shutil.which("gh")
+    if found:
+        return found
+    home = Path.home()
+    fallback_dirs = [
+        str(home / ".local" / "share" / "mise" / "shims"),
+        str(home / ".local" / "bin"),
+    ]
+    if os.name != "nt":
+        fallback_dirs.extend([
+            "/usr/local/bin",
+            "/usr/bin",
+            "/opt/homebrew/bin",
+        ])
+    return shutil.which("gh", path=os.pathsep.join(fallback_dirs))
+
+
 def resolve_token() -> Optional[Dict[str, str]]:
     """
     Token resolution order for upload:
@@ -356,7 +375,7 @@ def resolve_token() -> Optional[Dict[str, str]]:
         return {"token": gh_tok.strip(), "login": None, "method": "GITHUB_TOKEN"}
 
     # 4. gh auth token
-    gh_bin = shutil.which("gh")
+    gh_bin = _find_gh_binary()
     if gh_bin:
         try:
             res = subprocess.run([gh_bin, "auth", "token"], capture_output=True, text=True, timeout=3)

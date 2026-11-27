@@ -71,6 +71,11 @@ class SpectraApiHandler(GetRoutesMixin, PostHardwareRoutesMixin, PostCloudAiRout
             else (int(_wstate._current_http_port) if _wstate._current_http_port else 8080)
         )
         ports: Set[int] = {active_port}
+        gw_port_raw = (os.environ.get("SPECTRA_GATEWAY_PORT") or "").strip()
+        if gw_port_raw.isdigit():
+            gw_port = int(gw_port_raw)
+            if 0 < gw_port < 65536:
+                ports.add(gw_port)
         if os.environ.get("SPECTRA_DEV_CORS") == "1":
             ports.update({5173, 4173})
         origins: Set[str] = {
