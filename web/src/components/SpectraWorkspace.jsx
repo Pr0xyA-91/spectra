@@ -22,7 +22,7 @@ import {
 } from './workspace/TelemetryTabsView';
 
 export { THEMES };
-export const FALLBACK_BUILD = '20261125.1535';
+export const FALLBACK_BUILD = '20261127.1905';
 
 const SensorsTabView = React.lazy(() => import('./workspace/SensorsTabView'));
 const MemMapperTab = React.lazy(() => import('./MemMapperTab'));

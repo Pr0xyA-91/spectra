@@ -628,5 +628,59 @@ class TestUpdateHttpEndpoints(unittest.TestCase):
                 srv.server_close()
 
 
+class TestReleaseManifestSignatureVerification(unittest.TestCase):
+    def test_transitional_and_fail_closed_ed25519_verification(self):
+        import base64
+        import offset_db_sync
+
+        seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+        pubkey = offset_db_sync.ed25519_public_key_from_seed(seed)
+        key_id = "spectra-offsets-ed25519-test-v1"
+
+        unsigned_manifest = {
+            "build": "20990101.1200",
+            "main_build": "20990101.1200",
+            "windows_build": "20990101.1200",
+            "assets": {
+                "spectra_linux.tar.gz": {
+                    "url": "https://github.com/Pr0xyA-91/spectra/releases/download/build-20990101.1200/spectra_linux.tar.gz",
+                    "sha256": "aa" * 32,
+                    "size": 102400,
+                }
+            },
+        }
+
+        # 1) Pre-pinning transitional mode: unsigned passes, unpinned signature rejected
+        ok_trans, reason_trans = updater.verify_release_manifest_signature(unsigned_manifest, trusted_keys={})
+        self.assertTrue(ok_trans)
+        self.assertEqual(reason_trans, "unsigned_transitional")
+
+        signed_base = dict(unsigned_manifest)
+        signed_base["key_id"] = key_id
+        signed_base["signature_alg"] = "Ed25519"
+        msg = updater.RELEASE_MANIFEST_DOMAIN_PREFIX + offset_db_sync.canonical_json_bytes(signed_base)
+        sig = offset_db_sync.ed25519_sign(seed, msg)
+        signed_manifest = dict(signed_base)
+        signed_manifest["signature_b64"] = base64.b64encode(sig).decode("ascii")
+
+        ok_unpinned, reason_unpinned = updater.verify_release_manifest_signature(signed_manifest, trusted_keys={})
+        self.assertFalse(ok_unpinned)
+        self.assertEqual(reason_unpinned, "Untrusted key_id")
+
+        # 2) Post-pinning fail-closed mode: unsigned rejected, valid signature verified, tampered rejected
+        pinned = {key_id: pubkey}
+        ok_unsigned, _ = updater.verify_release_manifest_signature(unsigned_manifest, trusted_keys=pinned)
+        self.assertFalse(ok_unsigned)
+
+        ok_signed, reason_signed = updater.verify_release_manifest_signature(signed_manifest, trusted_keys=pinned)
+        self.assertTrue(ok_signed, msg=reason_signed)
+        self.assertEqual(reason_signed, "verified")
+
+        tampered = dict(signed_manifest)
+        tampered["build"] = "20991231.2359"
+        ok_tampered, _ = updater.verify_release_manifest_signature(tampered, trusted_keys=pinned)
+        self.assertFalse(ok_tampered)
+
+
 if __name__ == "__main__":
     unittest.main()

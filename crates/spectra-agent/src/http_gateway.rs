@@ -34,6 +34,7 @@ const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DEBUG_LOG_ENTRIES: usize = 500;
 const MAX_CONCURRENT_GATEWAY_CONNS: usize = 64;
 const GATEWAY_IO_TIMEOUT: Duration = Duration::from_secs(15);
+const GATEWAY_UPSTREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
 
 type GatewayBody = BoxBody<Bytes, Infallible>;
@@ -653,8 +654,11 @@ async fn handle_request(req: Request<Incoming>, state: Arc<GatewayShared>) -> Re
         );
     }
 
-    // 2. Core Rust-owned API endpoints (fast path in both hybrid and pure-rust modes)
-    if method == Method::GET && path == "/api/version" {
+    // 2. Core Rust-owned API endpoints (fast path in pure-rust or before Python sidecar is ready)
+    if method == Method::GET
+        && path == "/api/version"
+        && (state.pure_rust || !matches!(*state.sidecar_rx.borrow(), SidecarState::Ready(_)))
+    {
         return json_response(
             StatusCode::OK,
             &json!({
@@ -1053,7 +1057,7 @@ async fn proxy_to_sidecar(
     };
 
     let upstream_resp = match tokio::time::timeout(
-        GATEWAY_IO_TIMEOUT,
+        GATEWAY_UPSTREAM_RESPONSE_TIMEOUT,
         sender.send_request(upstream_req),
     )
     .await

@@ -157,6 +157,47 @@ class TestSpectraAiOrchestrator(unittest.TestCase):
         self.assertEqual(task["step"], "STOPPED")
         mock_ctrl.assert_called_once_with("stop")
 
+    def test_turning_on_with_start_runtime_starts_offline_ollama(self):
+        """set_ai_enabled(True, start_runtime=True) auto-starts local Ollama when offline."""
+        fake_before = {
+            "hardware": {"default_selected_model": "qwen2.5:1.5b"},
+            "ollama": {"available": False, "models": ["qwen2.5:1.5b"], "loaded_models": []},
+            "binary_installed": True,
+            "is_managed_process": False,
+        }
+        fake_after = {
+            "hardware": {"default_selected_model": "qwen2.5:1.5b"},
+            "ollama": {"available": True, "models": ["qwen2.5:1.5b"], "loaded_models": []},
+            "binary_installed": True,
+            "is_managed_process": True,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = os.path.join(td, "ai_config.json")
+            with patch.object(spectra_ai, "AI_CONFIG_FILE", cfg_file), patch.object(
+                hmi_inspector.KalermHmiInspector,
+                "get_ai_system_status",
+                side_effect=[fake_before, fake_after],
+            ), patch.object(
+                hmi_inspector.KalermHmiInspector,
+                "control_local_ollama",
+                return_value={"status": "STARTED"},
+            ) as mock_ctrl, patch.object(
+                hmi_inspector.KalermHmiInspector,
+                "get_ollama_download_progress",
+                return_value={"active": False},
+            ):
+                res = spectra_ai.set_ai_enabled(
+                    True,
+                    model="qwen2.5:1.5b",
+                    require_installed_model=True,
+                    start_runtime=True,
+                )
+
+        self.assertTrue(res["success"])
+        self.assertTrue(res["ai_enabled"])
+        self.assertEqual(res["start_result"]["status"], "STARTED")
+        mock_ctrl.assert_called_once_with("start")
+
     def test_all_ai_features_fail_cleanly_when_off(self):
         """When AI is OFF, all orchestrator endpoints refuse cleanly without touching Ollama."""
         with patch("urllib.request.urlopen") as mock_urlopen:

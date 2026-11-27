@@ -18,8 +18,8 @@
 #include "win_safe.h"
 #include "zip_extract.h"
 
-#define SPECTRA_BUILD        "20261125.1535"
-#define SPECTRA_VERSION      "Build 20261125.1535"
+#define SPECTRA_BUILD        "20261127.1905"
+#define SPECTRA_VERSION      "Build 20261127.1905"
 #define SPECTRA_EDITION      "Windows Standalone Multi-Manufacturer"
 
 static void print_banner(void) {
