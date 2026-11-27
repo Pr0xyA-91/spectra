@@ -1,19 +1,19 @@
 {
-  "build": "20261125.1535",
-  "main_build": "20261125.1535",
-  "windows_build": "20261125.1535",
-  "published_at": "2026-11-25T20:36:37Z",
-  "release_notes": "- Added pure-stdlib RFC 8032 Ed25519 signed Machine Offset DB sync with 3-layer precedence & 1-click Sync UI\n- Fixed Overview offset calibration to sweep full 512-word EEPROM and add/replace newly discovered beverages\n- Full-stack security hardening (serial lock safety, same-port CORS/CSP, signed release manifest support, Win32 C hardening)\n- Slimmed Windows PE32+ binaries (spectra_setup.exe 60MB->18.8MB, spectra_update.exe 38MB->7.8MB)\n- Added baked EN + CS illustrated User Guide, Alerts tab fix, and top-left Obsidian Prism header logo",
+  "build": "20261127.1905",
+  "main_build": "20261127.1905",
+  "windows_build": "20261127.1905",
+  "published_at": "2026-11-27T18:05:43Z",
+  "release_notes": "- Fixed SPECTRA_GATEWAY_PORT origin allowlisting between spectra-shell Rust HTTP gateway and spectra_web sidecar (eliminating 403 failures across AI & GitHub POST routes)\n- Added Local AI auto-start on /api/ai/toggle, portable Ollama model discovery, live diagnostics.ollama telemetry & 300s upstream proxy timeout\n- Fixed GitHub CLI user-space shim discovery (~/.local/share/mise/shims, ~/.local/bin), external https://*.github.com browser handoff & UI error reporting\n- Added zero-dependency PNG-in-ICO decoder in spectra-shell and rebuilt Windows PE32+ binaries",
   "assets": {
     "spectra_update.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_update.exe",
-      "sha256": "e9ce114346dee191a61a1ddadedd89fb2c436ec7dc8fd2f6f5dd2e89292e9073",
-      "size": 7846912
+      "sha256": "62ec7756e21f2f6c38030ba64d4ef9dc9135b120384301f724d8d5bbeb22909e",
+      "size": 7083520
     },
     "spectra_setup.exe": {
       "url": "https://raw.githubusercontent.com/Pr0xyA-91/spectra/windows/dist/spectra_setup.exe",
-      "sha256": "ef3a563589b691469e3a37abe09fe7a411ad537b9611026be52b9ed175d74075",
-      "size": 18777600
+      "sha256": "423f0a999b61187b2858e18b530bf504443dae81c5f20adf88615bbe6c8ecf55",
+      "size": 18014208
     }
   }
 }

@@ -29,7 +29,7 @@ from spectra_web.state import (
     shutdown_for_restart,
     touch_heartbeat,
 )
-from spectra_web.security import is_valid_port, log_debug_event
+from spectra_web.security import invalidate_debug_ai_cache, is_valid_port, log_debug_event
 from spectra_web.sensors import _canonical_port, compute_advisor_health
 from spectra_web.prefs import save_ui_prefs
 
@@ -300,7 +300,9 @@ class PostCloudAiRoutesMixin:
                     model=model,
                     auto_unload=auto_unload,
                     require_installed_model=True,
+                    start_runtime=True,
                 )
+                invalidate_debug_ai_cache()
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)})

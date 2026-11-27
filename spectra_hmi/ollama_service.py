@@ -1068,6 +1068,18 @@ class HmiOllamaMixin:
 
             env = os.environ.copy()
             env["OLLAMA_HOST"] = "127.0.0.1:11434"
+            if not (env.get("OLLAMA_MODELS") or "").strip():
+                default_manifests = os.path.expanduser("~/.ollama/models/manifests")
+                portable_models = os.path.expanduser("~/.local/share/spectra/ollama/models")
+                portable_manifests = os.path.join(portable_models, "manifests")
+                has_default = os.path.isdir(default_manifests) and any(
+                    bool(files) for _, _, files in os.walk(default_manifests)
+                )
+                has_portable = os.path.isdir(portable_manifests) and any(
+                    bool(files) for _, _, files in os.walk(portable_manifests)
+                )
+                if not has_default and has_portable:
+                    env["OLLAMA_MODELS"] = portable_models
             bin_dir = os.path.dirname(os.path.abspath(bin_path))
 
             # Auto-configure library/DLL search paths if running portable engine
