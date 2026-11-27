@@ -252,19 +252,22 @@ def set_ai_enabled(
     model: Optional[str] = None,
     auto_unload: Optional[bool] = None,
     require_installed_model: bool = False,
+    start_runtime: bool = False,
 ) -> Dict[str, Any]:
     """
     Enable or disable Local AI globally.
     Turning OFF immediately cancels active AI tasks and stops/unloads the Ollama process.
     When `require_installed_model` is True, refuses to enable AI if 0 models are installed.
+    When `start_runtime` is True, starts the local Ollama daemon on 127.0.0.1:11434 if offline.
     """
     global _ai_enabled, _preferred_model, _auto_unload, _cancel_epoch
 
+    sys_status_initial: Optional[Dict[str, Any]] = None
     if enabled and require_installed_model:
-        sys_status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
+        sys_status_initial = hmi_inspector.KalermHmiInspector.get_ai_system_status()
         installed = [
             m.get("name") if isinstance(m, dict) else str(m)
-            for m in ((sys_status.get("ollama") or {}).get("models") or [])
+            for m in ((sys_status_initial.get("ollama") or {}).get("models") or [])
             if (m.get("name") if isinstance(m, dict) else str(m)).strip()
         ]
         if not installed:
@@ -308,19 +311,36 @@ def set_ai_enabled(
             _task_state["error"] = ""
 
     stop_result = None
+    start_result = None
     if not enabled:
         try:
             stop_result = hmi_inspector.KalermHmiInspector.control_local_ollama("stop")
         except Exception as e:
             stop_result = {"status": "ERROR", "message": str(e)}
+    elif start_runtime:
+        already_online = bool(((sys_status_initial or {}).get("ollama") or {}).get("available"))
+        if not already_online:
+            try:
+                chk = hmi_inspector.KalermHmiInspector.check_local_ollama(timeout=0.35)
+                already_online = bool(chk.get("available"))
+            except Exception:
+                already_online = False
+        if not already_online:
+            try:
+                start_result = hmi_inspector.KalermHmiInspector.control_local_ollama("start")
+            except Exception as e:
+                start_result = {"status": "ERROR", "message": str(e)}
 
-    return {
+    out: Dict[str, Any] = {
         "success": True,
         "ai_enabled": is_ai_enabled(),
         "preferred_model": get_preferred_model(),
         "stop_result": stop_result,
         "status": get_ai_global_status(),
     }
+    if start_result is not None:
+        out["start_result"] = start_result
+    return out
 
 
 def get_ai_global_status() -> Dict[str, Any]:

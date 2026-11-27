@@ -129,6 +129,62 @@ class TestSec05HttpHostOriginAndSecFetchSite(unittest.TestCase):
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(ctx.exception.code, 403)
 
+    def test_gateway_port_origin_allowed_for_native_shell_proxy(self):
+        gw_port = self.port + 2 if self.port < 65000 else self.port - 2
+        other_port = self.port + 3 if self.port < 65000 else self.port - 3
+        with mock.patch.dict(os.environ, {"SPECTRA_GATEWAY_PORT": str(gw_port)}):
+            req_ok = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/ui_prefs",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{gw_port}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req_ok, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+
+            req_bad = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/ui_prefs",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{other_port}",
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req_bad, timeout=5)
+            self.assertEqual(ctx.exception.code, 403)
+
+    def test_debug_diagnostics_reports_live_ollama_fields(self):
+        import hmi_inspector
+
+        fake_proc = mock.MagicMock()
+        fake_proc.pid = 43210
+        fake_proc.poll.return_value = None
+        fake_sys = {
+            "ollama": {
+                "available": True,
+                "models": [{"name": "qwen2.5:1.5b"}],
+                "loaded_models": ["qwen2.5:1.5b"],
+            },
+            "is_managed_process": True,
+        }
+        sec_mod.invalidate_debug_ai_cache()
+        try:
+            with mock.patch.object(hmi_inspector.KalermHmiInspector, "get_ai_system_status", return_value=fake_sys), \
+                 mock.patch.object(hmi_inspector.KalermHmiInspector, "_ollama_process", fake_proc):
+                diag = sec_mod.get_debug_diagnostics()
+            self.assertTrue(diag["ollama"]["running"])
+            self.assertTrue(diag["ollama"]["managed_by_spectra"])
+            self.assertEqual(diag["ollama"]["pid"], 43210)
+            self.assertEqual(diag["ollama"]["loaded_models"], ["qwen2.5:1.5b"])
+            self.assertEqual(diag["ollama"]["active_model"], "qwen2.5:1.5b")
+        finally:
+            sec_mod.invalidate_debug_ai_cache()
+
 
 class TestSec06GuiWebShimAndHmiApproval(unittest.TestCase):
     def test_gui_web_shim_exports_hardened_handler(self):

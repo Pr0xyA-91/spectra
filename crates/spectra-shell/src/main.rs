@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ico_png;
+
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -31,6 +33,14 @@ const EMBEDDED_ICON_ICO: &[u8] = include_bytes!("../../../icon.ico");
 #[link(name = "shell32")]
 extern "system" {
     fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+    fn ShellExecuteW(
+        hwnd: *mut core::ffi::c_void,
+        lp_operation: *const u16,
+        lp_file: *const u16,
+        lp_parameters: *const u16,
+        lp_directory: *const u16,
+        n_show_cmd: i32,
+    ) -> isize;
 }
 
 #[cfg(target_os = "windows")]
@@ -133,7 +143,7 @@ fn generate_sidecar_nonce() -> String {
     hex
 }
 
-/// Decodes an uncompressed 32-bit BGRA entry from an `.ico` buffer into top-down RGBA bytes.
+/// Decodes a PNG-compressed or uncompressed 32-bit BGRA entry from an `.ico` buffer into top-down RGBA bytes.
 fn decode_ico_entry_to_rgba(ico: &[u8], preferred_size: u32) -> Option<(Vec<u8>, u32, u32)> {
     if ico.len() < 6 {
         return None;
@@ -145,7 +155,7 @@ fn decode_ico_entry_to_rgba(ico: &[u8], preferred_size: u32) -> Option<(Vec<u8>,
         return None;
     }
 
-    let mut best: Option<(u32, u32, usize, u32)> = None;
+    let mut best: Option<(u32, u32, usize, usize, u32)> = None;
     for idx in 0..count {
         let base = 6 + idx * 16;
         let w = if ico[base] == 0 { 256 } else { ico[base] as u32 };
@@ -154,31 +164,40 @@ fn decode_ico_entry_to_rgba(ico: &[u8], preferred_size: u32) -> Option<(Vec<u8>,
         let size = u32::from_le_bytes([ico[base + 8], ico[base + 9], ico[base + 10], ico[base + 11]]) as usize;
         let offset = u32::from_le_bytes([ico[base + 12], ico[base + 13], ico[base + 14], ico[base + 15]]) as usize;
 
-        if offset.checked_add(40).map_or(true, |end| end > ico.len()) {
+        if size < 8 || offset.checked_add(size).is_none_or(|end| end > ico.len()) {
             continue;
         }
-        if offset.checked_add(size).map_or(true, |end| end > ico.len()) {
-            continue;
-        }
-        let dib_size = u32::from_le_bytes([ico[offset], ico[offset + 1], ico[offset + 2], ico[offset + 3]]) as usize;
-        if dib_size < 40 || offset + dib_size > ico.len() {
-            continue;
-        }
-        let dib_bpp = u16::from_le_bytes([ico[offset + 14], ico[offset + 15]]);
-        if bpp != 32 && dib_bpp != 32 {
-            continue;
+        let entry_bytes = &ico[offset..offset + size];
+        let is_png = entry_bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+        if !is_png {
+            if size < 40 || offset.checked_add(40).is_none_or(|end| end > ico.len()) {
+                continue;
+            }
+            let dib_size = u32::from_le_bytes([ico[offset], ico[offset + 1], ico[offset + 2], ico[offset + 3]]) as usize;
+            if dib_size < 40 || offset + dib_size > ico.len() {
+                continue;
+            }
+            let dib_bpp = u16::from_le_bytes([ico[offset + 14], ico[offset + 15]]);
+            if bpp != 32 && dib_bpp != 32 {
+                continue;
+            }
         }
         let score = w.abs_diff(preferred_size);
         let replace = match best {
             None => true,
-            Some((_, _, _, best_score)) => score < best_score,
+            Some((_, _, _, _, best_score)) => score < best_score,
         };
         if replace {
-            best = Some((w, h, offset, score));
+            best = Some((w, h, offset, size, score));
         }
     }
 
-    let (w, h, offset, _) = best?;
+    let (w, h, offset, size, _) = best?;
+    let entry_bytes = &ico[offset..offset + size];
+    if entry_bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return ico_png::decode_png_to_rgba(entry_bytes);
+    }
+
     let dib_size = u32::from_le_bytes([ico[offset], ico[offset + 1], ico[offset + 2], ico[offset + 3]]) as usize;
     let pixels_start = offset + dib_size;
     let row_bytes = (w as usize) * 4;
@@ -190,7 +209,7 @@ fn decode_ico_entry_to_rgba(ico: &[u8], preferred_size: u32) -> Option<(Vec<u8>,
     let mut rgba = Vec::with_capacity(needed);
     for y in (0..h as usize).rev() {
         let row = &ico[pixels_start + y * row_bytes..pixels_start + (y + 1) * row_bytes];
-        for px in row.chunks_exact(4) {
+        for px in row.as_chunks::<4>().0 {
             // Convert BGRA DIB pixel order to top-down RGBA
             rgba.push(px[2]);
             rgba.push(px[1]);
@@ -287,6 +306,73 @@ fn is_allowed_loopback_url(url: &str) -> bool {
 
 fn is_allowed_navigation_url(url: &str) -> bool {
     url == "about:blank" || is_allowed_loopback_url(url)
+}
+
+fn is_allowed_external_https_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let host = if let Some((h, port_str)) = authority.rsplit_once(':') {
+        if port_str != "443" {
+            return false;
+        }
+        h
+    } else {
+        authority
+    };
+    let host_lower = host.to_ascii_lowercase();
+    host_lower == "github.com" || host_lower.ends_with(".github.com")
+}
+
+fn open_safe_external_https_url(url: &str) {
+    let trimmed = url.trim();
+    if !is_allowed_external_https_url(trimmed) {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let op_w: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+        let url_w: Vec<u16> = trimmed.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let _ = ShellExecuteW(
+                core::ptr::null_mut(),
+                op_w.as_ptr(),
+                url_w.as_ptr(),
+                core::ptr::null(),
+                core::ptr::null(),
+                1,
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open")
+            .arg(trimmed)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open")
+            .arg(trimmed)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
 }
 
 fn parse_cli_args<I, S>(args: I) -> Result<ShellConfig, String>
@@ -435,7 +521,12 @@ fn pick_free_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn spawn_python_backend(app_root: &Path, port: u16, sidecar_nonce: &str) -> Result<Child, String> {
+fn spawn_python_backend(
+    app_root: &Path,
+    port: u16,
+    gw_port: u16,
+    sidecar_nonce: &str,
+) -> Result<Child, String> {
     let (python_bin, is_embedded) = resolve_python_executable(app_root);
     let server_script = app_root.join("web_server.py");
     if !server_script.is_file() {
@@ -452,6 +543,7 @@ fn spawn_python_backend(app_root: &Path, port: u16, sidecar_nonce: &str) -> Resu
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("SPECTRA_NATIVE_SHELL", "1")
+        .env("SPECTRA_GATEWAY_PORT", gw_port.to_string())
         .env("SPECTRA_SIDECAR_NONCE", sidecar_nonce);
 
     if is_embedded {
@@ -716,7 +808,7 @@ impl WindowState {
         let colon = after_key.find(':')?;
         let rest = after_key[colon + 1..].trim_start();
         let end = rest
-            .find(|c: char| c == ',' || c == '}' || c == '\n' || c == '\r')
+            .find([',', '}', '\n', '\r'])
             .unwrap_or(rest.len());
         Some(rest[..end].trim())
     }
@@ -964,7 +1056,7 @@ fn main() {
                                 let stop_flag_bg = Arc::clone(&stop_flag);
                                 let sidecar_tx = handle.clone_sidecar_sender();
                                 std::thread::spawn(move || {
-                                    match spawn_python_backend(&root_bg, sidecar_port, &sidecar_nonce) {
+                                    match spawn_python_backend(&root_bg, sidecar_port, gw_port, &sidecar_nonce) {
                                         Ok(child) => {
                                             if let Ok(mut g) = child_slot_bg.lock() {
                                                 *g = Some(child);
@@ -1019,7 +1111,16 @@ fn main() {
     let builder = WebViewBuilder::new()
         .with_devtools(cfg!(debug_assertions))
         .with_navigation_handler(|uri| is_allowed_navigation_url(&uri))
-        .with_new_window_req_handler(|uri| is_allowed_navigation_url(&uri));
+        .with_new_window_req_handler(|uri| {
+            if is_allowed_navigation_url(&uri) {
+                true
+            } else if is_allowed_external_https_url(&uri) {
+                open_safe_external_https_url(&uri);
+                false
+            } else {
+                false
+            }
+        });
     let builder = if let Some(ref url) = initial_url {
         builder.with_url(url)
     } else if let Some(ref err) = gateway_boot_error {
@@ -1191,12 +1292,12 @@ mod tests {
         let (rgba32, w32, h32) = decode_ico_entry_to_rgba(EMBEDDED_ICON_ICO, 32).expect("32px icon");
         assert_eq!((w32, h32), (32, 32));
         assert_eq!(rgba32.len(), 32 * 32 * 4);
-        assert!(rgba32.chunks_exact(4).any(|px| px[3] > 0));
+        assert!(rgba32.as_chunks::<4>().0.iter().any(|px| px[3] > 0));
 
         let (rgba256, w256, h256) = decode_ico_entry_to_rgba(EMBEDDED_ICON_ICO, 256).expect("256px icon");
         assert_eq!((w256, h256), (256, 256));
         assert_eq!(rgba256.len(), 256 * 256 * 4);
-        assert!(rgba256.chunks_exact(4).any(|px| px[3] > 0));
+        assert!(rgba256.as_chunks::<4>().0.iter().any(|px| px[3] > 0));
     }
 
     #[test]
@@ -1220,5 +1321,14 @@ mod tests {
         assert!(is_allowed_navigation_url("http://localhost:5173/"));
         assert!(!is_allowed_navigation_url("https://example.com"));
         assert!(!is_allowed_navigation_url("file:///etc/passwd"));
+
+        assert!(is_allowed_external_https_url("https://github.com/login/device"));
+        assert!(is_allowed_external_https_url("https://github.com/settings/tokens/new?description=SPECTRA"));
+        assert!(is_allowed_external_https_url("https://docs.github.com/en/authentication"));
+        assert!(!is_allowed_external_https_url("http://github.com/login/device"));
+        assert!(!is_allowed_external_https_url("https://evilgithub.com/login"));
+        assert!(!is_allowed_external_https_url("https://github.com@evil.example/"));
+        assert!(!is_allowed_external_https_url("https://github.com:8443/login"));
+        assert!(!is_allowed_external_https_url("javascript:alert(1)"));
     }
 }

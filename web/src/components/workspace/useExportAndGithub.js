@@ -413,12 +413,15 @@ export function useExportAndGithub({
     setExportStatus({ loading: true, msg: 'Requesting GitHub device authorization...', error: false });
     try {
       const res = await fetch('/api/github/auth/device/start', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { success: false, error: `HTTP ${res.status}` };
+      if (res.ok && data.success) {
         setDeviceFlow(data);
         setExportStatus({ loading: false, msg: `Enter code ${data.user_code} on GitHub`, error: false });
       } else {
-        setExportStatus({ loading: false, msg: data.error || 'Device flow failed', error: true });
+        setExportStatus({ loading: false, msg: data.error || `Device flow failed (HTTP ${res.status})`, error: true });
       }
     } catch (err) {
       setExportStatus({ loading: false, msg: `Device auth error: ${err.message}`, error: true });
@@ -434,14 +437,17 @@ export function useExportAndGithub({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: patInput.trim() }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { success: false, error: `HTTP ${res.status}` };
+      if (res.ok && data.success) {
         setGithubAuth({ authenticated: true, login: data.login, method: 'pat', device_flow_available: githubAuth.device_flow_available });
         setPatInput('');
         setShowPatInput(false);
         setExportStatus({ loading: false, msg: `✓ Connected as @${data.login}!`, error: false });
       } else {
-        setExportStatus({ loading: false, msg: data.error || 'Invalid personal access token', error: true });
+        setExportStatus({ loading: false, msg: data.error || `Invalid personal access token (HTTP ${res.status})`, error: true });
       }
     } catch (err) {
       setExportStatus({ loading: false, msg: `Token auth error: ${err.message}`, error: true });
@@ -450,8 +456,11 @@ export function useExportAndGithub({
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/github/auth/logout', { method: 'POST' });
-      setGithubAuth({ authenticated: false, login: null, method: null, device_flow_available: githubAuth.device_flow_available });
+      const res = await fetch('/api/github/auth/logout', { method: 'POST' });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      await fetchGithubStatus();
       setDeviceFlow(null);
       setExportStatus({ loading: false, msg: 'Signed out from GitHub.', error: false });
     } catch (err) {

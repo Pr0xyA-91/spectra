@@ -219,6 +219,15 @@ _DIAG_CHILDREN_CACHE: Optional[List[Dict[str, Any]]] = None
 _DIAG_CACHE_TS: float = 0.0
 
 
+def invalidate_debug_ai_cache() -> None:
+    """Clear cached AI/process diagnostics so start/stop/toggle reflects immediately."""
+    global _DIAG_AI_CACHE, _DIAG_CHILDREN_CACHE, _DIAG_CACHE_TS
+    with _DIAG_CACHE_LOCK:
+        _DIAG_AI_CACHE = None
+        _DIAG_CHILDREN_CACHE = None
+        _DIAG_CACHE_TS = 0.0
+
+
 def get_debug_diagnostics() -> Dict[str, Any]:
 
     # 1. Core Process Diagnostics
@@ -332,12 +341,20 @@ def get_debug_diagnostics() -> Dict[str, Any]:
         try:
             import hmi_inspector
             raw_ai = hmi_inspector.KalermHmiInspector.get_ai_system_status()
-            ai_status["running"] = bool(raw_ai.get("running"))
-            ai_status["managed_by_spectra"] = bool(raw_ai.get("managed_by_spectra"))
-            ai_status["pid"] = raw_ai.get("pid")
-            ai_status["loaded_models"] = raw_ai.get("installed_models", [])
-            if raw_ai.get("active_model"):
-                ai_status["active_model"] = raw_ai.get("active_model")
+            ollama_info = raw_ai.get("ollama") if isinstance(raw_ai.get("ollama"), dict) else {}
+            ai_status["running"] = bool(ollama_info.get("available"))
+            ai_status["managed_by_spectra"] = bool(raw_ai.get("is_managed_process"))
+            proc_obj = getattr(hmi_inspector.KalermHmiInspector, "_ollama_process", None)
+            ai_status["pid"] = proc_obj.pid if (proc_obj is not None and proc_obj.poll() is None) else None
+            loaded_models = list(ollama_info.get("loaded_models") or [])
+            installed_models = [
+                m.get("name") if isinstance(m, dict) else str(m)
+                for m in (ollama_info.get("models") or [])
+            ]
+            ai_status["loaded_models"] = loaded_models
+            ai_status["installed_models"] = installed_models
+            if loaded_models:
+                ai_status["active_model"] = loaded_models[0]
         except Exception:
             pass
 

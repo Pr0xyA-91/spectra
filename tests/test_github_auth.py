@@ -251,7 +251,8 @@ class TestGitHubAuthAndUpload(unittest.TestCase):
         self.assertEqual(poll_res["login"], "device_user")
         self.assertEqual(github_auth.get_stored_token()["token"], "ghu_token999")
 
-    def test_upload_missing_auth_returns_error_and_prefilled_url(self):
+    @patch("urllib.request.urlopen", side_effect=AssertionError("Unexpected live network call"))
+    def test_upload_missing_auth_returns_error_and_prefilled_url(self, _mock_urlopen):
         """When not authenticated, upload returns clean error and prefilled submission URL."""
         bundle = {
             "identity": {"model_name": "Jura Z6", "article_number": "15012"},

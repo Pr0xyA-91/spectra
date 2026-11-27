@@ -33,6 +33,7 @@ from spectra_web.security import (
     _approve_hmi_path,
     _is_allowed_hmi_path,
     build_export_filename,
+    invalidate_debug_ai_cache,
     is_valid_port,
     log_debug_event,
     sanitize_filename_prefix,
@@ -529,12 +530,14 @@ class PostHardwareRoutesMixin:
                     try:
                         import spectra_ai
                         res = spectra_ai.set_ai_enabled(False, model=model)
+                        invalidate_debug_ai_cache()
                         stop_res = res.get("stop_result") or {"status": "STOPPED"}
                         self._send_json({"success": True, "is_error": False, "result": stop_res, "ai_status": res["status"]["system"]})
                         return True
                     except Exception:
                         pass
                 res = hmi_inspector.KalermHmiInspector.control_local_ollama(action=action, model=model)
+                invalidate_debug_ai_cache()
                 is_error = res.get("status") in ("ERROR", "BINARY_NOT_FOUND", "OLLAMA_OFFLINE", "START_TIMEOUT")
                 ai_status = hmi_inspector.KalermHmiInspector.get_ai_system_status()
                 self._send_json({"success": not is_error, "is_error": is_error, "result": res, "ai_status": ai_status})
